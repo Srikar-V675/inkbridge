@@ -2,7 +2,7 @@ import react from '@vitejs/plugin-react'
 import { appendFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 
-// Dev-only: POST /__log appends the body to spike.log so the agent can read device logs.
+// Dev-only: POST /__log appends the body to dev.log so the agent can read device logs.
 const devLog = {
   name: 'dev-log',
   configureServer(server: any) {
@@ -10,7 +10,7 @@ const devLog = {
       let body = ''
       req.on('data', (c: any) => (body += c))
       req.on('end', () => {
-        appendFileSync('spike.log', `${new Date().toISOString()} ${body}\n`)
+        appendFileSync('dev.log', `${new Date().toISOString()} ${body}\n`)
         res.end('ok')
       })
     })
