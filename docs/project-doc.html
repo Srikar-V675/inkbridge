@@ -1,0 +1,659 @@
+<title>Inkbridge Project Doc</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: sticky contents rail + one reading column; wide figures and tables scroll inside their own frame.
+   Palette: cool neutrals biased to ink blue; teal is reserved for agent output; status colours mark verified / reported / unverified. */
+:root{
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --bg:#f4f6f9; --surface:#ffffff; --surface2:#eef2f7;
+  --fg:#16212e; --muted:#566475; --line:#d7dee8; --line-strong:#8a97a8;
+  --accent:#2a45c9; --accent-soft:#e5eafc;
+  --agent:#0c7a6a; --agent-soft:#d9f2ed;
+  --ok:#1d7a3b; --ok-soft:#dcf3e3;
+  --warn:#8f5d00; --warn-soft:#fbefd0;
+  --bad:#b3261e; --bad-soft:#fbe3e1;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e141b; --surface:#151d27; --surface2:#1b2531;
+    --fg:#e6ecf3; --muted:#9aa8b8; --line:#2a3644; --line-strong:#6b7b8f;
+    --accent:#93a8ff; --accent-soft:#1c2650;
+    --agent:#4fd1b8; --agent-soft:#10332d;
+    --ok:#6fd08c; --ok-soft:#12301c;
+    --warn:#e5b04a; --warn-soft:#352a0d;
+    --bad:#ff8f86; --bad-soft:#3b1815;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e141b; --surface:#151d27; --surface2:#1b2531;
+  --fg:#e6ecf3; --muted:#9aa8b8; --line:#2a3644; --line-strong:#6b7b8f;
+  --accent:#93a8ff; --accent-soft:#1c2650;
+  --agent:#4fd1b8; --agent-soft:#10332d;
+  --ok:#6fd08c; --ok-soft:#12301c;
+  --warn:#e5b04a; --warn-soft:#352a0d;
+  --bad:#ff8f86; --bad-soft:#3b1815;
+  color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:16px/1.65 var(--sans);padding-inline:16px;padding-block:28px 64px;margin:0}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.88em;background:var(--surface2);border:1px solid var(--line);border-radius:4px;padding:.05em .35em}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:28px}
+@media (min-width:1020px){.wrap{grid-template-columns:210px minmax(0,1fr);gap:48px}}
+nav.toc{font-size:14px}
+@media (min-width:1020px){nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 20px);align-self:start}}
+nav.toc .lbl{font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:4px 14px}
+@media (min-width:1020px){nav.toc ol{display:block}}
+nav.toc li{margin:0}
+nav.toc a{display:block;padding:3px 0;text-decoration:none;color:var(--muted)}
+nav.toc a:hover{color:var(--fg)}
+nav.toc .n{font-family:var(--mono);color:var(--line-strong);margin-right:6px}
+main{min-width:0}
+header.top{margin-bottom:28px}
+.eyebrow{font:500 12px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+h1{font-size:clamp(30px,5vw,44px);line-height:1.1;margin:8px 0 10px;font-weight:600;letter-spacing:-.02em;text-wrap:balance}
+.lede{font-size:18px;color:var(--muted);max-width:62ch;margin:0 0 16px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{font:500 12px var(--mono);border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 10px;color:var(--muted)}
+h2{font-size:24px;line-height:1.25;margin:52px 0 12px;font-weight:600;letter-spacing:-.01em;text-wrap:balance;scroll-margin-top:20px}
+h2 .n{font:500 14px var(--mono);color:var(--accent);margin-right:10px;vertical-align:2px}
+h3{font-size:17px;margin:28px 0 8px;font-weight:600}
+p{margin:0 0 14px;max-width:72ch}
+ul,ol{margin:0 0 14px;padding-left:22px;max-width:72ch}
+li{margin-bottom:6px}
+.callout{background:var(--accent-soft);border:1px solid var(--accent);border-radius:8px;padding:14px 16px;margin:0 0 20px;max-width:72ch}
+.callout p:last-child{margin-bottom:0}
+.callout.warn{background:var(--warn-soft);border-color:var(--warn)}
+.callout.ag{background:var(--agent-soft);border-color:var(--agent)}
+.scroll{overflow-x:auto;margin:0 0 20px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:620px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{font:500 12px var(--mono);letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:var(--surface2)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.hl td{background:var(--accent-soft)}
+.tag{display:inline-block;font:500 11px var(--mono);letter-spacing:.03em;border-radius:4px;padding:1px 7px;white-space:nowrap}
+.tag.ok{background:var(--ok-soft);color:var(--ok)}
+.tag.rep{background:var(--accent-soft);color:var(--accent)}
+.tag.unv{background:var(--warn-soft);color:var(--warn)}
+.tag.no{background:var(--bad-soft);color:var(--bad)}
+figure{margin:0 0 24px}
+.fig{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:12px}
+.fig svg{display:block;width:100%;min-width:680px;height:auto;color:var(--fg)}
+figcaption{font-size:14px;color:var(--muted);margin-top:8px;max-width:72ch}
+.dg text{font:12px "IBM Plex Sans",system-ui,sans-serif;fill:currentColor}
+.dg .sm{font-size:11px;fill:var(--muted)}
+.dg .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px}
+.dg .b{font-weight:600}
+.dg .box{fill:var(--surface);stroke:var(--line-strong);stroke-width:1.2}
+.dg .cont{fill:none;stroke:var(--line-strong);stroke-width:1.2;stroke-dasharray:5 4}
+.dg .hl{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+.dg .ag{fill:var(--agent-soft);stroke:var(--agent);stroke-width:1.5}
+.dg .bad{fill:var(--bad-soft);stroke:var(--bad);stroke-width:1.2}
+.dg .dash{stroke-dasharray:5 3}
+.dg .arr{stroke:currentColor;stroke-width:1.4;fill:none}
+.dg .arr-ag{stroke:var(--agent);stroke-width:1.6;fill:none}
+.dg .div{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}
+pre{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;font:13px/1.55 var(--mono);margin:0 0 20px}
+pre.mermaid{font-family:var(--sans);display:flex;justify-content:center}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:14px;margin:0 0 20px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;min-width:0}
+.card h3{margin:0 0 8px}
+.card dl{margin:0;font-size:14px}
+.card dt{font:500 11px var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-top:8px}
+.card dd{margin:2px 0 0}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px;margin:0 0 20px}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 14px;font-size:13px;color:var(--muted)}
+footer{margin-top:56px;padding-top:16px;border-top:1px solid var(--line);font-size:14px;color:var(--muted)}
+footer ul{columns:1}
+@media (min-width:760px){footer ul{columns:2;column-gap:32px}}
+footer li{break-inside:avoid;overflow-wrap:anywhere}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Contents">
+  <p class="lbl">Contents</p>
+  <ol>
+    <li><a href="#idea"><span class="n">1</span>The idea</a></li>
+    <li><a href="#unique"><span class="n">2</span>What is unique</a></li>
+    <li><a href="#how"><span class="n">3</span>How</a></li>
+    <li><a href="#flow"><span class="n">4</span>The whole flow</a></li>
+    <li><a href="#app"><span class="n">5</span>The app</a></li>
+    <li><a href="#specs"><span class="n">6</span>Specs</a></li>
+    <li><a href="#arch"><span class="n">7</span>Architecture</a></li>
+    <li><a href="#concept"><span class="n">8</span>Concept diagrams</a></li>
+    <li><a href="#usecases"><span class="n">9</span>Use cases</a></li>
+    <li><a href="#io"><span class="n">10</span>Input and output</a></li>
+    <li><a href="#feasible"><span class="n">11</span>Feasibility check</a></li>
+    <li><a href="#sources"><span class="n">12</span>Sources</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow">Project doc, draft 3, 16 Oct 2026</div>
+  <h1>Inkbridge</h1>
+  <p class="lede">A stroke-based canvas that any MCP agent can read from and write to, built as an end-to-end AI project for MSc applications.</p>
+  <div class="chips">
+    <span class="chip">Working name, rename freely</span>
+    <span class="chip">Demo-ready by 31 Oct 2026</span>
+    <span class="chip">Solo, part-time, about 40 h</span>
+  </div>
+</header>
+
+<div class="callout">
+  <p><strong>How to cross-check this doc.</strong> Claims are tagged <span class="tag ok">verified</span> (read in docs or repo while preparing this), <span class="tag rep">reported</span> (you tested it) or <span class="tag unv">unverified</span> (check on day 1). Section 11 lists the unverified items in the order to test them.</p>
+</div>
+
+<section id="idea">
+<h2><span class="n">1</span>The idea</h2>
+<p>A web canvas for handwritten notes, equations and diagrams. Every stroke stays as vector data. You select a region, and any MCP-capable agent (Claude Desktop, Claude Code) can inspect it: the ink, a cropped image, a transcription and its neighbours. The agent can also write back onto the canvas, as drafts you accept or reject.</p>
+<p><strong>One line:</strong> select any part of your handwritten canvas and let an agent read it, reason about it and answer next to it.</p>
+<h3>What it is for</h3>
+<p>This is a portfolio project, not a product. It should show one finished loop that touches front-end capture, a data pipeline, a vision-language model, a protocol server, agent tool design and a small evaluation. A finished and documented loop matters more than novelty.</p>
+</section>
+
+<section id="unique">
+<h2><span class="n">2</span>What unique thing we are solving</h2>
+<p>Agents on a canvas today get a picture of it. That is enough for a whiteboard of shapes, and weak for dense handwriting on a large canvas: a downscaled screenshot loses legibility, and there is no way to say "look at this part, at full resolution, with its strokes".</p>
+<div class="scroll"><table>
+<thead><tr><th>Tool</th><th>What the agent gets</th><th>Ink stored as</th><th>Agent can write</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>penecho</td><td>Screenshots of canvas, viewport, selection or region</td><td>Raster tiles (512 px)</td><td>Yes: objects, diagrams, plots, widgets</td><td>AGPL-3.0, about 2.5k stars, about 20 MCP tools <span class="tag ok">verified</span></td></tr>
+<tr><td>tldraw agent starter kit</td><td>Screenshot plus simplified shape records</td><td>Vector shapes</td><td>Yes: shapes and freehand strokes</td><td>SDK needs a license key in production <span class="tag ok">verified</span></td></tr>
+<tr><td>reMarkable MCP servers</td><td>Rendered page image, OCR through a VLM</td><td>Device file, rendered to image or SVG</td><td>Mostly read-only</td><td>Community projects <span class="tag ok">verified</span></td></tr>
+<tr><td>Excalidraw MCP (community)</td><td><code>describe_scene</code> plus screenshot</td><td>JSON elements</td><td>Yes: element create, update, delete, Mermaid</td><td>README-level claims <span class="tag ok">verified</span></td></tr>
+<tr class="hl"><td><strong>Inkbridge</strong></td><td>Per region: ink, crop image, text or LaTeX, neighbours</td><td>Vector strokes (Excalidraw JSON)</td><td>Yes, as drafts, append-only</td><td>MIT stack</td></tr>
+</tbody></table></div>
+<h3>The claim, stated narrowly</h3>
+<p>The idea category is not new, and penecho proves people want it. The specific claim here is a representation: regions as persistent, addressable objects that return ink, image and text together. The testable version: <em>an agent using region tools answers questions about a large handwritten canvas more accurately than an agent given one screenshot.</em> The small evaluation in section 6 measures exactly that, and reports the result either way.</p>
+<p>Search of existing work found no benchmark comparing raster, stroke and structured input for current frontier models on handwritten notes. That is a gap in what I found, not proof that none exists.</p>
+</section>
+
+<section id="how">
+<h2><span class="n">3</span>How: the design decisions</h2>
+<div class="scroll"><table>
+<thead><tr><th>Decision</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td><strong>Strokes are the truth; recognition is a cache.</strong> Transcriptions are keyed by a hash of the region's strokes and recomputed only when ink changes.</td><td>A bad transcription never loses ink. Unchanged regions cost no API calls.</td></tr>
+<tr><td><strong>A region is the unit of access.</strong> In v1 a region is an explicit user selection saved with an ID. No auto-segmentation.</td><td>Explicit selection is the strongest signal of intent and removes a hard research problem from a 16-day scope.</td></tr>
+<tr><td><strong>Three views per region: ink, image, text.</strong></td><td>VLM text can be wrong, so the agent can fall back to the image or the exact strokes.</td></tr>
+<tr><td><strong>Writes are drafts and append-only.</strong> Agent output is tagged, styled dashed and needs Accept or Reject. Write tools cannot edit or delete user ink.</td><td>Safe by construction. Same pattern penecho uses for AI output.</td></tr>
+<tr><td><strong>Do not build a canvas.</strong> Embed Excalidraw.</td><td>Free-draw, pen mode, selection, undo and export already exist and are MIT-licensed.</td></tr>
+<tr><td><strong>One recognizer function, behind Gemini free tier.</strong> A background worker transcribes each saved region and caches text, LaTeX and kind by stroke hash. The connected agent can still read the image itself, and corrections from you or the agent are stored as separate rows that win over Gemini.</td><td>Search and preview text work without the agent opening every region. The model is a single string, so a paid model is a one-line swap.</td></tr>
+<tr><td><strong>No stroke generation.</strong> The agent writes text boxes, shapes, arrows and Mermaid diagrams, not handwriting.</td><td>LLMs are poor at producing natural pen strokes, and it is not needed for the use cases.</td></tr>
+</tbody></table></div>
+</section>
+
+<section id="flow">
+<h2><span class="n">4</span>The whole flow</h2>
+<pre class="mermaid">
+sequenceDiagram
+  actor U as You on the tablet
+  participant C as Canvas (Excalidraw)
+  participant B as Backend (FastAPI + SQLite)
+  participant M as MCP server
+  participant A as Claude
+  U->>C: write, then select a region
+  C->>B: scene elements, region ids, crop PNG
+  B->>B: store region, hash strokes
+  B-->>B: Gemini transcribes crop, cached by hash
+  A->>M: list_regions
+  M->>B: read regions
+  B-->>M: ids, kinds, bounds
+  M-->>A: region list
+  A->>M: get_region(id, image, ink)
+  M-->>A: text, image, bounds, ink
+  A->>M: write_text or draw_diagram
+  M->>B: queue write op
+  B->>C: WebSocket: add draft elements
+  C-->>U: dashed draft appears
+  U->>C: Accept or Reject
+</pre>
+<ol>
+<li><strong>Capture.</strong> You write with the stylus in pen mode. Excalidraw stores strokes as elements.</li>
+<li><strong>Region.</strong> You select strokes and save them as a region. The client exports a crop PNG and sends elements, region and crop to the backend.</li>
+<li><strong>Recognise (cached).</strong> A worker sends the crop to Gemini and stores text, LaTeX and kind, keyed by stroke hash. Unchanged regions are never re-sent.</li>
+<li><strong>Ask.</strong> You talk to Claude in its own app. It calls MCP tools to list and read regions.</li>
+<li><strong>Answer.</strong> Claude calls a write tool. The backend pushes draft elements to the canvas. You accept or reject.</li>
+</ol>
+</section>
+
+<section id="app">
+<h2><span class="n">5</span>The app: web, or something else?</h2>
+<div class="scroll"><table>
+<thead><tr><th>Option</th><th>Pro</th><th>Con</th><th>Verdict</th></tr></thead>
+<tbody>
+<tr class="hl"><td><strong>Web app (React + Excalidraw)</strong></td><td>Stylus through Pointer Events, runs on tablet and laptop, no install, fastest to build</td><td>Needs a backend running on the laptop</td><td>Chosen</td></tr>
+<tr><td>Native Android (Compose + ML Kit)</td><td>Lowest ink latency, offline recognition</td><td>Months of work: canvas, ink, storage, MCP bridge</td><td>Later, personal</td></tr>
+<tr><td>Desktop (Electron)</td><td>Single install</td><td>Packaging time for no benefit to the demo</td><td>No</td></tr>
+</tbody></table></div>
+<h3>Topology for the demo</h3>
+<p>The laptop runs the backend and the MCP server, and Claude Desktop or Claude Code runs there too. The tablet opens the web app over the home Wi-Fi at the laptop's LAN address. Everything is local; nothing is deployed publicly.</p>
+<div class="callout warn">
+<p><strong>Check on day 1.</strong> A page served over plain HTTP on a LAN address is not a secure context, and some browser features need one. If Excalidraw misbehaves there, serve the dev server over HTTPS with a local certificate, or draw on the laptop and move the tablet step later. <span class="tag unv">unverified</span></p>
+</div>
+</section>
+
+<section id="specs">
+<h2><span class="n">6</span>Specs</h2>
+<h3>Stack</h3>
+<div class="scroll"><table>
+<thead><tr><th>Layer</th><th>Choice</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>Frontend</td><td>Vite, React, TypeScript, <code>@excalidraw/excalidraw</code> (MIT)</td><td><span class="tag ok">verified</span></td></tr>
+<tr><td>Scene API</td><td><code>getSceneElements</code>, <code>getAppState</code>, <code>updateScene</code> with <code>captureUpdate</code>, <code>onChange</code></td><td><span class="tag ok">verified</span></td></tr>
+<tr><td>Element creation</td><td><code>convertToExcalidrawElements</code>: text, shapes, arrows with <code>start</code> and <code>end</code> binding, labels</td><td><span class="tag ok">verified</span></td></tr>
+<tr><td>Diagrams from text</td><td><code>@excalidraw/mermaid-to-excalidraw</code> (MIT). Flowcharts only in v1.</td><td><span class="tag ok">verified</span> flowcharts; <span class="tag unv">unverified</span> other types</td></tr>
+<tr><td>Backend</td><td>Python 3.11+, FastAPI, WebSocket, SQLite with FTS5</td><td>Standard</td></tr>
+<tr><td>MCP</td><td>Official MCP Python SDK (FastMCP), stdio transport</td><td>Returning PNG as image content <span class="tag unv">unverified</span></td></tr>
+<tr><td>Recognition</td><td><code>google-genai</code> SDK, <code>gemini-3.1-flash-lite</code> on the free tier, JSON output (text, latex, kind)</td><td>Model name and rate limits <span class="tag unv">unverified</span>; free tier and prices <span class="tag ok">verified</span></td></tr>
+<tr><td>Hosting</td><td>Local only</td><td>No licence or auth concerns</td></tr>
+</tbody></table></div>
+
+<h3>Data model (SQLite)</h3>
+<div class="scroll"><table>
+<thead><tr><th>Table</th><th>Columns</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>documents</code></td><td>id, title, updated_at</td><td>One canvas per document</td></tr>
+<tr><td><code>scenes</code></td><td>document_id, version, elements_json</td><td>Latest scene snapshot as Excalidraw JSON</td></tr>
+<tr><td><code>regions</code></td><td>id, document_id, element_ids_json, bbox, kind, created_by, stroke_hash, png_path</td><td>The addressable unit</td></tr>
+<tr><td><code>recognitions</code></td><td>region_id, stroke_hash, source, model, text, latex, created_at</td><td>Cache and search index source. <code>source</code> is gemini, agent or user; the best row per region wins: user over agent over gemini</td></tr>
+<tr><td><code>agent_ops</code></td><td>id, type, payload_json, status</td><td>Write queue. Status: pending, applied, accepted, rejected</td></tr>
+</tbody></table></div>
+
+<h3>MCP tools</h3>
+<div class="scroll"><table>
+<thead><tr><th>Tool</th><th>Input</th><th>Returns</th><th>Mutates</th></tr></thead>
+<tbody>
+<tr><td><code>list_regions</code></td><td>document_id?, kind?, limit</td><td>id, kind, bounds, stroke_count, preview text, updated_at</td><td>No</td></tr>
+<tr><td><code>get_region</code></td><td>region_id, include_image=true, include_ink=false</td><td>text, latex, kind, bounds, PNG, optional ink points</td><td>No</td></tr>
+<tr><td><code>get_neighbors</code></td><td>region_id, radius</td><td>nearby regions with distance and direction</td><td>No</td></tr>
+<tr><td><code>search</code></td><td>query, limit</td><td>region_id, snippet, score (FTS5)</td><td>No</td></tr>
+<tr class="hl"><td><code>write_text</code></td><td>text, anchor_region_id or x,y, placement</td><td>op_id, element_ids, status "draft"</td><td>Adds draft</td></tr>
+<tr class="hl"><td><code>draw_diagram</code></td><td>mermaid, anchor_region_id or x,y</td><td>op_id, element_ids, status "draft"</td><td>Adds draft</td></tr>
+<tr><td><code>save_transcription</code></td><td>region_id, text, latex?, kind?</td><td>recognition id, source "agent"</td><td>Metadata only</td></tr>
+</tbody></table></div>
+<p>Limits: image width capped at 1024 px; ink points decimated to at most 5,000 per response; write tools reject any operation that targets an existing element. <code>save_transcription</code> writes only to the <code>recognitions</code> table, never to the canvas, and a user correction is never overwritten by an agent row.</p>
+
+<h3>Write-back</h3>
+<ul>
+<li>Agent elements carry <code>customData: {author: "agent", draft: true, op_id}</code> and a dashed style. <span class="tag unv">unverified</span> that <code>customData</code> survives save and reload.</li>
+<li>Text uses the hand-drawn font. Diagrams come from Mermaid conversion.</li>
+<li>Accept removes the draft flag. Reject deletes only that op's elements.</li>
+<li>If Accept or Reject runs late: apply drafts directly through <code>updateScene</code> and rely on undo.</li>
+</ul>
+
+<h3>Evaluation (small, honest)</h3>
+<ul>
+<li><strong>Set:</strong> 20 regions you write on the tablet: 8 handwriting, 6 equations, 6 diagrams. Minimum viable: 15 regions.</li>
+<li><strong>Metric 1, recognition:</strong> character error rate for text, normalised exact match for equations. If <code>save_transcription</code> is built, report Gemini and agent readings separately.</li>
+<li><strong>Metric 2, agent QA:</strong> 20 questions about one dense canvas. Condition A: whole-canvas screenshot. Condition B: region tools.</li>
+<li><strong>Report:</strong> one table and three failure examples in the README, whatever the result.</li>
+</ul>
+
+<h3>Cost and keys</h3>
+<div class="scroll"><table>
+<thead><tr><th>Item</th><th>Cost</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>Claude as MCP client (Desktop or Code)</td><td>Included in your Claude subscription</td><td>No API key. Counts against subscription usage limits.</td></tr>
+<tr><td>Recognition on Gemini free tier</td><td>Free</td><td>Rate limits not checked. Content may be used to improve Google products.</td></tr>
+<tr><td>Recognition fallback, paid</td><td>About $0.0006 per region call on Gemini 3.1 Flash-Lite ($0.25 in, $1.50 out per 1M tokens)</td><td>Same function, change the model string. Estimate assumes about 1,500 input and 200 output tokens per call.</td></tr>
+<tr><td>Agent QA eval, if run through an API</td><td>Under about $5</td><td>Free if run by hand in Claude Desktop and recorded.</td></tr>
+</tbody></table></div>
+
+<h3>Non-functional</h3>
+<ul>
+<li>Local-first: no telemetry, no account. The Gemini key lives in an environment variable.</li>
+<li>Free-tier content is used by Google to improve its products, so send only test and eval pages, never personal notes.</li>
+<li>Recognition never blocks drawing and runs after an idle delay.</li>
+<li>Out of scope: auto-segmentation, collaboration, auth, native Android, LaTeX rendering on canvas, handwriting generation, multi-page documents, public deployment, multi-agent orchestration.</li>
+</ul>
+</section>
+
+<section id="arch">
+<h2><span class="n">7</span>Top-level architecture</h2>
+<figure>
+<div class="fig">
+<svg class="dg" viewBox="0 0 920 430" role="img" aria-label="Architecture: tablet browser with Excalidraw talks over WebSocket to a laptop backend with SQLite and a recognizer worker; an MCP server reads the backend over HTTP and serves Claude over stdio; the recognizer calls an external VLM API.">
+<defs>
+<marker id="ah1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+</defs>
+
+<rect class="cont" x="10" y="30" width="220" height="280" rx="8"/>
+<text class="b" x="22" y="52">Tablet browser (web app)</text>
+<rect class="box" x="24" y="68" width="192" height="60" rx="6"/>
+<text class="b" x="36" y="92">Excalidraw canvas</text>
+<text class="sm" x="36" y="110">pen mode, strokes, shapes</text>
+<rect class="box" x="24" y="142" width="192" height="60" rx="6"/>
+<text class="b" x="36" y="166">Region tool</text>
+<text class="sm" x="36" y="184">select, save region + crop PNG</text>
+<rect class="ag" x="24" y="216" width="192" height="60" rx="6"/>
+<text class="b" x="36" y="240">Draft layer</text>
+<text class="sm" x="36" y="258">agent output, Accept / Reject</text>
+
+<rect class="cont" x="340" y="30" width="260" height="280" rx="8"/>
+<text class="b" x="352" y="52">Laptop: backend</text>
+<rect class="box" x="354" y="68" width="232" height="50" rx="6"/>
+<text class="b" x="366" y="90">FastAPI + WebSocket</text>
+<text class="sm" x="366" y="107">scene sync, write-op queue</text>
+<rect class="box" x="354" y="132" width="232" height="76" rx="6"/>
+<text class="b" x="366" y="154">SQLite</text>
+<text class="sm" x="366" y="172">documents, scenes, regions</text>
+<text class="sm" x="366" y="190">recognitions (cache), agent_ops</text>
+<rect class="hl" x="354" y="222" width="232" height="70" rx="6"/>
+<text class="b" x="366" y="244">Recognizer worker</text>
+<text class="sm" x="366" y="262">crop, VLM, text + LaTeX + kind</text>
+<text class="sm" x="366" y="280">cached by stroke hash</text>
+
+<rect class="cont" x="710" y="30" width="200" height="150" rx="8"/>
+<text class="b" x="722" y="52">MCP server (stdio)</text>
+<text class="mono" x="722" y="78">list_regions</text>
+<text class="mono" x="722" y="96">get_region</text>
+<text class="mono" x="722" y="114">get_neighbors</text>
+<text class="mono" x="816" y="78">search</text>
+<text class="mono" x="816" y="96">write_text</text>
+<text class="mono" x="816" y="114">draw_diagram</text>
+<text class="mono" x="722" y="132">save_transcription</text>
+<text class="sm" x="722" y="168">canvas writes are drafts only</text>
+
+<rect class="box" x="710" y="214" width="200" height="76" rx="6"/>
+<text class="b" x="722" y="238">MCP client (agent)</text>
+<text class="sm" x="722" y="256">Claude Desktop or</text>
+<text class="sm" x="722" y="272">Claude Code</text>
+
+<rect class="box dash" x="354" y="360" width="232" height="50" rx="6"/>
+<text class="b" x="366" y="382">Gemini API (free tier)</text>
+<text class="sm" x="366" y="399">key in env var, test pages only</text>
+
+<path class="arr" d="M230 104 H340" marker-end="url(#ah1)"/>
+<text class="sm" x="285" y="96" text-anchor="middle">scene, crops</text>
+<path class="arr-ag" d="M340 140 H230" marker-end="url(#ah1)"/>
+<text class="sm" x="285" y="158" text-anchor="middle">draft elements</text>
+
+<path class="arr" d="M710 104 H600" marker-end="url(#ah1)"/>
+<text class="sm" x="655" y="96" text-anchor="middle">read, queue ops</text>
+<path class="arr" d="M600 140 H710" marker-end="url(#ah1)"/>
+<text class="sm" x="655" y="158" text-anchor="middle">regions + images</text>
+
+<path class="arr" d="M810 180 V214" marker-start="url(#ah1)" marker-end="url(#ah1)"/>
+<text class="sm" x="820" y="202">tool calls</text>
+
+<path class="arr" d="M470 292 V360" marker-start="url(#ah1)" marker-end="url(#ah1)"/>
+<text class="sm" x="482" y="332">crop in, text out</text>
+</svg>
+</div>
+<figcaption>The tablet talks only to the backend. The agent talks only to the MCP server. The backend is the single owner of regions, recognitions and the write queue, so the two sides never need to know about each other.</figcaption>
+</figure>
+</section>
+
+<section id="concept">
+<h2><span class="n">8</span>Concept diagrams</h2>
+<h3>What changes: raster canvas versus region canvas</h3>
+<figure>
+<div class="fig">
+<svg class="dg" viewBox="0 0 920 360" role="img" aria-label="Top lane: pen strokes are baked into bitmap tiles and the agent receives only a screenshot. Bottom lane: strokes stay as vector data, are grouped into a region object, and the agent gets ink, crop image, text and neighbours in one call.">
+<defs>
+<marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="ah2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--agent)"/></marker>
+</defs>
+
+<text class="b" x="20" y="22">Raster canvas (penecho-style)</text>
+<rect class="box" x="20" y="36" width="140" height="56" rx="6"/>
+<text class="b" x="32" y="60">Pen strokes</text>
+<text class="sm" x="32" y="78">points, pressure</text>
+<rect class="box" x="230" y="36" width="150" height="56" rx="6"/>
+<text class="b" x="242" y="60">Bitmap tiles</text>
+<text class="sm" x="242" y="78">strokes baked in</text>
+<rect class="box" x="450" y="36" width="150" height="56" rx="6"/>
+<text class="b" x="462" y="60">Screenshot</text>
+<text class="sm" x="462" y="78">viewport or selection</text>
+<rect class="box" x="670" y="36" width="230" height="56" rx="6"/>
+<text class="b" x="682" y="60">Agent</text>
+<text class="sm" x="682" y="78">reads pixels, then guesses</text>
+<path class="arr" d="M160 64 H230" marker-end="url(#ah2)"/>
+<text class="sm" x="195" y="56" text-anchor="middle">rasterise</text>
+<path class="arr" d="M380 64 H450" marker-end="url(#ah2)"/>
+<text class="sm" x="415" y="56" text-anchor="middle">capture</text>
+<path class="arr" d="M600 64 H670" marker-end="url(#ah2)"/>
+<text class="sm" x="635" y="56" text-anchor="middle">image only</text>
+<text class="sm" x="20" y="118">Lost on the way: stroke identity, order and region boundaries. The agent can only ask for another screenshot.</text>
+
+<line class="div" x1="20" y1="140" x2="900" y2="140"/>
+
+<text class="b" x="20" y="166">Region canvas (this project)</text>
+<rect class="hl" x="20" y="200" width="140" height="56" rx="6"/>
+<text class="b" x="32" y="224">Pen strokes</text>
+<text class="sm" x="32" y="242">kept as vector data</text>
+<rect class="hl" x="230" y="200" width="150" height="56" rx="6"/>
+<text class="b" x="242" y="224">Region object</text>
+<text class="sm" x="242" y="242">id, bounds, stroke ids</text>
+<path class="arr" d="M160 228 H230" marker-end="url(#ah2)"/>
+<text class="sm" x="195" y="220" text-anchor="middle">select</text>
+
+<rect class="box" x="450" y="178" width="170" height="34" rx="6"/>
+<text x="462" y="200">ink: points, pressure</text>
+<rect class="box" x="450" y="220" width="170" height="34" rx="6"/>
+<text x="462" y="242">image: crop PNG</text>
+<rect class="box" x="450" y="262" width="170" height="34" rx="6"/>
+<text x="462" y="284">text, LaTeX, kind</text>
+<rect class="box" x="450" y="304" width="170" height="34" rx="6"/>
+<text x="462" y="326">neighbours, bounds</text>
+<path class="arr" d="M380 220 L450 195" marker-end="url(#ah2)"/>
+<path class="arr" d="M380 228 L450 237" marker-end="url(#ah2)"/>
+<path class="arr" d="M380 236 L450 279" marker-end="url(#ah2)"/>
+<path class="arr" d="M380 244 L450 321" marker-end="url(#ah2)"/>
+
+<rect class="ag" x="690" y="240" width="210" height="56" rx="6"/>
+<text class="b" x="702" y="264">Agent</text>
+<text class="sm" x="702" y="282">get_region(id): all four</text>
+<path class="arr-ag" d="M620 195 L690 258" marker-end="url(#ah2g)"/>
+<path class="arr-ag" d="M620 237 L690 262" marker-end="url(#ah2g)"/>
+<path class="arr-ag" d="M620 279 L690 272" marker-end="url(#ah2g)"/>
+<path class="arr-ag" d="M620 321 L690 282" marker-end="url(#ah2g)"/>
+</svg>
+</div>
+<figcaption>The difference is one early decision: keep strokes as data and group them into addressable regions. The agent then picks which view it needs for each question.</figcaption>
+</figure>
+
+<h3>Write-back: the life of an agent edit</h3>
+<figure>
+<div class="fig">
+<svg class="dg" viewBox="0 0 920 260" role="img" aria-label="An agent write call becomes a dashed draft on the canvas. The user accepts it, making it a normal element, or rejects it, removing it. Agents can only add elements, never edit or delete user ink.">
+<defs>
+<marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="ah3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="var(--agent)"/></marker>
+</defs>
+<rect class="box" x="20" y="65" width="230" height="60" rx="6"/>
+<text class="b" x="32" y="90">Agent tool call</text>
+<text class="sm" x="32" y="108">write_text or draw_diagram</text>
+
+<rect class="ag dash" x="340" y="65" width="240" height="60" rx="6"/>
+<text class="b" x="352" y="90">Draft on canvas</text>
+<text class="sm" x="352" y="108">dashed, author=agent, op_id</text>
+
+<rect class="hl" x="670" y="26" width="230" height="56" rx="6"/>
+<text class="b" x="682" y="50">Accepted</text>
+<text class="sm" x="682" y="68">normal element, undoable</text>
+
+<rect class="bad" x="670" y="116" width="230" height="56" rx="6"/>
+<text class="b" x="682" y="140">Rejected</text>
+<text class="sm" x="682" y="158">only that op's elements removed</text>
+
+<path class="arr" d="M250 95 H340" marker-end="url(#ah3)"/>
+<text class="sm" x="295" y="87" text-anchor="middle">queue, WS</text>
+<path class="arr" d="M580 88 L670 56" marker-end="url(#ah3)"/>
+<text class="sm" x="596" y="62">Accept</text>
+<path class="arr" d="M580 102 L670 144" marker-end="url(#ah3)"/>
+<text class="sm" x="596" y="140">Reject</text>
+
+<rect class="ag" x="20" y="196" width="880" height="44" rx="6"/>
+<text class="b" x="34" y="222">Invariant: write tools only add elements. An agent never edits or deletes your ink.</text>
+</svg>
+</div>
+<figcaption>Every agent edit has to be accepted before it is part of the note. The invariant is enforced in the backend, so a bad tool call cannot touch existing strokes.</figcaption>
+</figure>
+</section>
+
+<section id="usecases">
+<h2><span class="n">9</span>Use cases</h2>
+<div class="cards">
+<div class="card"><h3>Check my working</h3><dl>
+<dt>You do</dt><dd>Write a derivation, select it, save as a region.</dd>
+<dt>Agent calls</dt><dd><code>get_region</code> with image and text, then <code>write_text</code>.</dd>
+<dt>Result</dt><dd>A draft note beside the derivation pointing out the first wrong step.</dd></dl></div>
+<div class="card"><h3>Clean up my sketch</h3><dl>
+<dt>You do</dt><dd>Sketch an architecture by hand, select it.</dd>
+<dt>Agent calls</dt><dd><code>get_region</code> with image, then <code>draw_diagram</code> with Mermaid.</dd>
+<dt>Result</dt><dd>A tidy flowchart as a draft next to the sketch, plus a list of what is missing.</dd></dl></div>
+<div class="card"><h3>Find what I wrote</h3><dl>
+<dt>You do</dt><dd>Ask "what did I write about gradient descent?"</dd>
+<dt>Agent calls</dt><dd><code>search</code>, then <code>get_region</code> on the top hits.</dd>
+<dt>Result</dt><dd>Matching regions with their location on the canvas and a short answer.</dd></dl></div>
+<div class="card"><h3>Summarise a lecture page</h3><dl>
+<dt>You do</dt><dd>Select a dense page of notes.</dd>
+<dt>Agent calls</dt><dd><code>list_regions</code>, <code>get_region</code> on each, <code>write_text</code>.</dd>
+<dt>Result</dt><dd>A structured summary as a draft; accept to keep it on the canvas.</dd></dl></div>
+</div>
+<p>The demo video uses the first two: one read-and-explain, one read-and-draw.</p>
+</section>
+
+<section id="io">
+<h2><span class="n">10</span>Input and output</h2>
+<div class="two">
+<div class="card"><h3>Inputs</h3>
+<ul>
+<li><strong>Pen strokes.</strong> Excalidraw <code>freedraw</code> elements: points and, if present, pressure.</li>
+<li><strong>Typed shapes and text.</strong> Same element format.</li>
+<li><strong>Region selection.</strong> A set of element ids saved by you.</li>
+<li><strong>Agent tool calls.</strong> JSON over MCP stdio.</li>
+<li><strong>Optional import.</strong> An <code>.excalidraw</code> file, such as your existing diagrams.</li>
+</ul></div>
+<div class="card"><h3>Outputs</h3>
+<ul>
+<li><strong>To the agent.</strong> Structured JSON plus a PNG as image content.</li>
+<li><strong>To the canvas.</strong> Draft elements: text, shapes, arrows.</li>
+<li><strong>To disk.</strong> <code>.excalidraw</code> JSON and PNG export.</li>
+<li><strong>To the reader.</strong> Eval table, README, architecture diagram, 2-minute demo video.</li>
+</ul></div>
+</div>
+<h3>Example: <code>get_region</code> response</h3>
+<pre><code>{
+  "id": "reg_7f3a",
+  "kind": "math",
+  "bounds": { "x": 120, "y": 340, "width": 260, "height": 90 },
+  "stroke_count": 41,
+  "text": "d/dx (x^2) = 2x",
+  "latex": "\\frac{d}{dx} x^2 = 2x",
+  "image": "&lt;PNG as MCP image content&gt;",
+  "ink": null,
+  "updated_at": "2026-10-20T19:42:11Z"
+}</code></pre>
+<h3>Example: <code>write_text</code> call and result</h3>
+<pre><code>// call
+{ "text": "Step 2 drops the chain rule factor.",
+  "anchor_region_id": "reg_7f3a", "placement": "right" }
+
+// result
+{ "op_id": "op_19c2", "element_ids": ["el_a1", "el_a2"], "status": "draft" }</code></pre>
+</section>
+
+<section id="feasible">
+<h2><span class="n">11</span>Feasibility check</h2>
+<div class="callout ag">
+<p><strong>Verdict:</strong> feasible by 31 Oct at about 40 hours, if the read path is built first and write-back stays minimal. The largest risks are write-back and available hours, not the core idea.</p>
+</div>
+
+<h3>What is confirmed and what is not</h3>
+<div class="scroll"><table>
+<thead><tr><th>Item</th><th>Status</th><th>Source or test</th></tr></thead>
+<tbody>
+<tr><td>Excalidraw is MIT and embeds as a React component</td><td><span class="tag ok">verified</span></td><td>Repo license, install docs</td></tr>
+<tr><td>Read and write scene through <code>excalidrawAPI</code></td><td><span class="tag ok">verified</span></td><td>API docs</td></tr>
+<tr><td>Skeleton elements with arrow binding and labels</td><td><span class="tag ok">verified</span></td><td>Element skeleton docs</td></tr>
+<tr><td>penecho is raster, AGPL-3.0, no stroke-read tool</td><td><span class="tag ok">verified</span></td><td>Architecture and MCP docs</td></tr>
+<tr><td>tldraw needs a licence key for production</td><td><span class="tag ok">verified</span></td><td>tldraw licence page</td></tr>
+<tr><td>Pen mode with palm rejection exists</td><td><span class="tag rep">reported</span></td><td>You saw it in the top bar</td></tr>
+<tr><td>Lasso selection exists in the app</td><td><span class="tag rep">reported</span></td><td>You saw it in the app</td></tr>
+<tr><td>Lasso present in the embedded npm build</td><td><span class="tag unv">unverified</span></td><td>Day-1 test. Box selection is the fallback.</td></tr>
+<tr><td><code>freedraw</code> carries pressure; stylus pressure arrives</td><td><span class="tag unv">unverified</span></td><td>Day-1 test on the tablet</td></tr>
+<tr><td><code>customData</code> survives save and reload</td><td><span class="tag unv">unverified</span></td><td>Day-1 test</td></tr>
+<tr><td>Web app loads and draws over LAN HTTP on the tablet</td><td><span class="tag unv">unverified</span></td><td>Day-1 test</td></tr>
+<tr><td>Mermaid conversion beyond flowcharts</td><td><span class="tag unv">unverified</span></td><td>Skip in v1</td></tr>
+<tr><td>MCP SDK returns PNG as image content to Claude</td><td><span class="tag unv">unverified</span></td><td>Day-2 test</td></tr>
+<tr><td>VLM reads your handwriting well enough</td><td><span class="tag unv">unverified</span></td><td>Measured by the eval</td></tr>
+<tr><td>Gemini free tier is free, and its content is used to improve products</td><td><span class="tag ok">verified</span></td><td>Gemini pricing page</td></tr>
+<tr><td>Free-tier rate limits cover development and the eval</td><td><span class="tag unv">unverified</span></td><td>Check the rate-limits page; paid fallback costs cents</td></tr>
+<tr><td>LaTeX rendering on canvas</td><td><span class="tag no">not available</span></td><td>Write math as text; KaTeX to image is a stretch</td></tr>
+<tr><td>Your 143 vault drawings are stroke data</td><td><span class="tag no">no</span></td><td>They are shapes and text; use as diagram test cases only</td></tr>
+</tbody></table></div>
+
+<h3>Day-1 checklist (about 30 minutes)</h3>
+<ol>
+<li>Open the embedded Excalidraw over the laptop's LAN address on the tablet. Draw with the stylus.</li>
+<li>Select a group of strokes. Read <code>selectedElementIds</code> and the matching <code>freedraw</code> elements, including any pressure array.</li>
+<li>Call <code>updateScene</code> to add a text element and a Mermaid flowchart.</li>
+<li>Add <code>customData</code> to an element, save, reload, and read it back.</li>
+<li>Export only the selection as a PNG.</li>
+</ol>
+<p>All five pass: commit to Excalidraw. Stylus or <code>customData</code> fails: fall back to tldraw with a local-only demo, which keeps the same architecture.</p>
+
+<h3>Effort</h3>
+<div class="scroll"><table>
+<thead><tr><th>Chunk</th><th class="num">Hours</th><th>Milestone</th></tr></thead>
+<tbody>
+<tr><td>Canvas, sync, persistence</td><td class="num">7</td><td rowspan="2">Oct 15 to 18: strokes persist, a selection becomes a region with a crop</td></tr>
+<tr><td>Regions and crops</td><td class="num">4</td></tr>
+<tr><td>FastAPI and MCP read tools</td><td class="num">8</td><td rowspan="2">Oct 19 to 23: Claude answers a question from a region</td></tr>
+<tr><td>Recognition cache and search</td><td class="num">4</td></tr>
+<tr><td>Write-back with drafts</td><td class="num">9</td><td rowspan="2">Oct 24 to 27: Claude draws a diagram beside your region; eval table exists</td></tr>
+<tr><td>Evaluation</td><td class="num">4</td></tr>
+<tr><td>README, diagram, demo video</td><td class="num">4</td><td>Oct 28 to 31</td></tr>
+<tr class="hl"><td><strong>Total</strong></td><td class="num"><strong>40</strong></td><td>About 2.5 h per day across 16 days</td></tr>
+</tbody></table></div>
+
+<h3>Risks and cut order</h3>
+<div class="scroll"><table>
+<thead><tr><th>Risk</th><th>Likelihood</th><th>Response</th></tr></thead>
+<tbody>
+<tr><td>Write-back takes longer than 9 h</td><td>Medium to high</td><td>Build it after the read path. Fall back to direct apply plus undo.</td></tr>
+<tr><td>Stylus or LAN secure-context problem</td><td>Medium</td><td>Day-1 test. HTTPS dev server, or tldraw local-only.</td></tr>
+<tr><td>Transcription is poor on your handwriting</td><td>Medium</td><td>Report it. The agent still reads the image directly.</td></tr>
+<tr><td>Free-tier rate limit or model rename</td><td>Low</td><td>Backoff and cache. Swap the model string, or move to a paid model for cents.</td></tr>
+<tr><td>Scope creep: auto-segmentation, LaTeX, multi-page</td><td>High</td><td>Listed as out of scope above.</td></tr>
+<tr><td>Fewer hours than planned (job, IELTS, interviews)</td><td>High</td><td>Follow the cut order below.</td></tr>
+</tbody></table></div>
+<p><strong>Cut order:</strong> <code>save_transcription</code> (built last, after the read path works), then <code>search</code>, then <code>get_neighbors</code>, then Accept and Reject. Shrink the eval to 15 regions but keep it. Never cut the demo video or README.</p>
+<p>If you have fewer than 30 hours in total, drop write-back's Mermaid path and ship <code>write_text</code> only.</p>
+
+<h3>Relationship to the survey</h3>
+<p>The survey stays a separate December task. This project gives it concrete context and a small result to cite, and it does not depend on the survey.</p>
+</section>
+
+<footer id="sources">
+<h2 style="margin-top:0"><span class="n">12</span>Sources</h2>
+<ul>
+<li><a href="https://github.com/penecho/penecho">penecho repository</a></li>
+<li><a href="https://raw.githubusercontent.com/penecho/penecho/main/docs/mcp-setup.md">penecho MCP setup</a></li>
+<li><a href="https://raw.githubusercontent.com/penecho/penecho/main/docs/architecture.md">penecho architecture</a></li>
+<li><a href="https://tldraw.dev/starter-kits/agent">tldraw agent starter kit</a></li>
+<li><a href="https://tldraw.dev/community/license">tldraw licence</a></li>
+<li><a href="https://github.com/excalidraw/excalidraw">Excalidraw repository (MIT)</a></li>
+<li><a href="https://docs.excalidraw.com/docs/@excalidraw/excalidraw/installation">Excalidraw installation</a></li>
+<li><a href="https://docs.excalidraw.com/docs/@excalidraw/excalidraw/api/props/excalidraw-api">Excalidraw API</a></li>
+<li><a href="https://docs.excalidraw.com/docs/@excalidraw/excalidraw/api/excalidraw-element-skeleton">Excalidraw element skeleton</a></li>
+<li><a href="https://github.com/excalidraw/mermaid-to-excalidraw">mermaid-to-excalidraw</a></li>
+<li><a href="https://pypi.org/project/rm-mcp/">rm-mcp (reMarkable MCP)</a></li>
+<li><a href="https://cdn.jsdelivr.net/gh/yctimlin/mcp_excalidraw@main/README.md">Excalidraw MCP (community)</a></li>
+<li><a href="https://ai.google.dev/gemini-api/docs/pricing">Gemini API pricing</a></li>
+<li><a href="https://arxiv.org/pdf/2402.15307">Representing online handwriting for VLMs</a></li>
+<li><a href="https://arxiv.org/html/2505.23566v4">Uni-MuMER</a></li>
+</ul>
+</footer>
+</main>
+</div>
