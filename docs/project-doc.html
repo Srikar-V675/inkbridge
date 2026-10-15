@@ -136,7 +136,7 @@ footer li{break-inside:avoid;overflow-wrap:anywhere}
 
 <main>
 <header class="top">
-  <div class="eyebrow">Project doc, draft 3, 16 Oct 2026</div>
+  <div class="eyebrow">Project doc, draft 4, 16 Oct 2026</div>
   <h1>Inkbridge</h1>
   <p class="lede">A stroke-based canvas that any MCP agent can read from and write to, built as an end-to-end AI project for MSc applications.</p>
   <div class="chips">
@@ -235,8 +235,8 @@ sequenceDiagram
 </tbody></table></div>
 <h3>Topology for the demo</h3>
 <p>The laptop runs the backend and the MCP server, and Claude Desktop or Claude Code runs there too. The tablet opens the web app over the home Wi-Fi at the laptop's LAN address. Everything is local; nothing is deployed publicly.</p>
-<div class="callout warn">
-<p><strong>Check on day 1.</strong> A page served over plain HTTP on a LAN address is not a secure context, and some browser features need one. If Excalidraw misbehaves there, serve the dev server over HTTPS with a local certificate, or draw on the laptop and move the tablet step later. <span class="tag unv">unverified</span></p>
+<div class="callout">
+<p><strong>Checked on day 1.</strong> A page served over plain HTTP on a LAN address is not a secure context. Drawing, pen pressure, selection and export all worked there on the tablet, so no HTTPS setup is needed for v1. <span class="tag rep">reported</span> If a later feature needs a secure context, serve the dev server over HTTPS with a local certificate.</p>
 </div>
 </section>
 
@@ -262,7 +262,7 @@ sequenceDiagram
 <tbody>
 <tr><td><code>documents</code></td><td>id, title, updated_at</td><td>One canvas per document</td></tr>
 <tr><td><code>scenes</code></td><td>document_id, version, elements_json</td><td>Latest scene snapshot as Excalidraw JSON</td></tr>
-<tr><td><code>regions</code></td><td>id, document_id, element_ids_json, bbox, kind, created_by, stroke_hash, png_path</td><td>The addressable unit</td></tr>
+<tr><td><code>regions</code></td><td>id, document_id, element_ids_json, bbox, kind, created_by, stroke_hash, png_path, status, updated_at</td><td>The addressable unit. <code>status</code> is active or orphaned (all its strokes deleted); <code>stroke_hash</code> is refreshed whenever its ink changes</td></tr>
 <tr><td><code>recognitions</code></td><td>region_id, stroke_hash, source, model, text, latex, created_at</td><td>Cache and search index source. <code>source</code> is gemini, agent or user; the best row per region wins: user over agent over gemini</td></tr>
 <tr><td><code>agent_ops</code></td><td>id, type, payload_json, status</td><td>Write queue. Status: pending, applied, accepted, rejected</td></tr>
 </tbody></table></div>
@@ -283,7 +283,7 @@ sequenceDiagram
 
 <h3>Write-back</h3>
 <ul>
-<li>Agent elements carry <code>customData: {author: "agent", draft: true, op_id}</code> and a dashed style. <span class="tag unv">unverified</span> that <code>customData</code> survives save and reload.</li>
+<li>Agent elements carry <code>customData: {author: "agent", draft: true, op_id}</code> and a dashed style. <span class="tag rep">reported</span> that <code>customData</code> survives save and reload (Day-1 test).</li>
 <li>Text uses the hand-drawn font. Diagrams come from Mermaid conversion.</li>
 <li>Accept removes the draft flag. Reject deletes only that op's elements.</li>
 <li>If Accept or Reject runs late: apply drafts directly through <code>updateScene</code> and rely on undo.</li>
@@ -388,7 +388,7 @@ sequenceDiagram
 <text class="sm" x="482" y="332">crop in, text out</text>
 </svg>
 </div>
-<figcaption>The tablet talks only to the backend. The agent talks only to the MCP server. The backend is the single owner of regions, recognitions and the write queue, so the two sides never need to know about each other.</figcaption>
+<figcaption>The tablet talks only to the backend. The agent talks only to the MCP server. The backend is the single owner of regions, recognitions and the write queue, so the two sides never need to know about each other. In the repository, <code>web/</code> is the frontend and <code>server/</code> is one Python package that serves both the API and the MCP server.</figcaption>
 </figure>
 </section>
 
@@ -581,9 +581,9 @@ sequenceDiagram
 <tr><td>Pen mode with palm rejection exists</td><td><span class="tag rep">reported</span></td><td>You saw it in the top bar</td></tr>
 <tr><td>Lasso selection exists in the app</td><td><span class="tag rep">reported</span></td><td>You saw it in the app</td></tr>
 <tr><td>Lasso present in the embedded npm build</td><td><span class="tag unv">unverified</span></td><td>Day-1 test. Box selection is the fallback.</td></tr>
-<tr><td><code>freedraw</code> carries pressure; stylus pressure arrives</td><td><span class="tag unv">unverified</span></td><td>Day-1 test on the tablet</td></tr>
-<tr><td><code>customData</code> survives save and reload</td><td><span class="tag unv">unverified</span></td><td>Day-1 test</td></tr>
-<tr><td>Web app loads and draws over LAN HTTP on the tablet</td><td><span class="tag unv">unverified</span></td><td>Day-1 test</td></tr>
+<tr><td><code>freedraw</code> carries pressure; stylus pressure arrives</td><td><span class="tag rep">reported</span></td><td>Day-1 test passed: per-point <code>pressures</code>, <code>simulatePressure</code> false</td></tr>
+<tr><td><code>customData</code> survives save and reload</td><td><span class="tag rep">reported</span></td><td>Day-1 test passed through <code>serializeAsJSON</code> and <code>restoreElements</code></td></tr>
+<tr><td>Web app loads and draws over LAN HTTP on the tablet</td><td><span class="tag rep">reported</span></td><td>Day-1 test passed; <code>isSecureContext</code> is false and drawing still works</td></tr>
 <tr><td>Mermaid conversion beyond flowcharts</td><td><span class="tag unv">unverified</span></td><td>Skip in v1</td></tr>
 <tr><td>MCP SDK returns PNG as image content to Claude</td><td><span class="tag unv">unverified</span></td><td>Day-2 test</td></tr>
 <tr><td>VLM reads your handwriting well enough</td><td><span class="tag unv">unverified</span></td><td>Measured by the eval</td></tr>
@@ -602,6 +602,7 @@ sequenceDiagram
 <li>Export only the selection as a PNG.</li>
 </ol>
 <p>All five pass: commit to Excalidraw. Stylus or <code>customData</code> fails: fall back to tldraw with a local-only demo, which keeps the same architecture.</p>
+<p><strong>Result, 16 Oct 2026:</strong> all five passed on the tablet, so Excalidraw is confirmed. Lasso in the npm build was not tested; box selection remains the fallback.</p>
 
 <h3>Effort</h3>
 <div class="scroll"><table>
@@ -616,6 +617,7 @@ sequenceDiagram
 <tr><td>README, diagram, demo video</td><td class="num">4</td><td>Oct 28 to 31</td></tr>
 <tr class="hl"><td><strong>Total</strong></td><td class="num"><strong>40</strong></td><td>About 2.5 h per day across 16 days</td></tr>
 </tbody></table></div>
+<p>The detailed ticket plan comes to 41.5 h: it adds region staleness on edits (+1 h) and a separate <code>save_transcription</code> ticket (+1 h), and reuses the architecture diagram above (-0.5 h).</p>
 
 <h3>Risks and cut order</h3>
 <div class="scroll"><table>
