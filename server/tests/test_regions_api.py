@@ -99,7 +99,8 @@ def test_region_ink_returns_points_and_pressures(client):
     rid = post(client, ["a", "b"]).json()["id"]
     ink = client.get(f"/regions/{rid}/ink").json()
     assert ink["point_count"] == 4
-    assert ink["strokes"][0] == {"id": "a", "points": A["points"], "pressures": A["pressures"]}
+    first = ink["strokes"][0]
+    assert (first["id"], first["points"], first["pressures"]) == ("a", A["points"], A["pressures"])
     assert client.get("/regions/nope/ink").status_code == 404
 
 
@@ -143,3 +144,51 @@ def test_ink_endpoint_decimates_to_max_points(client):
     assert ink["original_point_count"] == n
     full = client.get(f"/regions/{rid}/ink", params={"max_points": 10000}).json()
     assert full["point_count"] == n and full["decimated"] is False
+
+
+def test_ink_includes_stroke_origin_so_layout_can_be_rebuilt(client):
+    seed(client)
+    rid = post(client, ["a", "b"]).json()["id"]
+    strokes = {st["id"]: st for st in client.get(f"/regions/{rid}/ink").json()["strokes"]}
+    assert (strokes["a"]["x"], strokes["a"]["y"]) == (10, 20)
+    assert (strokes["b"]["x"], strokes["b"]["y"]) == (-5, 0)
+    assert "angle" in strokes["a"]
+
+
+def test_put_image_replaces_crop_and_clears_stale_flag(client):
+    seed(client)
+    rid = post(client, ["a"]).json()["id"]
+    client.put(
+        SCENE, json={"base_version": 1, "elements": [{**A, "points": [[0, 0], [31, 41]]}, B]}
+    )
+    assert client.get(f"/regions/{rid}").json()["png_stale"] is True
+    new = big_png(40, 20)
+    r = client.put(f"/regions/{rid}/image", files={"image": ("c.png", new, "image/png")})
+    assert r.status_code == 200 and r.json()["png_stale"] is False
+    assert client.get(f"/regions/{rid}/image").content == new
+    bad = client.put(f"/regions/{rid}/image", files={"image": ("c.png", b"nope", "image/png")})
+    assert bad.status_code == 422
+    missing = client.put("/regions/nope/image", files={"image": ("c.png", new, "image/png")})
+    assert missing.status_code == 404
+
+
+def test_scene_element_without_id_is_422_not_500(client):
+    r = client.put(SCENE, json={"base_version": 0, "elements": [{"type": "freedraw"}]})
+    assert r.status_code == 422
+
+
+def test_list_limit_is_bounded_and_unknown_document_is_404(client):
+    assert client.get(REGIONS, params={"limit": -1}).status_code == 422
+    assert client.get("/documents/typo/regions").status_code == 404
+
+
+def test_duplicate_element_ids_are_collapsed(client):
+    seed(client)
+    assert post(client, ["a", "a", "b"]).json()["stroke_count"] == 2
+
+
+def test_failed_db_insert_leaves_no_orphan_file(client, tmp_path):
+    seed(client)
+    assert post(client, ["a", "nope"]).status_code == 422
+    crops = tmp_path / "crops"
+    assert not crops.exists() or list(crops.iterdir()) == []

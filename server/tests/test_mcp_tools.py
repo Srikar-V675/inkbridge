@@ -72,6 +72,34 @@ def test_unknown_region_gives_actionable_error(seeded):
         call("get_region", region_id="nope")
 
 
+def test_get_region_survives_missing_image_and_reports_staleness(seeded, client, tmp_path):
+    for f in (tmp_path / "crops").glob("*.png"):
+        f.unlink()
+    result = call("get_region", region_id=seeded)
+    assert len(result.content) == 2 and result.content[1].type == "text"
+    assert "image unavailable" in result.content[1].text
+    assert text_of(result)["png_stale"] is False
+
+
+def test_path_parameters_are_escaped_not_traversed(seeded):
+    with pytest.raises(ToolError):
+        call("get_region", region_id="../documents/default/scene")
+    with pytest.raises(ToolError):
+        call("get_region", region_id=f"{seeded}/image")
+
+
+def test_non_404_api_errors_become_actionable_tool_errors(seeded, client):
+    class Boom(ApiClient):
+        def get_region(self, region_id):
+            import httpx
+
+            raise self._wrap(httpx.HTTPStatusError("x", request=None, response=httpx.Response(500)))
+
+    server.set_client(Boom(client))
+    with pytest.raises(ToolError, match="API"):
+        call("get_region", region_id=seeded)
+
+
 def test_stdio_server_speaks_only_protocol_on_stdout():
     msgs = [
         {

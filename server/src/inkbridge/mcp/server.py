@@ -91,15 +91,29 @@ def get_region(
         r = client.get_region(region_id)
         meta = {
             k: r[k]
-            for k in ("id", "kind", "text", "latex", "source", "bounds", "status", "updated_at")
+            for k in (
+                "id",
+                "kind",
+                "text",
+                "latex",
+                "source",
+                "bounds",
+                "status",
+                "png_stale",
+                "updated_at",
+            )
         }
         if include_ink:
             meta["ink"] = client.get_ink(region_id)
         content: list = [_dump(meta)]
-        if include_image:
-            content.append(Image(data=client.get_image(region_id), format="png"))
     except ApiError as e:
         raise ToolError(str(e)) from e
+    if include_image:
+        try:
+            content.append(Image(data=client.get_image(region_id), format="png"))
+        except ApiError:
+            # The transcription is still useful; do not fail the whole call over a missing crop.
+            content.append("(image unavailable for this region; the crop file is missing)")
     return content
 
 

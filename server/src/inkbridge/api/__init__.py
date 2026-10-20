@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from inkbridge import db
 from inkbridge.api import regions, search
@@ -24,6 +24,13 @@ app.include_router(search.router)
 class SceneIn(BaseModel):
     base_version: int = Field(ge=0)
     elements: list[dict[str, Any]]
+
+    @field_validator("elements")
+    @classmethod
+    def _elements_have_ids(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not all(isinstance(e.get("id"), str) for e in v):
+            raise ValueError("every element needs a string id")
+        return v
 
 
 @app.get("/health")

@@ -35,7 +35,7 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
 | `list_regions` | `document_id?`, `kind?`, `limit=50` | JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
-| `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, updated_at, ink?}` plus the region PNG as image content | No |
+| `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
 | `search` | `query`, `limit=10` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
 Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, so a changed stroke drops its old text until it is re-recognised.
@@ -46,3 +46,5 @@ Errors are returned as tool errors with a next step (for example, "call list_reg
 
 - Images are downscaled to at most 1024 px wide (API default; the stored crop is untouched).
 - `include_ink` returns at most 5,000 points in total; `ink.decimated` and `ink.original_point_count` say whether it was reduced. See `docs/decisions/0003-agent-output-limits.md`.
+
+`png_stale: true` means the ink changed since the crop was saved, so the image may not match the strokes. Ink strokes carry `x`, `y` and `angle`; their `points` are relative to `(x, y)`. If a crop file is missing, `get_region` still returns the transcription plus a note.

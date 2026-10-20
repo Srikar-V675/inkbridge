@@ -66,7 +66,8 @@ def decimate_strokes(strokes: list[dict[str, Any]], max_points: int = MAX_INK_PO
             {
                 **s,
                 "points": [s["points"][i] for i in idx],
-                "pressures": [pressures[i] for i in idx] if len(pressures) == n else pressures,
+                # a pressure list that does not pair 1:1 with the points cannot be sampled safely
+                "pressures": [pressures[i] for i in idx] if len(pressures) == n else [],
             }
         )
         used += k

@@ -2,6 +2,7 @@
 
 import os
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -19,6 +20,16 @@ class ApiClient:
         )
         self.default_document = os.environ.get("INKBRIDGE_DOCUMENT", "default")
 
+    @staticmethod
+    def _wrap(exc: Exception) -> ApiError:
+        if isinstance(exc, httpx.HTTPStatusError):
+            code = exc.response.status_code
+            return ApiError(
+                f"The Inkbridge API returned an error ({code}). "
+                "Retry, or call list_regions to check the request is valid; see the server log."
+            )
+        return ApiError(f"Unexpected response from the Inkbridge API ({exc.__class__.__name__}).")
+
     def _get(self, path: str, **params: Any) -> httpx.Response:
         params = {k: v for k, v in params.items() if v is not None}
         try:
@@ -30,21 +41,34 @@ class ApiClient:
             ) from e
         if r.status_code == 404:
             raise ApiError(f"Not found: {path}. Call list_regions to see valid region ids.")
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise self._wrap(e) from e
         return r
+
+    def _json(self, r: httpx.Response) -> Any:
+        try:
+            return r.json()
+        except ValueError as e:
+            raise self._wrap(e) from e
 
     def list_regions(self, document_id: str | None, kind: str | None, limit: int) -> list[dict]:
         doc = document_id or self.default_document
-        return self._get(f"/documents/{doc}/regions", kind=kind, limit=limit).json()
+        return self._json(
+            self._get(f"/documents/{quote(doc, safe='')}/regions", kind=kind, limit=limit)
+        )
 
     def get_region(self, region_id: str) -> dict:
-        return self._get(f"/regions/{region_id}").json()
+        return self._json(self._get(f"/regions/{quote(region_id, safe='')}"))
 
     def get_image(self, region_id: str) -> bytes:
-        return self._get(f"/regions/{region_id}/image").content
+        return self._get(f"/regions/{quote(region_id, safe='')}/image").content
 
     def get_ink(self, region_id: str) -> dict:
-        return self._get(f"/regions/{region_id}/ink").json()
+        return self._json(self._get(f"/regions/{quote(region_id, safe='')}/ink"))
 
     def search(self, query: str, limit: int) -> list[dict]:
-        return self._get("/search", q=query, limit=limit, document_id=self.default_document).json()
+        return self._json(
+            self._get("/search", q=query, limit=limit, document_id=self.default_document)
+        )

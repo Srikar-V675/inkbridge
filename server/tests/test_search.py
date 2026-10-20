@@ -88,9 +88,22 @@ def test_hostile_query_syntax_does_not_error(client, two_regions):
 
 def test_orphaned_regions_are_not_searchable(client, two_regions):
     ra, _ = two_regions
-    recognise(ra, "ghost note")
     client.put(SCENE, json={"base_version": 1, "elements": [{**A, "isDeleted": True}, B]})
+    assert client.get(f"/regions/{ra['id']}").json()["status"] == "orphaned"
+    # a reading for the orphaned region's *current* hash is indexed, but must stay hidden
+    current = client.get(f"/regions/{ra['id']}").json()["stroke_hash"]
+    recognise(ra, "ghost note", stroke_hash=current)
     assert search(client, "ghost") == []
+
+
+def test_save_recognition_rejects_unknown_source(client, two_regions):
+    ra, _ = two_regions
+    conn = db.connect()
+    try:
+        with pytest.raises(ValueError, match="source"):
+            db.save_recognition(conn, ra["id"], ra["stroke_hash"], "User", "x")
+    finally:
+        conn.close()
 
 
 def test_limit_and_validation(client, two_regions):

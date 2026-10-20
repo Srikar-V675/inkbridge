@@ -11,6 +11,18 @@ from inkbridge.api.deps import Conn
 router = APIRouter()
 
 
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+async def _read_png(image: UploadFile) -> bytes:
+    png = await image.read(MAX_UPLOAD_BYTES + 1)
+    if len(png) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "image too large (10 MB max)")
+    if not imaging.is_valid_png(png):
+        raise HTTPException(422, "image must be a PNG")
+    return png
+
+
 def _crops_dir() -> Path:
     return config.db_path().parent / "crops"
 
@@ -30,27 +42,38 @@ async def create_region(
         raise HTTPException(422, "element_ids must be a JSON list") from None
     if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
         raise HTTPException(422, "element_ids must be a non-empty list of strings")
-    png = await image.read()
-    if not imaging.is_valid_png(png):
-        raise HTTPException(422, "image must be a PNG")
+    ids = list(dict.fromkeys(ids))
+    png = await _read_png(image)
 
     rid = uuid.uuid4().hex[:12]
     path = _crops_dir() / f"{rid}.png"
+    # File first: a region row must never exist without its crop.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
     try:
-        region = db.create_region(
+        return db.create_region(
             conn, document_id, ids, str(path), kind=kind, created_by=created_by, region_id=rid
         )
     except db.DocumentNotFound:
+        path.unlink(missing_ok=True)
         raise HTTPException(404, "document not found") from None
     except db.UnknownElements as e:
+        path.unlink(missing_ok=True)
         raise HTTPException(422, f"unknown element ids: {e.ids}") from None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(png)
-    return region
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 @router.get("/documents/{document_id}/regions")
-def list_regions(document_id: str, conn: Conn, kind: str | None = None, limit: int = 100):
+def list_regions(
+    document_id: str,
+    conn: Conn,
+    kind: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+):
+    if not db.document_exists(conn, document_id):
+        raise HTTPException(404, "document not found")
     return db.list_regions(conn, document_id, kind=kind, limit=limit)
 
 
@@ -60,6 +83,19 @@ def get_region(region_id: str, conn: Conn) -> dict:
     if region is None:
         raise HTTPException(404, "region not found")
     return region
+
+
+@router.put("/regions/{region_id}/image")
+async def replace_region_image(
+    region_id: str, conn: Conn, image: Annotated[UploadFile, File()]
+) -> dict:
+    """Store a fresh crop (after the client re-exports the region) and clear png_stale."""
+    path = db.get_region_png_path(conn, region_id)
+    if path is None:
+        raise HTTPException(404, "region not found")
+    png = await _read_png(image)
+    Path(path).write_bytes(png)
+    return db.mark_png_fresh(conn, region_id)
 
 
 @router.get("/regions/{region_id}/image")

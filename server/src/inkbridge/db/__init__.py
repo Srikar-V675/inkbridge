@@ -11,6 +11,7 @@ from inkbridge import config
 from inkbridge.regions import bbox_of, stroke_hash
 
 DEFAULT_DOCUMENT_ID = "default"
+RECOGNITION_SOURCES = ("user", "agent", "gemini")
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
@@ -157,6 +158,15 @@ def create_region(
     region_id: str | None = None,
 ) -> dict:
     """Create a region; bbox and stroke_hash are computed from the stored scene, never the client."""
+    conn.execute("BEGIN IMMEDIATE")  # read the scene and insert under one write lock
+    try:
+        return _create_region(conn, document_id, element_ids, png_path, kind, created_by, region_id)
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _create_region(conn, document_id, element_ids, png_path, kind, created_by, region_id):
     _, elements_json = get_scene(conn, document_id)
     by_id = {e["id"]: e for e in json.loads(elements_json)}
     missing = [i for i in element_ids if i not in by_id]
@@ -243,7 +253,14 @@ def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
     _, elements_json = get_scene(conn, region["document_id"])
     by_id = {e["id"]: e for e in json.loads(elements_json)}
     strokes = [
-        {"id": i, "points": by_id[i].get("points", []), "pressures": by_id[i].get("pressures", [])}
+        {
+            "id": i,
+            "x": by_id[i].get("x", 0),
+            "y": by_id[i].get("y", 0),
+            "angle": by_id[i].get("angle", 0),
+            "points": by_id[i].get("points", []),
+            "pressures": by_id[i].get("pressures", []),
+        }
         for i in region["element_ids"]
         if i in by_id and not by_id[i].get("isDeleted")
     ]
@@ -276,6 +293,8 @@ def save_recognition(
     model: str | None = None,
 ) -> None:
     """Upsert a reading keyed by (region, stroke_hash, source) and refresh the search index."""
+    if source not in RECOGNITION_SOURCES:
+        raise ValueError(f"source must be one of {RECOGNITION_SOURCES}, got {source!r}")
     conn.execute(
         "INSERT INTO recognitions (region_id, stroke_hash, source, model, text, latex, created_at)"
         " VALUES (?,?,?,?,?,?,?)"
@@ -314,3 +333,16 @@ def search(
     sql += " ORDER BY bm25(region_fts) LIMIT ?"
     args.append(limit)
     return [dict(r) for r in conn.execute(sql, args)]
+
+
+def document_exists(conn: sqlite3.Connection, document_id: str) -> bool:
+    return (
+        conn.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone() is not None
+    )
+
+
+def mark_png_fresh(conn: sqlite3.Connection, region_id: str) -> dict | None:
+    """Clear png_stale after the client has saved a new crop; None if the region is unknown."""
+    cur = conn.execute("UPDATE regions SET png_stale = 0 WHERE id = ?", (region_id,))
+    conn.commit()
+    return get_region(conn, region_id) if cur.rowcount else None

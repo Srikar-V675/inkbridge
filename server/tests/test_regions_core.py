@@ -65,3 +65,19 @@ def test_bbox_ignores_deleted_elements_unless_all_deleted():
 def test_missing_is_deleted_hashes_like_false():
     bare = {k: v for k, v in STROKE.items() if k != "isDeleted"}
     assert stroke_hash([bare]) == stroke_hash([{**bare, "isDeleted": False}])
+
+
+def test_bbox_uses_point_extents_for_strokes_drawn_left_and_up():
+    # Excalidraw keeps x,y at the first point; later points may be negative.
+    el = {"id": "a", "x": 100, "y": 100, "width": 50, "height": 50, "points": [[0, 0], [-50, -50]]}
+    assert bbox_of([el]) == {"x": 50, "y": 50, "width": 50, "height": 50}
+
+
+def test_hash_is_an_allow_list_not_a_deny_list():
+    base = stroke_hash([STROKE])
+    for field, value in [
+        ("strokeColor", "#f00"),
+        ("boundElements", [{"id": "q"}]),
+        ("frameId", "f"),
+    ]:
+        assert stroke_hash([{**STROKE, field: value}]) == base, field

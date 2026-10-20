@@ -60,3 +60,9 @@ def test_budget_is_shared_across_strokes():
     out = decimate_strokes([stroke(8000, "a"), stroke(8000, "b")], 5000)
     assert total(out) <= 5000 and [s["id"] for s in out] == ["a", "b"]
     assert all(len(s["points"]) >= 2 for s in out)
+
+
+def test_mismatched_pressure_length_is_dropped_not_misaligned():
+    s = {"id": "s", "points": [[i, i] for i in range(100)], "pressures": [0.5] * 40}
+    (out,) = decimate_strokes([s], 10)
+    assert len(out["points"]) == 10 and out["pressures"] == []
