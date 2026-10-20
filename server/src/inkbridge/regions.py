@@ -21,7 +21,10 @@ HASH_FIELDS = (
 
 
 def stroke_hash(elements: list[dict[str, Any]]) -> str:
-    rows = [{k: el[k] for k in HASH_FIELDS if k in el} for el in elements]
+    rows = [
+        {**{k: el[k] for k in HASH_FIELDS if k in el}, "isDeleted": bool(el.get("isDeleted"))}
+        for el in elements
+    ]
     rows.sort(key=lambda r: str(r.get("id")))
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()

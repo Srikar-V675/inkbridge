@@ -60,3 +60,8 @@ def test_bbox_ignores_deleted_elements_unless_all_deleted():
     gone = {"id": "b", "x": 500, "y": 500, "width": 10, "height": 10, "isDeleted": True}
     assert bbox_of([live, gone]) == {"x": 0, "y": 0, "width": 10, "height": 10}
     assert bbox_of([gone]) == {"x": 500, "y": 500, "width": 10, "height": 10}
+
+
+def test_missing_is_deleted_hashes_like_false():
+    bare = {k: v for k, v in STROKE.items() if k != "isDeleted"}
+    assert stroke_hash([bare]) == stroke_hash([{**bare, "isDeleted": False}])

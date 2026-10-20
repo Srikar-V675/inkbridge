@@ -15,6 +15,7 @@ EXPECTED = {
         "kind",
         "created_by",
         "stroke_hash",
+        "png_stale",
         "png_path",
         "status",
         "updated_at",
@@ -50,7 +51,7 @@ def test_migrate_creates_all_tables_and_columns(conn):
 
 
 def test_migrate_twice_is_noop(conn):
-    assert db.migrate(conn) == [1]
+    assert db.migrate(conn) == [1, 2]
     assert db.migrate(conn) == []
 
 
