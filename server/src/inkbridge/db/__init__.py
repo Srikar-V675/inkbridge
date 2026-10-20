@@ -231,6 +231,8 @@ def _refresh_regions(
             " png_stale = CASE WHEN ? != stroke_hash THEN 1 ELSE png_stale END WHERE id = ?",
             (new_hash, bbox, new_status, now, new_hash, row["id"]),
         )
+        if new_hash != row["stroke_hash"]:
+            _reindex_region(conn, row["id"])  # old reading no longer describes the ink
 
 
 def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
@@ -246,3 +248,69 @@ def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
         if i in by_id and not by_id[i].get("isDeleted")
     ]
     return {"strokes": strokes, "point_count": sum(len(s["points"]) for s in strokes)}
+
+
+def _reindex_region(conn: sqlite3.Connection, region_id: str) -> None:
+    """Make region_fts hold the best reading for the region's current stroke_hash (or nothing)."""
+    conn.execute("DELETE FROM region_fts WHERE region_id = ?", (region_id,))
+    region = conn.execute(
+        "SELECT document_id, stroke_hash FROM regions WHERE id = ?", (region_id,)
+    ).fetchone()
+    if region is None:
+        return
+    rec = conn.execute(_BEST_RECOGNITION, (region_id, region["stroke_hash"])).fetchone()
+    if rec and (rec["text"] or rec["latex"]):
+        conn.execute(
+            "INSERT INTO region_fts (region_id, document_id, text, latex) VALUES (?,?,?,?)",
+            (region_id, region["document_id"], rec["text"] or "", rec["latex"] or ""),
+        )
+
+
+def save_recognition(
+    conn: sqlite3.Connection,
+    region_id: str,
+    stroke_hash_: str,
+    source: str,
+    text: str | None,
+    latex: str | None = None,
+    model: str | None = None,
+) -> None:
+    """Upsert a reading keyed by (region, stroke_hash, source) and refresh the search index."""
+    conn.execute(
+        "INSERT INTO recognitions (region_id, stroke_hash, source, model, text, latex, created_at)"
+        " VALUES (?,?,?,?,?,?,?)"
+        " ON CONFLICT(region_id, stroke_hash, source) DO UPDATE SET"
+        " model = excluded.model, text = excluded.text, latex = excluded.latex,"
+        " created_at = excluded.created_at",
+        (region_id, stroke_hash_, source, model, text, latex, _now()),
+    )
+    _reindex_region(conn, region_id)
+    conn.commit()
+
+
+def _fts_query(q: str) -> str | None:
+    """Turn free text into a safe FTS5 expression: quoted prefix tokens, implicitly ANDed."""
+    tokens = re.findall(r"\w+", q)
+    return " ".join(f'"{t}"*' for t in tokens) or None
+
+
+def search(
+    conn: sqlite3.Connection, query: str, limit: int = 20, document_id: str | None = None
+) -> list[dict]:
+    match = _fts_query(query)
+    if match is None:
+        return []
+    sql = (
+        "SELECT region_fts.region_id AS region_id,"
+        " snippet(region_fts, -1, '[', ']', '…', 12) AS snippet,"
+        " -bm25(region_fts) AS score"
+        " FROM region_fts JOIN regions r ON r.id = region_fts.region_id"
+        " WHERE region_fts MATCH ? AND r.status = 'active'"
+    )
+    args: list = [match]
+    if document_id:
+        sql += " AND r.document_id = ?"
+        args.append(document_id)
+    sql += " ORDER BY bm25(region_fts) LIMIT ?"
+    args.append(limit)
+    return [dict(r) for r in conn.execute(sql, args)]

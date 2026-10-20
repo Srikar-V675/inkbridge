@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from inkbridge import db
-from inkbridge.api import regions
+from inkbridge.api import regions, search
 from inkbridge.api.deps import Conn
 
 
@@ -18,6 +18,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
 app.include_router(regions.router)
+app.include_router(search.router)
 
 
 class SceneIn(BaseModel):

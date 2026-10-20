@@ -51,7 +51,8 @@ def test_migrate_creates_all_tables_and_columns(conn):
 
 
 def test_migrate_twice_is_noop(conn):
-    assert db.migrate(conn) == [1, 2]
+    files = sorted(db.MIGRATIONS_DIR.glob("*.sql"))
+    assert db.migrate(conn) == list(range(1, len(files) + 1))
     assert db.migrate(conn) == []
 
 

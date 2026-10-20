@@ -103,6 +103,19 @@ def get_region(
     return content
 
 
+@mcp.tool()
+def search(
+    query: Annotated[str, Field(min_length=1, description="Words to find in transcriptions")],
+    limit: Annotated[int, Field(ge=1, le=100)] = 10,
+) -> str:
+    """Full-text search over region transcriptions (text and LaTeX). Matches are prefix-based."""
+    try:
+        hits = get_client().search(query, limit)
+    except ApiError as e:
+        raise ToolError(str(e)) from e
+    return _dump({"results": hits})
+
+
 def main() -> None:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
     mcp.run("stdio")

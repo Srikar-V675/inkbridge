@@ -45,3 +45,6 @@ class ApiClient:
 
     def get_ink(self, region_id: str) -> dict:
         return self._get(f"/regions/{region_id}/ink").json()
+
+    def search(self, query: str, limit: int) -> list[dict]:
+        return self._get("/search", q=query, limit=limit, document_id=self.default_document).json()
