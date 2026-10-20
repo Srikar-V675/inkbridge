@@ -231,3 +231,18 @@ def _refresh_regions(
             " png_stale = CASE WHEN ? != stroke_hash THEN 1 ELSE png_stale END WHERE id = ?",
             (new_hash, bbox, new_status, now, new_hash, row["id"]),
         )
+
+
+def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
+    """Raw stroke points/pressures of a region's live elements, from the current scene."""
+    region = get_region(conn, region_id)
+    if region is None:
+        return None
+    _, elements_json = get_scene(conn, region["document_id"])
+    by_id = {e["id"]: e for e in json.loads(elements_json)}
+    strokes = [
+        {"id": i, "points": by_id[i].get("points", []), "pressures": by_id[i].get("pressures", [])}
+        for i in region["element_ids"]
+        if i in by_id and not by_id[i].get("isDeleted")
+    ]
+    return {"strokes": strokes, "point_count": sum(len(s["points"]) for s in strokes)}

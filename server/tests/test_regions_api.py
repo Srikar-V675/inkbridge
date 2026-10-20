@@ -92,3 +92,12 @@ def test_get_list_and_image(client):
 def test_unknown_region_is_404(client):
     assert client.get("/regions/nope").status_code == 404
     assert client.get("/regions/nope/image").status_code == 404
+
+
+def test_region_ink_returns_points_and_pressures(client):
+    seed(client)
+    rid = post(client, ["a", "b"]).json()["id"]
+    ink = client.get(f"/regions/{rid}/ink").json()
+    assert ink["point_count"] == 4
+    assert ink["strokes"][0] == {"id": "a", "points": A["points"], "pressures": A["pressures"]}
+    assert client.get("/regions/nope/ink").status_code == 404

@@ -71,3 +71,11 @@ def get_region_image(region_id: str, conn: Conn) -> FileResponse:
     if path is None or not Path(path).exists():
         raise HTTPException(404, "image not found")
     return FileResponse(path, media_type="image/png")
+
+
+@router.get("/regions/{region_id}/ink")
+def get_region_ink(region_id: str, conn: Conn) -> dict:
+    ink = db.get_region_ink(conn, region_id)
+    if ink is None:
+        raise HTTPException(404, "region not found")
+    return ink
