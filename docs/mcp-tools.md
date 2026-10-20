@@ -38,3 +38,8 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 | `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, updated_at, ink?}` plus the region PNG as image content | No |
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
+
+## Limits
+
+- Images are downscaled to at most 1024 px wide (API default; the stored crop is untouched).
+- `include_ink` returns at most 5,000 points in total; `ink.decimated` and `ink.original_point_count` say whether it was reduced. See `docs/decisions/0003-agent-output-limits.md`.

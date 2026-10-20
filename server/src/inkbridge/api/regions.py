@@ -3,15 +3,12 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 
-from inkbridge import config, db
+from inkbridge import config, db, imaging
 from inkbridge.api.deps import Conn
 
 router = APIRouter()
-
-PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def _crops_dir() -> Path:
@@ -34,7 +31,7 @@ async def create_region(
     if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
         raise HTTPException(422, "element_ids must be a non-empty list of strings")
     png = await image.read()
-    if not png.startswith(PNG_MAGIC):
+    if not imaging.is_valid_png(png):
         raise HTTPException(422, "image must be a PNG")
 
     rid = uuid.uuid4().hex[:12]
@@ -66,16 +63,32 @@ def get_region(region_id: str, conn: Conn) -> dict:
 
 
 @router.get("/regions/{region_id}/image")
-def get_region_image(region_id: str, conn: Conn) -> FileResponse:
+def get_region_image(
+    region_id: str,
+    conn: Conn,
+    max_width: Annotated[int, Query(ge=1, le=8192)] = imaging.MAX_IMAGE_WIDTH,
+) -> Response:
+    """The crop, downscaled to max_width (default 1024). The stored file is never modified."""
     path = db.get_region_png_path(conn, region_id)
     if path is None or not Path(path).exists():
         raise HTTPException(404, "image not found")
-    return FileResponse(path, media_type="image/png")
+    return Response(imaging.cap_width(Path(path).read_bytes(), max_width), media_type="image/png")
 
 
 @router.get("/regions/{region_id}/ink")
-def get_region_ink(region_id: str, conn: Conn) -> dict:
+def get_region_ink(
+    region_id: str,
+    conn: Conn,
+    max_points: Annotated[int, Query(ge=2, le=100_000)] = imaging.MAX_INK_POINTS,
+) -> dict:
     ink = db.get_region_ink(conn, region_id)
     if ink is None:
         raise HTTPException(404, "region not found")
-    return ink
+    strokes = imaging.decimate_strokes(ink["strokes"], max_points)
+    count = sum(len(s["points"]) for s in strokes)
+    return {
+        "strokes": strokes,
+        "point_count": count,
+        "original_point_count": ink["point_count"],
+        "decimated": count < ink["point_count"],
+    }

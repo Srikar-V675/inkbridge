@@ -101,3 +101,45 @@ def test_region_ink_returns_points_and_pressures(client):
     assert ink["point_count"] == 4
     assert ink["strokes"][0] == {"id": "a", "points": A["points"], "pressures": A["pressures"]}
     assert client.get("/regions/nope/ink").status_code == 404
+
+
+def big_png(w, h):
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), "white").save(buf, "PNG")
+    return buf.getvalue()
+
+
+def test_image_endpoint_caps_width_but_stored_crop_is_untouched(client):
+    import io
+
+    from PIL import Image
+
+    seed(client)
+    original = big_png(3000, 600)
+    rid = post(client, ["a"], png=original).json()["id"]
+    capped = client.get(f"/regions/{rid}/image").content
+    assert Image.open(io.BytesIO(capped)).size == (1024, 205)
+    full = client.get(f"/regions/{rid}/image", params={"max_width": 4000}).content
+    assert full == original
+
+
+def test_corrupt_png_with_valid_magic_is_rejected(client):
+    seed(client)
+    truncated = PNG[:20]
+    assert post(client, ["a"], png=truncated).status_code == 422
+
+
+def test_ink_endpoint_decimates_to_max_points(client):
+    n = 6000
+    wide = {**A, "id": "w", "points": [[i, i] for i in range(n)], "pressures": [0.5] * n}
+    client.put(SCENE, json={"base_version": 0, "elements": [wide]})
+    rid = post(client, ["w"]).json()["id"]
+    ink = client.get(f"/regions/{rid}/ink").json()
+    assert ink["point_count"] <= 5000 and ink["decimated"] is True
+    assert ink["original_point_count"] == n
+    full = client.get(f"/regions/{rid}/ink", params={"max_points": 10000}).json()
+    assert full["point_count"] == n and full["decimated"] is False
