@@ -1,12 +1,13 @@
 import json
-from collections.abc import Iterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from inkbridge import db
+from inkbridge.api import regions
+from inkbridge.api.deps import Conn
 
 
 @asynccontextmanager
@@ -16,17 +17,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
-
-
-def get_conn() -> Iterator[Any]:
-    conn = db.connect()
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
-Conn = Annotated[Any, Depends(get_conn)]
+app.include_router(regions.router)
 
 
 class SceneIn(BaseModel):

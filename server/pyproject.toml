@@ -5,6 +5,7 @@ description = "Inkbridge backend: API, recognizer worker and MCP server"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    "python-multipart>=0.0.32",
     "uvicorn[standard]>=0.30",
 ]
 

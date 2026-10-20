@@ -1,11 +1,14 @@
 """SQLite access. The only module that touches the database; the MCP server must not import it."""
 
+import json
 import re
 import sqlite3
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 from inkbridge import config
+from inkbridge.regions import bbox_of, stroke_hash
 
 DEFAULT_DOCUMENT_ID = "default"
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
@@ -18,7 +21,7 @@ def _now() -> str:
 def connect(path: Path | None = None) -> sqlite3.Connection:
     path = path or config.db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -105,3 +108,97 @@ def put_scene(
     conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
     conn.commit()
     return base_version + 1
+
+
+class UnknownElements(Exception):
+    def __init__(self, ids: list[str]):
+        super().__init__(f"elements not in scene: {ids}")
+        self.ids = ids
+
+
+# Precedence: user > agent > gemini.
+_BEST_RECOGNITION = """
+    SELECT text, latex, source FROM recognitions
+    WHERE region_id = ? AND stroke_hash = ?
+    ORDER BY CASE source WHEN 'user' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END, created_at DESC
+    LIMIT 1
+"""
+
+
+def _region_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    rec = conn.execute(_BEST_RECOGNITION, (row["id"], row["stroke_hash"])).fetchone()
+    ids = json.loads(row["element_ids_json"])
+    return {
+        "id": row["id"],
+        "document_id": row["document_id"],
+        "element_ids": ids,
+        "bounds": json.loads(row["bbox"]),
+        "stroke_count": len(ids),
+        "kind": row["kind"],
+        "created_by": row["created_by"],
+        "stroke_hash": row["stroke_hash"],
+        "status": row["status"],
+        "updated_at": row["updated_at"],
+        "text": rec["text"] if rec else None,
+        "latex": rec["latex"] if rec else None,
+        "source": rec["source"] if rec else None,
+    }
+
+
+def create_region(
+    conn: sqlite3.Connection,
+    document_id: str,
+    element_ids: list[str],
+    png_path: str,
+    kind: str | None = None,
+    created_by: str = "user",
+    region_id: str | None = None,
+) -> dict:
+    """Create a region; bbox and stroke_hash are computed from the stored scene, never the client."""
+    _, elements_json = get_scene(conn, document_id)
+    by_id = {e["id"]: e for e in json.loads(elements_json)}
+    missing = [i for i in element_ids if i not in by_id]
+    if missing:
+        raise UnknownElements(missing)
+    chosen = [by_id[i] for i in element_ids]
+    rid = region_id or uuid.uuid4().hex[:12]
+    conn.execute(
+        "INSERT INTO regions (id, document_id, element_ids_json, bbox, kind, created_by,"
+        " stroke_hash, png_path, status, updated_at) VALUES (?,?,?,?,?,?,?,?,'active',?)",
+        (
+            rid,
+            document_id,
+            json.dumps(element_ids),
+            json.dumps(bbox_of(chosen)),
+            kind,
+            created_by,
+            stroke_hash(chosen),
+            png_path,
+            _now(),
+        ),
+    )
+    conn.commit()
+    return get_region(conn, rid)
+
+
+def get_region(conn: sqlite3.Connection, region_id: str) -> dict | None:
+    row = conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+    return _region_dict(conn, row) if row else None
+
+
+def get_region_png_path(conn: sqlite3.Connection, region_id: str) -> str | None:
+    row = conn.execute("SELECT png_path FROM regions WHERE id = ?", (region_id,)).fetchone()
+    return row["png_path"] if row else None
+
+
+def list_regions(
+    conn: sqlite3.Connection, document_id: str, kind: str | None = None, limit: int = 100
+) -> list[dict]:
+    sql = "SELECT * FROM regions WHERE document_id = ?"
+    args: list = [document_id]
+    if kind:
+        sql += " AND kind = ?"
+        args.append(kind)
+    sql += " ORDER BY updated_at DESC, id LIMIT ?"
+    args.append(limit)
+    return [_region_dict(conn, r) for r in conn.execute(sql, args)]
