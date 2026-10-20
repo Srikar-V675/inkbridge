@@ -63,3 +63,45 @@ def init_db(path: Path | None = None) -> None:
         ensure_default_document(conn)
     finally:
         conn.close()
+
+
+class DocumentNotFound(Exception):
+    pass
+
+
+class VersionConflict(Exception):
+    def __init__(self, current_version: int):
+        super().__init__(f"scene is at version {current_version}")
+        self.current_version = current_version
+
+
+def get_scene(conn: sqlite3.Connection, document_id: str) -> tuple[int, str]:
+    """Return (version, elements_json) or raise DocumentNotFound."""
+    row = conn.execute(
+        "SELECT version, elements_json FROM scenes WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    if row is None:
+        raise DocumentNotFound(document_id)
+    return row["version"], row["elements_json"]
+
+
+def put_scene(
+    conn: sqlite3.Connection, document_id: str, base_version: int, elements_json: str
+) -> int:
+    """Store the scene if base_version is current; return the new version.
+
+    The compare-and-bump is one UPDATE, so two writers with the same base_version cannot both win.
+    """
+    now = _now()
+    cur = conn.execute(
+        "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
+        " WHERE document_id = ? AND version = ?",
+        (elements_json, now, document_id, base_version),
+    )
+    if cur.rowcount == 0:
+        current, _ = get_scene(conn, document_id)  # raises DocumentNotFound if missing
+        conn.rollback()
+        raise VersionConflict(current)
+    conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
+    conn.commit()
+    return base_version + 1

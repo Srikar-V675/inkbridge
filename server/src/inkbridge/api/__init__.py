@@ -1,8 +1,64 @@
-from fastapi import FastAPI
+import json
+from collections.abc import Iterator
+from contextlib import asynccontextmanager
+from typing import Annotated, Any
 
-app = FastAPI(title="Inkbridge")
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from inkbridge import db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db.init_db()
+    yield
+
+
+app = FastAPI(title="Inkbridge", lifespan=lifespan)
+
+
+def get_conn() -> Iterator[Any]:
+    conn = db.connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+Conn = Annotated[Any, Depends(get_conn)]
+
+
+class SceneIn(BaseModel):
+    base_version: int = Field(ge=0)
+    elements: list[dict[str, Any]]
 
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/documents/{document_id}/scene")
+def get_scene(document_id: str, conn: Conn) -> dict[str, Any]:
+    try:
+        version, elements_json = db.get_scene(conn, document_id)
+    except db.DocumentNotFound:
+        raise HTTPException(404, "document not found") from None
+    return {"version": version, "elements": json.loads(elements_json)}
+
+
+@app.put("/documents/{document_id}/scene")
+def put_scene(document_id: str, body: SceneIn, conn: Conn) -> dict[str, int]:
+    try:
+        version = db.put_scene(
+            conn,
+            document_id,
+            body.base_version,
+            json.dumps(body.elements, ensure_ascii=False, separators=(",", ":")),
+        )
+    except db.DocumentNotFound:
+        raise HTTPException(404, "document not found") from None
+    except db.VersionConflict as e:
+        raise HTTPException(409, {"current_version": e.current_version}) from None
+    return {"version": version}
