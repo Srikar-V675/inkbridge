@@ -1,0 +1,349 @@
+"""SQLite access. The only module that touches the database; the MCP server must not import it."""
+
+import json
+import re
+import sqlite3
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+
+from inkbridge import config
+from inkbridge.regions import bbox_of, stroke_hash
+
+DEFAULT_DOCUMENT_ID = "default"
+RECOGNITION_SOURCES = ("user", "agent", "gemini")
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def connect(path: Path | None = None) -> sqlite3.Connection:
+    path = path or config.db_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")  # readers do not block behind the scene writer
+    return conn
+
+
+def migrate(conn: sqlite3.Connection) -> list[int]:
+    """Apply pending numbered .sql files; return the versions applied by this call."""
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+    done = {r["version"] for r in conn.execute("SELECT version FROM schema_version")}
+    applied = []
+    for f in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        m = re.match(r"(\d+)_", f.name)
+        version = int(m.group(1)) if m else None
+        if version is None or version in done:
+            continue
+        # executescript commits first, so wrap file + version row in one explicit transaction.
+        conn.executescript(
+            f"BEGIN;\n{f.read_text()}\nINSERT INTO schema_version VALUES ({version});\nCOMMIT;"
+        )
+        applied.append(version)
+    return applied
+
+
+def ensure_default_document(conn: sqlite3.Connection) -> None:
+    now = _now()
+    conn.execute(
+        "INSERT OR IGNORE INTO documents (id, title, updated_at) VALUES (?, ?, ?)",
+        (DEFAULT_DOCUMENT_ID, "Untitled", now),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO scenes (document_id, version, elements_json, updated_at)"
+        " VALUES (?, 0, '[]', ?)",
+        (DEFAULT_DOCUMENT_ID, now),
+    )
+    conn.commit()
+
+
+def init_db(path: Path | None = None) -> None:
+    conn = connect(path)
+    try:
+        migrate(conn)
+        ensure_default_document(conn)
+    finally:
+        conn.close()
+
+
+class DocumentNotFound(Exception):
+    pass
+
+
+class VersionConflict(Exception):
+    def __init__(self, current_version: int):
+        super().__init__(f"scene is at version {current_version}")
+        self.current_version = current_version
+
+
+def get_scene(conn: sqlite3.Connection, document_id: str) -> tuple[int, str]:
+    """Return (version, elements_json) or raise DocumentNotFound."""
+    row = conn.execute(
+        "SELECT version, elements_json FROM scenes WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    if row is None:
+        raise DocumentNotFound(document_id)
+    return row["version"], row["elements_json"]
+
+
+def put_scene(
+    conn: sqlite3.Connection, document_id: str, base_version: int, elements_json: str
+) -> int:
+    """Store the scene if base_version is current; return the new version.
+
+    The compare-and-bump is one UPDATE, so two writers with the same base_version cannot both win.
+    """
+    now = _now()
+    cur = conn.execute(
+        "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
+        " WHERE document_id = ? AND version = ?",
+        (elements_json, now, document_id, base_version),
+    )
+    if cur.rowcount == 0:
+        current, _ = get_scene(conn, document_id)  # raises DocumentNotFound if missing
+        conn.rollback()
+        raise VersionConflict(current)
+    _refresh_regions(conn, document_id, json.loads(elements_json), now)
+    conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
+    conn.commit()
+    return base_version + 1
+
+
+class UnknownElements(Exception):
+    def __init__(self, ids: list[str]):
+        super().__init__(f"elements not in scene: {ids}")
+        self.ids = ids
+
+
+# Precedence: user > agent > gemini.
+_BEST_RECOGNITION = """
+    SELECT text, latex, source FROM recognitions
+    WHERE region_id = ? AND stroke_hash = ?
+    ORDER BY CASE source WHEN 'user' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END, created_at DESC
+    LIMIT 1
+"""
+
+
+def _region_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    rec = conn.execute(_BEST_RECOGNITION, (row["id"], row["stroke_hash"])).fetchone()
+    ids = json.loads(row["element_ids_json"])
+    return {
+        "id": row["id"],
+        "document_id": row["document_id"],
+        "element_ids": ids,
+        "bounds": json.loads(row["bbox"]),
+        "stroke_count": len(ids),
+        "kind": row["kind"],
+        "created_by": row["created_by"],
+        "stroke_hash": row["stroke_hash"],
+        "status": row["status"],
+        "png_stale": bool(row["png_stale"]),
+        "updated_at": row["updated_at"],
+        "text": rec["text"] if rec else None,
+        "latex": rec["latex"] if rec else None,
+        "source": rec["source"] if rec else None,
+    }
+
+
+def create_region(
+    conn: sqlite3.Connection,
+    document_id: str,
+    element_ids: list[str],
+    png_path: str,
+    kind: str | None = None,
+    created_by: str = "user",
+    region_id: str | None = None,
+) -> dict:
+    """Create a region; bbox and stroke_hash are computed from the stored scene, never the client."""
+    conn.execute("BEGIN IMMEDIATE")  # read the scene and insert under one write lock
+    try:
+        return _create_region(conn, document_id, element_ids, png_path, kind, created_by, region_id)
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _create_region(conn, document_id, element_ids, png_path, kind, created_by, region_id):
+    _, elements_json = get_scene(conn, document_id)
+    by_id = {e["id"]: e for e in json.loads(elements_json)}
+    missing = [i for i in element_ids if i not in by_id]
+    if missing:
+        raise UnknownElements(missing)
+    chosen = [by_id[i] for i in element_ids]
+    rid = region_id or uuid.uuid4().hex[:12]
+    conn.execute(
+        "INSERT INTO regions (id, document_id, element_ids_json, bbox, kind, created_by,"
+        " stroke_hash, png_path, status, updated_at) VALUES (?,?,?,?,?,?,?,?,'active',?)",
+        (
+            rid,
+            document_id,
+            json.dumps(element_ids),
+            json.dumps(bbox_of(chosen)),
+            kind,
+            created_by,
+            stroke_hash(chosen),
+            png_path,
+            _now(),
+        ),
+    )
+    conn.commit()
+    return get_region(conn, rid)
+
+
+def get_region(conn: sqlite3.Connection, region_id: str) -> dict | None:
+    row = conn.execute("SELECT * FROM regions WHERE id = ?", (region_id,)).fetchone()
+    return _region_dict(conn, row) if row else None
+
+
+def get_region_png_path(conn: sqlite3.Connection, region_id: str) -> str | None:
+    row = conn.execute("SELECT png_path FROM regions WHERE id = ?", (region_id,)).fetchone()
+    return row["png_path"] if row else None
+
+
+def list_regions(
+    conn: sqlite3.Connection, document_id: str, kind: str | None = None, limit: int = 100
+) -> list[dict]:
+    sql = "SELECT * FROM regions WHERE document_id = ?"
+    args: list = [document_id]
+    if kind:
+        sql += " AND kind = ?"
+        args.append(kind)
+    sql += " ORDER BY updated_at DESC, id LIMIT ?"
+    args.append(limit)
+    return [_region_dict(conn, r) for r in conn.execute(sql, args)]
+
+
+def _refresh_regions(
+    conn: sqlite3.Connection, document_id: str, elements: list[dict], now: str
+) -> None:
+    """Re-derive hash/status of the document's regions from a new scene (same transaction).
+
+    A region is only written when its hash or status actually changed, so unrelated edits and
+    volatile-field churn leave it (and its updated_at) alone. A new hash means a new recognition
+    is needed; the crop PNG is flagged stale until the client saves it again.
+    """
+    by_id = {e["id"]: e for e in elements}
+    for row in conn.execute(
+        "SELECT * FROM regions WHERE document_id = ?", (document_id,)
+    ).fetchall():
+        present = [by_id[i] for i in json.loads(row["element_ids_json"]) if i in by_id]
+        new_hash = stroke_hash(present)
+        alive = any(not e.get("isDeleted") for e in present)
+        new_status = "active" if alive else "orphaned"
+        if new_hash == row["stroke_hash"] and new_status == row["status"]:
+            continue
+        bbox = json.dumps(bbox_of(present)) if present else row["bbox"]
+        conn.execute(
+            "UPDATE regions SET stroke_hash = ?, bbox = ?, status = ?, updated_at = ?,"
+            " png_stale = CASE WHEN ? != stroke_hash THEN 1 ELSE png_stale END WHERE id = ?",
+            (new_hash, bbox, new_status, now, new_hash, row["id"]),
+        )
+        if new_hash != row["stroke_hash"]:
+            _reindex_region(conn, row["id"])  # old reading no longer describes the ink
+
+
+def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
+    """Raw stroke points/pressures of a region's live elements, from the current scene."""
+    region = get_region(conn, region_id)
+    if region is None:
+        return None
+    _, elements_json = get_scene(conn, region["document_id"])
+    by_id = {e["id"]: e for e in json.loads(elements_json)}
+    strokes = [
+        {
+            "id": i,
+            "x": by_id[i].get("x", 0),
+            "y": by_id[i].get("y", 0),
+            "angle": by_id[i].get("angle", 0),
+            "points": by_id[i].get("points", []),
+            "pressures": by_id[i].get("pressures", []),
+        }
+        for i in region["element_ids"]
+        if i in by_id and not by_id[i].get("isDeleted")
+    ]
+    return {"strokes": strokes, "point_count": sum(len(s["points"]) for s in strokes)}
+
+
+def _reindex_region(conn: sqlite3.Connection, region_id: str) -> None:
+    """Make region_fts hold the best reading for the region's current stroke_hash (or nothing)."""
+    conn.execute("DELETE FROM region_fts WHERE region_id = ?", (region_id,))
+    region = conn.execute(
+        "SELECT document_id, stroke_hash FROM regions WHERE id = ?", (region_id,)
+    ).fetchone()
+    if region is None:
+        return
+    rec = conn.execute(_BEST_RECOGNITION, (region_id, region["stroke_hash"])).fetchone()
+    if rec and (rec["text"] or rec["latex"]):
+        conn.execute(
+            "INSERT INTO region_fts (region_id, document_id, text, latex) VALUES (?,?,?,?)",
+            (region_id, region["document_id"], rec["text"] or "", rec["latex"] or ""),
+        )
+
+
+def save_recognition(
+    conn: sqlite3.Connection,
+    region_id: str,
+    stroke_hash_: str,
+    source: str,
+    text: str | None,
+    latex: str | None = None,
+    model: str | None = None,
+) -> None:
+    """Upsert a reading keyed by (region, stroke_hash, source) and refresh the search index."""
+    if source not in RECOGNITION_SOURCES:
+        raise ValueError(f"source must be one of {RECOGNITION_SOURCES}, got {source!r}")
+    conn.execute(
+        "INSERT INTO recognitions (region_id, stroke_hash, source, model, text, latex, created_at)"
+        " VALUES (?,?,?,?,?,?,?)"
+        " ON CONFLICT(region_id, stroke_hash, source) DO UPDATE SET"
+        " model = excluded.model, text = excluded.text, latex = excluded.latex,"
+        " created_at = excluded.created_at",
+        (region_id, stroke_hash_, source, model, text, latex, _now()),
+    )
+    _reindex_region(conn, region_id)
+    conn.commit()
+
+
+def _fts_query(q: str) -> str | None:
+    """Turn free text into a safe FTS5 expression: quoted prefix tokens, implicitly ANDed."""
+    tokens = re.findall(r"\w+", q)
+    return " ".join(f'"{t}"*' for t in tokens) or None
+
+
+def search(
+    conn: sqlite3.Connection, query: str, limit: int = 20, document_id: str | None = None
+) -> list[dict]:
+    match = _fts_query(query)
+    if match is None:
+        return []
+    sql = (
+        "SELECT region_fts.region_id AS region_id,"
+        " snippet(region_fts, -1, '[', ']', '…', 12) AS snippet,"
+        " -bm25(region_fts) AS score"
+        " FROM region_fts JOIN regions r ON r.id = region_fts.region_id"
+        " WHERE region_fts MATCH ? AND r.status = 'active'"
+    )
+    args: list = [match]
+    if document_id:
+        sql += " AND r.document_id = ?"
+        args.append(document_id)
+    sql += " ORDER BY bm25(region_fts) LIMIT ?"
+    args.append(limit)
+    return [dict(r) for r in conn.execute(sql, args)]
+
+
+def document_exists(conn: sqlite3.Connection, document_id: str) -> bool:
+    return (
+        conn.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone() is not None
+    )
+
+
+def mark_png_fresh(conn: sqlite3.Connection, region_id: str) -> dict | None:
+    """Clear png_stale after the client has saved a new crop; None if the region is unknown."""
+    cur = conn.execute("UPDATE regions SET png_stale = 0 WHERE id = ?", (region_id,))
+    conn.commit()
+    return get_region(conn, region_id) if cur.rowcount else None
