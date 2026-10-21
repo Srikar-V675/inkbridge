@@ -1,3 +1,5 @@
+import pytest
+
 SCENE = "/documents/default/scene"
 
 FREEDRAW = {
@@ -57,3 +59,38 @@ def test_unknown_document_is_404(client):
 def test_invalid_body_is_422(client):
     assert client.put(SCENE, json={"elements": []}).status_code == 422
     assert client.put(SCENE, json={"base_version": -1, "elements": []}).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"id": "a", "type": "freedraw", "points": 5},
+        {"id": "a", "type": "freedraw", "points": [[1]]},
+        {"id": "a", "type": "freedraw", "points": [[0, "x"]]},
+        {"id": "a", "type": "freedraw", "pressures": "high"},
+        {"id": "a", "type": "rectangle", "x": "abc"},
+        {"id": "a", "type": "rectangle", "width": True},
+    ],
+)
+def test_malformed_geometry_is_422_and_leaves_scene_alone(client, bad):
+    r = client.put(SCENE, json={"base_version": 0, "elements": [bad]})
+    assert r.status_code == 422
+    assert client.get(SCENE).json() == {"version": 0, "elements": []}
+
+
+def test_nan_and_infinity_are_rejected(client):
+    for literal in ("NaN", "Infinity", "-Infinity"):
+        body = (
+            '{"base_version":0,"elements":[{"id":"a","type":"freedraw","x":0,"y":0,'
+            f'"points":[[0,0],[{literal},40]]}}]}}'
+        )
+        r = client.put(SCENE, content=body, headers={"content-type": "application/json"})
+        assert r.status_code == 422, literal
+    assert client.get(SCENE).json()["version"] == 0
+
+
+def test_element_count_is_capped(client, monkeypatch):
+    monkeypatch.setattr("inkbridge.api.MAX_ELEMENTS", 2)
+    els = [{"id": str(i), "type": "rectangle"} for i in range(3)]
+    assert client.put(SCENE, json={"base_version": 0, "elements": els}).status_code == 422
+    assert client.put(SCENE, json={"base_version": 0, "elements": els[:2]}).status_code == 200

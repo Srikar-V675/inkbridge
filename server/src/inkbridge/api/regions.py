@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from inkbridge import config, db, imaging
 from inkbridge.api.deps import Conn
@@ -44,7 +45,11 @@ async def create_region(
         raise HTTPException(422, "element_ids must be a non-empty list of strings")
     ids = list(dict.fromkeys(ids))
     png = await _read_png(image)
+    # File and SQLite work block (BEGIN IMMEDIATE can wait on a scene write), so keep it off the loop.
+    return await run_in_threadpool(_store_region, conn, document_id, ids, png, kind, created_by)
 
+
+def _store_region(conn, document_id, ids, png, kind, created_by) -> dict:
     rid = uuid.uuid4().hex[:12]
     path = _crops_dir() / f"{rid}.png"
     # File first: a region row must never exist without its crop.
@@ -90,11 +95,17 @@ async def replace_region_image(
     region_id: str, conn: Conn, image: Annotated[UploadFile, File()]
 ) -> dict:
     """Store a fresh crop (after the client re-exports the region) and clear png_stale."""
+    png = await _read_png(image)
+    return await run_in_threadpool(_replace_image, conn, region_id, png)
+
+
+def _replace_image(conn, region_id: str, png: bytes) -> dict | None:
     path = db.get_region_png_path(conn, region_id)
     if path is None:
         raise HTTPException(404, "region not found")
-    png = await _read_png(image)
-    Path(path).write_bytes(png)
+    tmp = Path(f"{path}.tmp")
+    tmp.write_bytes(png)
+    tmp.replace(path)  # atomic: a crash mid-write never leaves a half-written crop
     return db.mark_png_fresh(conn, region_id)
 
 
