@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { SceneSync, type SaveState, type SceneElement } from "../src/sceneSync.ts";
+import { SceneSync, mergeScenes, type SaveState, type SceneElement } from "../src/sceneSync.ts";
 
 const el = (id: string, version = 1, extra: Record<string, unknown> = {}): SceneElement => ({
   id,
@@ -16,6 +16,7 @@ type Call = { url: string; method: string; body?: { base_version: number; elemen
 function harness(responses: Array<Response | Error | (() => Response)>) {
   const calls: Call[] = [];
   const states: SaveState[] = [];
+  const details: Array<string | undefined> = [];
   const reloads: SceneElement[][] = [];
   const stored: Record<string, string> = {};
   const fetchFn = (async (url: string, init?: RequestInit) => {
@@ -33,10 +34,10 @@ function harness(responses: Array<Response | Error | (() => Response)>) {
     documentId: "default",
     fetchFn,
     storage: { setItem: (k, v) => void (stored[k] = v) },
-    onState: (s) => states.push(s),
+    onState: (s, d) => (states.push(s), details.push(d)),
     onReload: (e) => reloads.push(e),
   });
-  return { sync, calls, states, reloads, stored };
+  return { sync, calls, states, details, reloads, stored };
 }
 
 describe("SceneSync", () => {
@@ -141,21 +142,79 @@ describe("SceneSync", () => {
     assert.equal(h.calls.filter((c) => c.method === "PUT").length, 2);
   });
 
-  it("on 409 reloads the server scene, backs up the local edits and tells the caller", async () => {
+  it("on 409 merges the server scene with ALL local edits, including ones made mid-save", async () => {
     const h = harness([
       json(200, { version: 1, elements: [] }),
       json(409, { detail: { current_version: 9 } }),
       json(200, { version: 9, elements: [el("server", 4)] }),
+      json(200, { version: 10 }),
     ]);
     await h.sync.load();
-    h.sync.notify([el("mine", 1)]);
+    h.sync.notify([el("s1", 1)]);
     mock.timers.tick(1500);
+    h.sync.notify([el("s1", 1), el("s2", 1)]); // drawn while the PUT is in flight
     await settle();
-    assert.deepEqual(h.reloads, [[el("server", 4)]]);
+    assert.deepEqual(h.reloads.at(-1)?.map((e) => e.id).sort(), ["s1", "s2", "server"]);
     assert.equal(h.states.includes("conflict"), true);
     const backup = Object.entries(h.stored).find(([k]) => k.includes("conflict"));
-    assert.ok(backup && JSON.parse(backup[1]).some((e: SceneElement) => e.id === "mine"));
-    h.sync.notify([el("server", 5)]); // next save uses the reloaded version
+    assert.deepEqual(JSON.parse(backup![1]).map((e: SceneElement) => e.id), ["s1", "s2"]);
+    mock.timers.tick(1500); // the merged scene is saved against the reloaded version
+    await settle();
+    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
+    assert.equal(put.body?.base_version, 9);
+    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2", "server"]);
+  });
+
+  it("mergeScenes keeps the newer version of an element and never drops a local one", () => {
+    const merged = mergeScenes(
+      [el("a", 2, { from: "server" }), el("b", 1)],
+      [el("a", 3, { from: "local" }), el("c", 1)],
+    );
+    assert.deepEqual(merged.map((e) => [e.id, e.from ?? null]), [["a", "local"], ["b", null], ["c", null]]);
+    assert.equal(mergeScenes([el("a", 5, { from: "server" })], [el("a", 5, { from: "local" })])[0].from, "server");
+  });
+
+  it("keeps edits in memory after a 4xx and says they are unsaved", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [] }),
+      json(422, { detail: [] }),
+      json(200, { version: 2 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    assert.equal(h.states.at(-1), "error");
+    assert.match(h.details.at(-1) ?? "", /not saved/i);
+    h.sync.notify([el("a", 1), el("b", 1)]); // next real edit tries again with everything
+    mock.timers.tick(1500);
+    await settle();
+    assert.deepEqual(h.calls.at(-1)?.body?.elements.map((e) => e.id), ["a", "b"]);
+  });
+
+  it("flushNow waits for an in-flight save and then sends newer edits", async () => {
+    let release!: (r: Response) => void;
+    const h = harness([json(200, { version: 1, elements: [] })]);
+    const gate = new Promise<Response>((r) => (release = r));
+    let n = 0;
+    const base = (h.sync as unknown as { fetchFn: typeof fetch }).fetchFn;
+    (h.sync as unknown as { fetchFn: typeof fetch }).fetchFn = ((u: string, i?: RequestInit) => {
+      if (i?.method === "PUT") {
+        h.calls.push({ url: u, method: "PUT", body: JSON.parse(i.body as string) });
+        return ++n === 1 ? gate : Promise.resolve(json(200, { version: 3 }));
+      }
+      return base(u, i);
+    }) as typeof fetch;
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    h.sync.notify([el("a", 1), el("b", 1)]);
+    const flushed = h.sync.flushNow();
+    release(json(200, { version: 2 }));
+    await flushed;
+    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 2);
+    assert.equal(h.calls.at(-1)?.body?.base_version, 2);
   });
 
   it("retries a network failure with backoff and then saves", async () => {

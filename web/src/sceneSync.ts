@@ -23,6 +23,19 @@ const RETRY_MS = [2000, 4000, 8000, 16000, 30000];
 // Two element lists are "the same" if every element has the same id and version.
 const signature = (els: readonly SceneElement[]) => els.map((e) => `${e.id}:${e.version}`).join("|");
 
+/** Server scene plus every local element: the newer `version` wins, ties go to the server. */
+export function mergeScenes(
+  server: readonly SceneElement[],
+  local: readonly SceneElement[],
+): SceneElement[] {
+  const byId = new Map(server.map((e) => [e.id, e]));
+  for (const e of local) {
+    const theirs = byId.get(e.id);
+    if (!theirs || e.version > theirs.version) byId.set(e.id, e);
+  }
+  return [...byId.values()];
+}
+
 export class SceneSync {
   private readonly o: SyncOptions;
   private fetchFn: typeof fetch;
@@ -34,6 +47,7 @@ export class SceneSync {
   private saving = false;
   private failures = 0;
   private disposed = false;
+  private inflight: Promise<void> | null = null;
 
   constructor(options: SyncOptions) {
     this.o = options;
@@ -81,6 +95,7 @@ export class SceneSync {
   async flushNow() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.inflight) await this.inflight; // an in-flight save may leave newer edits pending
     await this.save();
   }
 
@@ -97,10 +112,16 @@ export class SceneSync {
     }, ms);
   }
 
-  private async save() {
-    if (this.saving || !this.pending || this.disposed) return;
-    this.saving = true;
+  private save(): Promise<void> {
+    if (this.saving || !this.pending || this.disposed) return Promise.resolve();
+    this.inflight = this.doSave().finally(() => (this.inflight = null));
+    return this.inflight;
+  }
+
+  private async doSave() {
     const sent = this.pending;
+    if (!sent) return;
+    this.saving = true;
     this.o.onState("saving");
     try {
       const r = await this.fetchFn(this.url(), {
@@ -123,9 +144,9 @@ export class SceneSync {
       } else if (r.status === 409) {
         await this.resolveConflict(sent);
       } else if (r.status >= 400 && r.status < 500) {
-        // A rejected body would be rejected again: stop until the next real edit.
-        this.o.onState("error", `Save rejected (${r.status})`);
-        this.pending = null;
+        // A rejected body would be rejected again, so stop retrying until the next real edit, but
+        // keep the ink in memory: the next edit sends the whole scene again.
+        this.o.onState("error", `Save rejected (${r.status}); changes are not saved yet`);
       } else {
         this.retryLater();
       }
@@ -144,21 +165,34 @@ export class SceneSync {
 
   // Another tab saved first. Reload the server scene, but keep the local edits in storage so a
   // conflict never silently destroys work.
-  private async resolveConflict(local: readonly SceneElement[]) {
+  private async resolveConflict(sent: readonly SceneElement[]) {
+    // Everything the user has drawn locally, including edits made while this save was in flight.
+    const local = this.pending ?? sent;
     try {
       this.o.storage?.setItem(
         `inkbridge-conflict-backup-${this.o.documentId}`,
         JSON.stringify(local),
       );
     } catch {
-      // storage may be unavailable (private mode); the notice still tells the user
+      // storage may be unavailable (private mode); the merge below still keeps the ink
     }
+    const notice = "Another tab saved first; merged its changes with yours";
     this.pending = null;
-    this.o.onState("conflict", "Another tab saved first; reloaded the latest scene");
+    this.pendingSig = "";
+    this.o.onState("conflict", notice);
     const fresh = await this.load();
-    if (fresh) {
-      this.o.onReload(fresh);
-      this.o.onState("conflict", "Another tab saved first; reloaded the latest scene");
+    if (!fresh) {
+      this.pending = local; // could not reload: keep the ink in memory, nothing is discarded
+      this.pendingSig = signature(local);
+      return;
+    }
+    const merged = mergeScenes(fresh, local);
+    this.o.onReload(merged);
+    this.o.onState("conflict", notice);
+    if (signature(merged) !== this.lastSig) {
+      this.pending = merged;
+      this.pendingSig = signature(merged);
+      this.schedule(this.o.debounceMs ?? 1500);
     }
   }
 }
