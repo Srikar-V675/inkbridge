@@ -1,6 +1,6 @@
 import copy
 
-from inkbridge.regions import bbox_of, stroke_hash
+from inkbridge.regions import bbox_of, content_hash, stroke_hash, text_hash
 
 STROKE = {
     "id": "a",
@@ -81,3 +81,54 @@ def test_hash_is_an_allow_list_not_a_deny_list():
         ("frameId", "f"),
     ]:
         assert stroke_hash([{**STROKE, field: value}]) == base, field
+
+
+# --- content_hash / text_hash (INK-029) ---------------------------------------------------
+
+
+def _moved(el, dx, dy):
+    return {**el, "x": el["x"] + dx, "y": el["y"] + dy}
+
+
+def test_content_hash_ignores_translation_of_all_elements():
+    els = [STROKE, {**STROKE, "id": "s2", "x": 50, "y": 60}]
+    assert content_hash(els) == content_hash([_moved(e, 400, -120) for e in els])
+
+
+def test_content_hash_ignores_ids_and_draw_order():
+    other = {**STROKE, "id": "s2", "x": 50, "y": 60}
+    renamed = [{**STROKE, "id": "n1"}, {**other, "id": "n2"}]
+    assert content_hash([STROKE, other]) == content_hash(renamed)
+    assert content_hash([STROKE, other]) == content_hash([other, STROKE])
+
+
+def test_content_hash_changes_with_ink():
+    base = content_hash([STROKE])
+    assert content_hash([{**STROKE, "points": [[0, 0], [1, 2], [9, 9]]}]) != base
+    assert content_hash([{**STROKE, "pressures": [0.2, 0.5, 0.8]}]) != base
+    other = {**STROKE, "id": "s2", "x": 500, "y": 60}
+    assert content_hash([STROKE, other]) != base  # added stroke
+    assert content_hash([STROKE, _moved(other, 30, 0)]) != content_hash([STROKE, other])  # shape
+
+
+def test_content_hash_drops_deleted_elements_and_ignores_churn_fields():
+    other = {**STROKE, "id": "s2", "x": 500, "y": 60}
+    assert content_hash([STROKE, {**other, "isDeleted": True}]) == content_hash([STROKE])
+    for field, value in [
+        ("version", 99),
+        ("versionNonce", 7),
+        ("updated", 1),
+        ("seed", 3),
+        ("customData", {"author": "agent", "draft": False}),
+    ]:
+        assert content_hash([{**STROKE, field: value}]) == content_hash([STROKE]), field
+
+
+def test_content_hash_of_nothing_is_stable():
+    assert content_hash([]) == content_hash([{**STROKE, "isDeleted": True}])
+
+
+def test_text_hash_normalises_whitespace_only():
+    assert text_hash("a  b\n c ", None) == text_hash("a b c", "")
+    assert text_hash("a b c", None) != text_hash("a b d", None)
+    assert text_hash("x", r"\frac{1}{2}") != text_hash("x", None)

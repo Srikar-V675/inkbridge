@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from inkbridge import config
-from inkbridge.regions import bbox_of, stroke_hash
+from inkbridge.regions import bbox_of, content_hash, stroke_hash, text_hash
 
 DEFAULT_DOCUMENT_ID = "default"
 RECOGNITION_SOURCES = ("user", "agent", "gemini")
@@ -44,7 +44,38 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
             f"BEGIN;\n{f.read_text()}\nINSERT INTO schema_version VALUES ({version});\nCOMMIT;"
         )
         applied.append(version)
+        if version == 4:
+            _backfill_v2(conn)
     return applied
+
+
+def _backfill_v2(conn: sqlite3.Connection) -> None:
+    """After migration 0004: fill content_hash, re-key current readings, add text_hash.
+
+    Old readings were keyed by stroke_hash. A reading whose key equals its region's current
+    stroke_hash describes the current ink, so it moves to the current content_hash; older
+    readings keep a key that never matches and are simply never selected.
+    """
+    for region in conn.execute("SELECT * FROM regions").fetchall():
+        row = conn.execute(
+            "SELECT elements_json FROM scenes WHERE document_id = ?", (region["document_id"],)
+        ).fetchone()
+        by_id = {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
+        present = [by_id[i] for i in json.loads(region["element_ids_json"]) if i in by_id]
+        new_hash = content_hash(present)
+        conn.execute("UPDATE regions SET content_hash = ? WHERE id = ?", (new_hash, region["id"]))
+        conn.execute(
+            "UPDATE recognitions SET content_hash = ? WHERE region_id = ? AND content_hash = ?",
+            (new_hash, region["id"], region["stroke_hash"]),
+        )
+    for rec in conn.execute("SELECT rowid, text, latex FROM recognitions").fetchall():
+        conn.execute(
+            "UPDATE recognitions SET text_hash = ? WHERE rowid = ?",
+            (text_hash(rec["text"], rec["latex"]), rec["rowid"]),
+        )
+    for region in conn.execute("SELECT id FROM regions").fetchall():
+        _reindex_region(conn, region["id"])
+    conn.commit()
 
 
 def ensure_default_document(conn: sqlite3.Connection) -> None:
@@ -121,15 +152,15 @@ class UnknownElements(Exception):
 
 # Precedence: user > agent > gemini.
 _BEST_RECOGNITION = """
-    SELECT text, latex, source FROM recognitions
-    WHERE region_id = ? AND stroke_hash = ?
+    SELECT text, latex, source, text_hash FROM recognitions
+    WHERE region_id = ? AND content_hash = ?
     ORDER BY CASE source WHEN 'user' THEN 0 WHEN 'agent' THEN 1 ELSE 2 END, created_at DESC
     LIMIT 1
 """
 
 
 def _region_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
-    rec = conn.execute(_BEST_RECOGNITION, (row["id"], row["stroke_hash"])).fetchone()
+    rec = conn.execute(_BEST_RECOGNITION, (row["id"], row["content_hash"])).fetchone()
     ids = json.loads(row["element_ids_json"])
     return {
         "id": row["id"],
@@ -140,12 +171,14 @@ def _region_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "kind": row["kind"],
         "created_by": row["created_by"],
         "stroke_hash": row["stroke_hash"],
+        "content_hash": row["content_hash"],
         "status": row["status"],
         "png_stale": bool(row["png_stale"]),
         "updated_at": row["updated_at"],
         "text": rec["text"] if rec else None,
         "latex": rec["latex"] if rec else None,
         "source": rec["source"] if rec else None,
+        "text_hash": rec["text_hash"] if rec else None,
     }
 
 
@@ -177,7 +210,8 @@ def _create_region(conn, document_id, element_ids, png_path, kind, created_by, r
     rid = region_id or uuid.uuid4().hex[:12]
     conn.execute(
         "INSERT INTO regions (id, document_id, element_ids_json, bbox, kind, created_by,"
-        " stroke_hash, png_path, status, updated_at) VALUES (?,?,?,?,?,?,?,?,'active',?)",
+        " stroke_hash, content_hash, png_path, status, updated_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,'active',?)",
         (
             rid,
             document_id,
@@ -186,6 +220,7 @@ def _create_region(conn, document_id, element_ids, png_path, kind, created_by, r
             kind,
             created_by,
             stroke_hash(chosen),
+            content_hash(chosen),
             png_path,
             _now(),
         ),
@@ -222,9 +257,11 @@ def _refresh_regions(
 ) -> None:
     """Re-derive hash/status of the document's regions from a new scene (same transaction).
 
-    A region is only written when its hash or status actually changed, so unrelated edits and
-    volatile-field churn leave it (and its updated_at) alone. A new hash means a new recognition
-    is needed; the crop PNG is flagged stale until the client saves it again.
+    A region is only written when a hash or its status actually changed, so unrelated edits and
+    volatile-field churn leave it (and its updated_at) alone. A new stroke_hash means the crop PNG
+    is flagged stale until the client saves it again; a new content_hash means the ink itself
+    changed, so the old reading no longer applies and a new recognition is needed. A pure move
+    changes only the stroke_hash: the reading and its search hit stay.
     """
     by_id = {e["id"]: e for e in elements}
     for row in conn.execute(
@@ -232,17 +269,23 @@ def _refresh_regions(
     ).fetchall():
         present = [by_id[i] for i in json.loads(row["element_ids_json"]) if i in by_id]
         new_hash = stroke_hash(present)
+        new_content = content_hash(present)
         alive = any(not e.get("isDeleted") for e in present)
         new_status = "active" if alive else "orphaned"
-        if new_hash == row["stroke_hash"] and new_status == row["status"]:
+        if (
+            new_hash == row["stroke_hash"]
+            and new_content == row["content_hash"]
+            and new_status == row["status"]
+        ):
             continue
         bbox = json.dumps(bbox_of(present)) if present else row["bbox"]
         conn.execute(
-            "UPDATE regions SET stroke_hash = ?, bbox = ?, status = ?, updated_at = ?,"
+            "UPDATE regions SET stroke_hash = ?, content_hash = ?, bbox = ?, status = ?,"
+            " updated_at = ?,"
             " png_stale = CASE WHEN ? != stroke_hash THEN 1 ELSE png_stale END WHERE id = ?",
-            (new_hash, bbox, new_status, now, new_hash, row["id"]),
+            (new_hash, new_content, bbox, new_status, now, new_hash, row["id"]),
         )
-        if new_hash != row["stroke_hash"]:
+        if new_content != row["content_hash"]:
             _reindex_region(conn, row["id"])  # old reading no longer describes the ink
 
 
@@ -269,14 +312,14 @@ def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
 
 
 def _reindex_region(conn: sqlite3.Connection, region_id: str) -> None:
-    """Make region_fts hold the best reading for the region's current stroke_hash (or nothing)."""
+    """Make region_fts hold the best reading for the region's current content_hash (or nothing)."""
     conn.execute("DELETE FROM region_fts WHERE region_id = ?", (region_id,))
     region = conn.execute(
-        "SELECT document_id, stroke_hash FROM regions WHERE id = ?", (region_id,)
+        "SELECT document_id, content_hash FROM regions WHERE id = ?", (region_id,)
     ).fetchone()
     if region is None:
         return
-    rec = conn.execute(_BEST_RECOGNITION, (region_id, region["stroke_hash"])).fetchone()
+    rec = conn.execute(_BEST_RECOGNITION, (region_id, region["content_hash"])).fetchone()
     if rec and (rec["text"] or rec["latex"]):
         conn.execute(
             "INSERT INTO region_fts (region_id, document_id, text, latex) VALUES (?,?,?,?)",
@@ -287,22 +330,23 @@ def _reindex_region(conn: sqlite3.Connection, region_id: str) -> None:
 def save_recognition(
     conn: sqlite3.Connection,
     region_id: str,
-    stroke_hash_: str,
+    content_hash_: str,
     source: str,
     text: str | None,
     latex: str | None = None,
     model: str | None = None,
 ) -> None:
-    """Upsert a reading keyed by (region, stroke_hash, source) and refresh the search index."""
+    """Upsert a reading keyed by (region, content_hash, source); refresh the search index."""
     if source not in RECOGNITION_SOURCES:
         raise ValueError(f"source must be one of {RECOGNITION_SOURCES}, got {source!r}")
     conn.execute(
-        "INSERT INTO recognitions (region_id, stroke_hash, source, model, text, latex, created_at)"
-        " VALUES (?,?,?,?,?,?,?)"
-        " ON CONFLICT(region_id, stroke_hash, source) DO UPDATE SET"
+        "INSERT INTO recognitions"
+        " (region_id, content_hash, source, model, text, latex, text_hash, created_at)"
+        " VALUES (?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(region_id, content_hash, source) DO UPDATE SET"
         " model = excluded.model, text = excluded.text, latex = excluded.latex,"
-        " created_at = excluded.created_at",
-        (region_id, stroke_hash_, source, model, text, latex, _now()),
+        " text_hash = excluded.text_hash, created_at = excluded.created_at",
+        (region_id, content_hash_, source, model, text, latex, text_hash(text, latex), _now()),
     )
     _reindex_region(conn, region_id)
     conn.commit()
