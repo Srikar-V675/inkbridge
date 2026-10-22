@@ -12,6 +12,7 @@ from typing import Any
 from inkbridge.recognizer import (
     KINDS,
     BadResponse,
+    InvalidApiKey,
     MissingApiKey,
     RateLimited,
     Recognition,
@@ -72,11 +73,14 @@ class GeminiRecognizer:
             try:
                 return self._transport(png, prompt, self.model)
             except RateLimited as e:
-                if attempt == self._max_retries:
-                    raise RateLimited(self._redact(str(e))) from None
-                self._sleep(self._backoff * 2**attempt)
+                failure: RecognizerError = e
+                retry = attempt < self._max_retries
             except RecognizerError as e:
-                raise type(e)(self._redact(str(e))) from None
+                failure, retry = e, False
+            if not retry:
+                # Raised outside the except block so no chained context keeps the raw message.
+                raise type(failure)(self._redact(str(failure)))
+            self._sleep(self._backoff * 2**attempt)
         raise AssertionError("unreachable")
 
     def _space_calls(self) -> None:
@@ -124,6 +128,8 @@ class GeminiRecognizer:
             except errors.APIError as e:
                 if e.code == 429:
                     raise RateLimited("Gemini rate limit (429)") from None
+                if e.code in (401, 403):
+                    raise InvalidApiKey(f"Gemini rejected the API key ({e.code})") from None
                 raise RecognizerError(f"Gemini error {e.code}") from None
             except Exception as e:  # noqa: BLE001 - httpx timeouts surface as several types
                 if "timeout" in type(e).__name__.lower() or "timed out" in str(e).lower():

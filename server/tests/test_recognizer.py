@@ -6,6 +6,7 @@ import pytest
 
 from inkbridge.recognizer import (
     BadResponse,
+    InvalidApiKey,
     MissingApiKey,
     RateLimited,
     Recognition,
@@ -149,3 +150,25 @@ def test_concurrent_calls_are_serialised():
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert peak[0] == 1
+
+
+def test_redacted_errors_do_not_chain_the_original_message():
+    secret = "AIza-chained-secret"
+    rec = GeminiRecognizer(
+        api_key=secret,
+        transport=FakeTransport(RateLimited("429 " + secret)),
+        max_retries=0,
+        min_interval=0.0,
+    )
+    with pytest.raises(RateLimited) as err:
+        rec(PNG, None)
+    assert err.value.__context__ is None and err.value.__cause__ is None
+
+
+def test_invalid_key_is_its_own_non_retryable_type():
+    t = FakeTransport(InvalidApiKey("401"))
+    rec, sleeps = make(t)
+    with pytest.raises(InvalidApiKey):
+        rec(PNG, None)
+    assert len(t.calls) == 1 and sleeps == []
+    assert not issubclass(InvalidApiKey, RateLimited)

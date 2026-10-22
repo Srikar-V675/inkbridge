@@ -38,6 +38,10 @@ class MissingApiKey(RecognizerError):
     """GEMINI_API_KEY is not set."""
 
 
+class InvalidApiKey(RecognizerError):
+    """The provider rejected the key (401/403): retrying cannot help, fix the key."""
+
+
 class Recognizer(Protocol):
     def __call__(self, png: bytes, hint: str | None) -> Recognition: ...
 
