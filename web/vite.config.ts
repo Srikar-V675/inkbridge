@@ -17,7 +17,17 @@ const devLog = {
   },
 }
 
+// The API sends no CORS headers, so the dev server proxies it: the tablet only needs this one URL.
+const api = process.env.INKBRIDGE_API_URL ?? 'http://127.0.0.1:8000'
+const proxied = ['/documents', '/regions', '/search', '/health']
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), devLog],
+  server: {
+    proxy: {
+      ...Object.fromEntries(proxied.map((p) => [p, api])),
+      '/ws': { target: api, ws: true },
+    },
+  },
 })
