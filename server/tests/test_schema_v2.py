@@ -111,3 +111,24 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     assert region["text"] == "kept reading"
     assert region["text_hash"] == db.text_hash("kept reading", None)
     conn.close()
+
+
+def test_backfill_reruns_if_a_previous_run_was_interrupted(tmp_path):
+    conn = db.connect(tmp_path / "t.db")
+    db.migrate(conn)
+    db.ensure_default_document(conn)
+    conn.execute(
+        "UPDATE scenes SET version = 1, elements_json = ? WHERE document_id = 'default'",
+        (json.dumps([A]),),
+    )
+    conn.execute(
+        "INSERT INTO regions (id, document_id, element_ids_json, bbox, created_by, stroke_hash,"
+        " png_path, status, updated_at) VALUES ('r1','default','[\"a\"]','{}','user',?,'p','active','t')",
+        (stroke_hash([A]),),
+    )  # content_hash left NULL, as after a crash between schema_version and the backfill
+    conn.commit()
+    db.init_db(tmp_path / "t.db")  # the normal start-up path
+    c2 = db.connect(tmp_path / "t.db")
+    assert db.get_region(c2, "r1")["content_hash"] == content_hash([A])
+    c2.close()
+    conn.close()

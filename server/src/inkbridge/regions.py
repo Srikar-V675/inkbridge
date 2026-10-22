@@ -53,7 +53,17 @@ def bbox_of(elements: list[dict[str, Any]]) -> dict[str, float]:
 
 
 # Ink-shape fields for content_hash: no id, absolute position is replaced by an offset.
-_CONTENT_FIELDS = ("type", "width", "height", "angle", "points", "pressures")
+_CONTENT_FIELDS = (
+    "type",
+    "width",
+    "height",
+    "angle",
+    "points",
+    "pressures",
+    "text",
+    "fontSize",
+    "fontFamily",
+)
 
 
 def _canonical(value: Any) -> str:

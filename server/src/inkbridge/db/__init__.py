@@ -96,6 +96,9 @@ def init_db(path: Path | None = None) -> None:
     conn = connect(path)
     try:
         migrate(conn)
+        # The backfill commits after schema_version is recorded, so a crash in between must heal.
+        if conn.execute("SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1").fetchone():
+            _backfill_v2(conn)
         ensure_default_document(conn)
     finally:
         conn.close()

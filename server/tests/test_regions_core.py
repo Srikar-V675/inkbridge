@@ -132,3 +132,10 @@ def test_text_hash_normalises_whitespace_only():
     assert text_hash("a  b\n c ", None) == text_hash("a b c", "")
     assert text_hash("a b c", None) != text_hash("a b d", None)
     assert text_hash("x", r"\frac{1}{2}") != text_hash("x", None)
+
+
+def test_content_hash_covers_text_so_a_fixed_width_text_edit_is_noticed():
+    t = {"id": "t", "type": "text", "x": 0, "y": 0, "width": 100, "height": 25, "text": "hello"}
+    assert content_hash([t]) != content_hash([{**t, "text": "jello"}])
+    assert content_hash([t]) != content_hash([{**t, "fontSize": 40}])
+    assert content_hash([t]) == content_hash([_moved(t, 50, 50)])
