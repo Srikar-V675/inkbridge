@@ -15,8 +15,9 @@ from inkbridge.regions import bbox_of
 # Elements that join chunks through other rules, not by proximity.
 _CONNECTORS = {"arrow", "line"}
 _SHAPES = {"rectangle", "ellipse", "diamond", "arrow", "line", "frame"}
-# An element spanning more cells than this is compared against everything instead of indexed.
-_MAX_CELLS = 400
+# An element covering more cells than this moves to the next, coarser grid level.
+_MAX_CELLS = 64
+_LEVEL_FACTOR = 8
 
 
 @dataclass(frozen=True)
@@ -85,40 +86,44 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
         if container is not None:
             uf.union(i, container)
 
-    cells: dict[tuple[int, int], list[int]] = {}
-    big: list[int] = []
+    # Multi-level grid: an element is indexed at the finest level where it covers few cells, so
+    # oversize elements never fall back to comparing against everything.
+    levels: list[dict[tuple[int, int], list[int]]] = []
 
-    def cell_range(b: tuple[float, float, float, float], pad: float):
+    def span(b: tuple[float, float, float, float], pad: float, cell: float):
         return (
-            range(math.floor((b[0] - pad) / threshold), math.floor((b[2] + pad) / threshold) + 1),
-            range(math.floor((b[1] - pad) / threshold), math.floor((b[3] + pad) / threshold) + 1),
+            range(math.floor((b[0] - pad) / cell), math.floor((b[2] + pad) / cell) + 1),
+            range(math.floor((b[1] - pad) / cell), math.floor((b[3] + pad) / cell) + 1),
         )
 
     for i, b in enumerate(boxes):
-        xs, ys = cell_range(b, 0.0)
-        if len(xs) * len(ys) > _MAX_CELLS:
-            big.append(i)
-            continue
+        level = 0
+        while True:
+            xs, ys = span(b, 0.0, threshold * _LEVEL_FACTOR**level)
+            if len(xs) * len(ys) <= _MAX_CELLS:
+                break
+            level += 1
+        while len(levels) <= level:
+            levels.append({})
         for cx in xs:
             for cy in ys:
-                cells.setdefault((cx, cy), []).append(i)
+                levels[level].setdefault((cx, cy), []).append(i)
 
     for i, b in enumerate(boxes):
-        xs, ys = cell_range(b, threshold)
-        candidates: set[int] = set(big)
-        if len(xs) * len(ys) > _MAX_CELLS:
-            candidates = set(range(len(boxes)))
-        else:
-            for cx in xs:
-                for cy in ys:
-                    candidates.update(cells.get((cx, cy), ()))
+        candidates: set[int] = set()
+        for level, cells in enumerate(levels):
+            xs, ys = span(b, threshold, threshold * _LEVEL_FACTOR**level)
+            if len(xs) * len(ys) > len(cells):  # cheaper to scan the occupied cells
+                for (cx, cy), members in cells.items():
+                    if xs.start <= cx < xs.stop and ys.start <= cy < ys.stop:
+                        candidates.update(members)
+            else:
+                for cx in xs:
+                    for cy in ys:
+                        candidates.update(cells.get((cx, cy), ()))
         for j in candidates:
             if j > i and uf.find(i) != uf.find(j) and _gap(b, boxes[j]) < threshold:
                 uf.union(i, j)
-        if i in big:  # oversize elements are only reachable through the candidate sweep above
-            for j in range(i + 1, len(boxes)):
-                if uf.find(i) != uf.find(j) and _gap(b, boxes[j]) < threshold:
-                    uf.union(i, j)
 
     groups: dict[int, list[str]] = {}
     for i, e in enumerate(live):

@@ -176,3 +176,57 @@ def test_kind_hint():
     assert kind_hint([rect("r", 0, 0), {"id": "t", "type": "arrow", "x": 0, "y": 0}]) == "diagram"
     assert kind_hint([stroke("a", 0, 0), rect("r", 0, 0)]) == "mixed"
     assert kind_hint([stroke("gone", 0, 0, isDeleted=True)]) == "handwriting"
+
+
+def test_mixed_small_strokes_and_oversize_elements_stay_fast():
+    small = [stroke(f"s{i}", (i % 100) * 14, (i // 100) * 60, w=10, h=10) for i in range(2900)]
+    big = [rect(f"b{i}", (i % 50) * 450, 4000 + (i // 50) * 450, w=400, h=400) for i in range(2800)]
+    start = time.perf_counter()
+    chunks = cluster(small + big)
+    assert time.perf_counter() - start < 1.0
+    assert sum(len(c) for c in chunks) == 5700
+
+
+def test_oversize_element_still_merges_with_neighbours():
+    els = [rect("huge", 0, 0, w=5000, h=5000), stroke("near", 5010, 100), stroke("far", 9000, 9000)]
+    els += [stroke(f"d{i}", 9000 + i * 12, 9040) for i in range(30)]
+    sets = as_sets(cluster(els))
+    assert frozenset({"huge", "near"}) in sets
+
+
+def test_grid_clustering_matches_brute_force_on_mixed_sizes():
+    import math
+
+    from inkbridge.chunker import clustering_elements
+    from inkbridge.regions import bbox_of
+
+    rng = random.Random(11)
+    els = []
+    for i in range(120):
+        w, h = rng.choice([8, 15, 40, 400, 900]), rng.choice([8, 15, 40, 400, 900])
+        els.append(rect(f"e{i:03}", rng.uniform(0, 2500), rng.uniform(0, 2500), w=w, h=h))
+    boxes = {}
+    for e in clustering_elements(els):
+        b = bbox_of([e])
+        boxes[e["id"]] = (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"])
+    sizes = sorted(max(b[2] - b[0], b[3] - b[1]) for b in boxes.values())
+    n = len(sizes)
+    median = max((sizes[n // 2] + sizes[(n - 1) // 2]) / 2, 4.0)
+    threshold = 1.5 * median
+    parent = {i: i for i in boxes}
+
+    def find(i):
+        while parent[i] != i:
+            i = parent[i]
+        return i
+
+    for a in boxes:
+        for b in boxes:
+            gx = max(boxes[a][0] - boxes[b][2], boxes[b][0] - boxes[a][2], 0)
+            gy = max(boxes[a][1] - boxes[b][3], boxes[b][1] - boxes[a][3], 0)
+            if a < b and math.hypot(gx, gy) < threshold:
+                parent[find(a)] = find(b)
+    expected = {}
+    for i in boxes:
+        expected.setdefault(find(i), set()).add(i)
+    assert as_sets(cluster(els)) == {frozenset(v) for v in expected.values()}
