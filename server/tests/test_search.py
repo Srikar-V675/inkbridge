@@ -17,11 +17,11 @@ def two_regions(client):
     return ra, rb
 
 
-def recognise(region, text, source="gemini", latex=None, stroke_hash=None):
+def recognise(region, text, source="gemini", latex=None, content_hash=None):
     conn = db.connect()
     try:
         db.save_recognition(
-            conn, region["id"], stroke_hash or region["stroke_hash"], source, text, latex=latex
+            conn, region["id"], content_hash or region["content_hash"], source, text, latex=latex
         )
     finally:
         conn.close()
@@ -60,8 +60,8 @@ def test_stale_text_is_replaced_after_ink_change_and_re_recognition(client, two_
     edited = {**A, "points": [[0, 0], [31, 41]]}
     client.put(SCENE, json={"base_version": 1, "elements": [edited, B]})
     assert search(client, "hello") == []
-    new_hash = client.get(f"/regions/{ra['id']}").json()["stroke_hash"]
-    recognise(ra, "goodbye moon", stroke_hash=new_hash)
+    new_hash = client.get(f"/regions/{ra['id']}").json()["content_hash"]
+    recognise(ra, "goodbye moon", content_hash=new_hash)
     assert [h["region_id"] for h in search(client, "goodbye")] == [ra["id"]]
     assert search(client, "hello") == []
 
@@ -91,8 +91,8 @@ def test_orphaned_regions_are_not_searchable(client, two_regions):
     client.put(SCENE, json={"base_version": 1, "elements": [{**A, "isDeleted": True}, B]})
     assert client.get(f"/regions/{ra['id']}").json()["status"] == "orphaned"
     # a reading for the orphaned region's *current* hash is indexed, but must stay hidden
-    current = client.get(f"/regions/{ra['id']}").json()["stroke_hash"]
-    recognise(ra, "ghost note", stroke_hash=current)
+    current = client.get(f"/regions/{ra['id']}").json()["content_hash"]
+    recognise(ra, "ghost note", content_hash=current)
     assert search(client, "ghost") == []
 
 
@@ -101,7 +101,7 @@ def test_save_recognition_rejects_unknown_source(client, two_regions):
     conn = db.connect()
     try:
         with pytest.raises(ValueError, match="source"):
-            db.save_recognition(conn, ra["id"], ra["stroke_hash"], "User", "x")
+            db.save_recognition(conn, ra["id"], ra["content_hash"], "User", "x")
     finally:
         conn.close()
 
