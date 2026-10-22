@@ -30,7 +30,7 @@ Claude Desktop (`claude_desktop_config.json`):
 
 Never run a script from inside `server/src/inkbridge/mcp/` (the directory name shadows the SDK); use the entry point or `python -m inkbridge.mcp`.
 
-## Tools
+## Tools (built)
 
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
@@ -41,6 +41,22 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, so a changed stroke drops its old text until it is re-recognised.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
+
+## Planned tools (spec v3)
+
+Not built yet; each ticket updates this file when it lands. All tools take an optional `document_id` (default `INKBRIDGE_DOCUMENT`).
+
+| Tool | Ticket | Purpose | Mutates |
+|---|---|---|---|
+| `read_canvas` | INK-034 | Whole-canvas outline in reading order: chunks with text, kind, bounds, links, `content_hash`, `deep_link`, plus an overview image. `search` also gains `document_id`. | No |
+| `check_sync` | INK-036 | Given `[{id, hash, reading}]` from a note's frontmatter, returns `fresh`, `fresh_after_reread`, `changed`, `replaced` (with successor), `removed`, `new`. May fill the recognition cache. | Cache only |
+| `list_questions` | INK-047 | Pending Ask AI questions with focus chunks and history (the vendor-neutral pull path). | No |
+| `answer_question` | INK-047 | Store a markdown answer and sources for a question. | Questions table |
+| `create_canvas` | INK-043 | New empty canvas, returns `{document_id, url}`. | Adds a document |
+| `write_text` | INK-043 | Draft text near an anchor chunk, or in free space; arrives as a draft. | Adds a draft op |
+| `draw_diagram` | INK-044 | Draft a Mermaid flowchart (browser converts and acknowledges; the browser must be open). | Adds a draft op |
+
+Outside MCP: `GET /regions/{id}/png` serves a chunk's stored crop at full size (INK-033) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
 
 ## Limits
 
