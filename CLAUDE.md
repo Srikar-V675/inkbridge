@@ -43,10 +43,12 @@ tablet browser (web/, Excalidraw)  <-- HTTP + WebSocket -->  server/ API (FastAP
 
 ## Invariants that are easy to break
 
+These describe the target design. Items marked *(planned)* are not built yet (see `docs/tickets/README.md` and `git log` for what has merged); do not assume code exists for them.
+
 - **User ink is never edited or deleted by an agent path.** Agent ops only add new elements. Enforce in `server/` (reject payloads referencing existing element ids, and ack ids that already exist); a test must fail if the check is removed. The client is not a trusted enforcement point.
 - **Hashes use allow-lists.** `stroke_hash`: `id,type,x,y,width,height,angle,points,pressures,isDeleted`. `content_hash`: the same minus `id`, positions as offsets from the bbox origin, deleted elements dropped. Never hash `version`, `versionNonce`, `updated`, `seed`, `customData`, or the cache is invalidated by every render.
-- **Drafts are not content**: elements with `customData.draft` are skipped by the chunker, recognizer and export until accepted.
-- **The backend never writes the vault** and stores no note text. Notes carry their own provenance (ids, content hashes, reading hashes); text outside marker blocks is never touched on re-export.
+- **Drafts are not content** *(planned: chunker INK-030, op queue INK-041)*: elements with `customData.draft` are skipped by the chunker, recognizer and export until accepted.
+- **The backend never writes the vault** *(planned: export skill INK-037)* and stores no note text. Notes carry their own provenance (ids, content hashes, reading hashes); text outside marker blocks is never touched on re-export.
 - **MCP stdio**: stdout carries protocol frames only; log to stderr. The package directory is named `mcp`, so never run scripts from inside it (it shadows the SDK).
 - **Mermaid conversion only runs in the browser** (`@excalidraw/mermaid-to-excalidraw`), so `draw_diagram` completes through a client acknowledgement (bounded wait); flowcharts only.
 - **Do not generate handwriting strokes.** Agents write text boxes, shapes, arrows and Mermaid diagrams.
@@ -56,13 +58,13 @@ tablet browser (web/, Excalidraw)  <-- HTTP + WebSocket -->  server/ API (FastAP
 - **No Obsidian plugin, no drawing inside the vault, no cross-canvas links** (decision of 22 Oct): Obsidian instances synced by Syncthing would conflict; the backend is the single owner of canvas state.
 - **Dev-only helpers stay dev-only**: the Vite `/__log` endpoint writes `web/dev.log` and must not exist in a production build.
 - LAN HTTP is not a secure context; features requiring one need a different approach, not a workaround.
-- Config: `INKBRIDGE_DATA_DIR`, `INKBRIDGE_DB`, `INKBRIDGE_API_URL`, `INKBRIDGE_DOCUMENT`, `INKBRIDGE_PUBLIC_URL` (deep links), `INKBRIDGE_RUNNER` (optional Ask runner), `GEMINI_API_KEY`, `GEMINI_MODEL`.
+- Config. Built: `INKBRIDGE_DATA_DIR`, `INKBRIDGE_DB`, `INKBRIDGE_API_URL`, `INKBRIDGE_DOCUMENT`; web dev proxy target `INKBRIDGE_API_URL`. In open PRs: `GEMINI_API_KEY`, `GEMINI_MODEL` (INK-013). Planned: `INKBRIDGE_PUBLIC_URL` (deep links, INK-033), `INKBRIDGE_RUNNER` (optional Ask runner, INK-048).
 
 ## Workflow
 
 - One ticket per branch and PR: `feat|fix|chore|docs/INK-xxx-slug`. Never commit to `main` for feature work; `main` is protected from force-push.
 - Commit messages: imperative subject, optional `INK-xxx:` prefix. **Never add Co-Authored-By or any attribution line**, in commits or PR bodies.
 - Commit identity for this repo is `srikarvuchiha@gmail.com` (repo-local config); do not change it.
-- Non-obvious decisions get a numbered note in `docs/decisions/` (0004 chunks replace manual regions, 0005 content hash, 0006 Gemini limits); tool changes update `docs/mcp-tools.md`; keep this file, `docs/mcp-tools.md` and (once it exists) `docs/vault-note-format.md` in step with the code.
+- Non-obvious decisions get a numbered note in `docs/decisions/` (0004 chunks replace manual regions; 0005 content hash and 0006 Gemini limits arrive with INK-029 and INK-013); tool changes update `docs/mcp-tools.md`; keep this file, `docs/mcp-tools.md` and (once it exists) `docs/vault-note-format.md` in step with the code.
 - `docs/tickets/` is untracked on purpose: never `git add -A` or `git add docs`; add paths explicitly.
 - Cut order when short on time: networkx stretch, E2/E3, the stroke arm of E1, embedded source previews (keep links), Keep on canvas, Accept/Reject (keep Accept all), manual merge/split, then the Ask panel and runner (keep the pull path). Never cut the canvas-to-note path, the stale check, the README or the demo video.
