@@ -39,6 +39,18 @@ describe("drafts", () => {
     assert.equal(out[3].startBinding?.gap, 1);
   });
 
+  it("gives groups op-scoped ids, shared within the op", () => {
+    const out = prefixIds(
+      [
+        { id: "a", x: 0, y: 0, groupIds: ["g", "h"] },
+        { id: "b", x: 0, y: 0, groupIds: ["g"] },
+      ],
+      "op1:",
+    );
+    assert.deepEqual(out[0].groupIds, ["op1:g1", "op1:g2"]);
+    assert.deepEqual(out[1].groupIds, ["op1:g1"]);
+  });
+
   it("drops references to anything outside the op (never points at user ink)", () => {
     const out = prefixIds(
       [

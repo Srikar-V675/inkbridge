@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExterna
 import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
+import { rejectOp, type DraftElement } from "./drafts";
 import { drawOp } from "./drawOp";
 import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
@@ -149,9 +150,23 @@ export default function App() {
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}`,
       onOp: async (op) => {
-        // Save what is pending first, so the server's next placement sees the newest ink.
-        void syncRef.current?.flushNow();
-        return drawOp(apiRef.current ?? (await apiReady.promise), op);
+        // Saving now also makes the server's next placement see the newest ink.
+        const persist = async (elements: readonly unknown[]) => {
+          const sync = syncRef.current;
+          if (!sync) return;
+          sync.notify(elements as SceneElement[]);
+          await sync.flushNow();
+        };
+        return drawOp(apiRef.current ?? (await apiReady.promise), op, persist);
+      },
+      onOpUpdated: (m) => {
+        // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
+        const api = apiRef.current;
+        if (!api || !["failed", "expired", "rejected"].includes(m.status)) return;
+        const prefix = `${m.op_id}:`;
+        const scene = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
+        if (!scene.some((e) => e.id.startsWith(prefix) && !e.isDeleted)) return;
+        api.updateScene({ elements: rejectOp(scene, prefix) as never });
       },
       onOpError: (m) => console.warn("op refused by the server", m),
     });

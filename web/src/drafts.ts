@@ -33,6 +33,7 @@ export interface DraftElement {
   points?: readonly (readonly number[])[];
   containerId?: string | null;
   frameId?: string | null;
+  groupIds?: readonly string[];
   boundElements?: readonly { id: string; type: string }[] | null;
   startBinding?: { elementId: string; [k: string]: unknown } | null;
   endBinding?: { elementId: string; [k: string]: unknown } | null;
@@ -53,6 +54,12 @@ export function opElements<T extends DraftElement>(elements: readonly T[], prefi
  */
 export function prefixIds<T extends DraftElement>(elements: readonly T[], prefix: string): T[] {
   const map = new Map(elements.map((e, i) => [e.id, `${prefix}${i + 1}`]));
+  // Groups get op-scoped ids too, so a draft can never join one of the user's groups.
+  const groups = new Map<string, string>();
+  const group = (g: string) => {
+    if (!groups.has(g)) groups.set(g, `${prefix}g${groups.size + 1}`);
+    return groups.get(g)!;
+  };
   const ref = (id: string | null | undefined) => (id != null ? (map.get(id) ?? null) : id);
   const binding = <B extends { elementId: string } | null | undefined>(b: B): B | null => {
     if (!b) return b ?? null;
@@ -67,6 +74,7 @@ export function prefixIds<T extends DraftElement>(elements: readonly T[], prefix
       out.boundElements = e.boundElements
         .filter((b) => map.has(b.id))
         .map((b) => ({ ...b, id: map.get(b.id)! }));
+    if (e.groupIds) out.groupIds = e.groupIds.map(group);
     if ("startBinding" in e) out.startBinding = binding(e.startBinding);
     if ("endBinding" in e) out.endBinding = binding(e.endBinding);
     return out;

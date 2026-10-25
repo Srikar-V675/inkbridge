@@ -28,7 +28,13 @@ Code: `server/src/inkbridge/api/ws.py`, `web/src/opsSocket.ts`, `web/src/drafts.
   op's prefix, not only the acked ids, and touches nothing else.
 - **Drafts.** Tagged `customData {author: "agent", draft: true, op_id}`, `strokeStyle: "dashed"`,
   text at 70 % opacity. They are ordinary scene elements, so autosave persists them and a reload
-  keeps them. The ack is sent right after `updateScene`, before the autosave.
+  keeps them. The ack is sent only after the scene with the drafts was saved (a flush right after
+  `updateScene`), because an applied op is never replayed: a draft lost to a reload before the
+  save would never come back. Groups get op-scoped ids (`<id_prefix>g<n>`) as well.
+- **Late status changes.** The server re-reads an op before pushing it and skips one that is no
+  longer pending or delivered (a PATCH to failed or expired can land first). If the browser still
+  holds drafts of an op that becomes failed, expired or rejected (`op.updated`), it sweeps them
+  with `rejectOp`.
 - **Flush on arrival.** When an op arrives the client starts saving its pending changes, so the
   server's placement of the next op sees the newest ink. The current op was already placed when
   it was queued.
@@ -38,4 +44,5 @@ Code: `server/src/inkbridge/api/ws.py`, `web/src/opsSocket.ts`, `web/src/drafts.
 - **Fonts.** Text is measured when it is converted; the client waits for Excalifont to load
   first, otherwise the box is too narrow and clips the text.
 - **chunks.updated** is sent after every scene save with the new version and the ids of active
-  regions whose crop is stale. Crop sync (INK-057) hooks into `OpsSocket.onChunksUpdated`.
+  regions whose crop is stale. Crop sync (INK-057) hooks into `OpsSocket.onChunksUpdated`; nothing
+  listens to it yet.

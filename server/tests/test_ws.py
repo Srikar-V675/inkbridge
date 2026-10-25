@@ -173,3 +173,19 @@ def test_mark_delivered_reports_whether_it_moved_the_op(client):
         assert ops_db.get_op(conn, op["id"])["status"] == "applied"
     finally:
         conn.close()
+
+
+def test_an_op_resolved_before_its_push_is_not_sent(client):
+    from inkbridge.api.ws import hub
+
+    with client.websocket_connect(WS) as ws:
+        conn = db.connect()
+        try:
+            stale, _ = ops_db.create_op(conn, "default", "write_text", {"text": "late"})
+            ops_db.update_status(conn, stale["id"], "expired")
+        finally:
+            conn.close()
+        hub.publish("default", op=stale)  # the push queued at enqueue runs after the PATCH
+        fresh = write(client, "fresh")
+        assert recv(ws)["op_id"] == fresh["id"]
+    assert status(client, stale["id"]) == "expired"

@@ -15,6 +15,7 @@ to the event loop that owns the sockets.
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -24,6 +25,7 @@ from inkbridge import db
 from inkbridge.db import ops as ops_db
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 REPLAY_STATUSES = ["pending", "delivered"]
 
@@ -75,17 +77,27 @@ class Hub:
                 self.leave(document_id, ws)
         return sent
 
-    async def push_op(self, document_id: str, op: dict) -> None:
+    async def push_op(self, document_id: str, op_id: str) -> None:
+        # Re-read: a PATCH (failed, expired) may have landed since the op was queued.
+        op = await run_in_threadpool(_with_conn, ops_db.get_op, op_id)
+        if op["status"] not in REPLAY_STATUSES:
+            return
         if await self.send(document_id, _pending_message(op)):
-            await run_in_threadpool(_with_conn, ops_db.mark_delivered, op["id"])
+            await run_in_threadpool(_with_conn, ops_db.mark_delivered, op_id)
 
     def publish(self, document_id: str, message: dict | None = None, op: dict | None = None):
         """Thread-safe, fire and forget. With `op`, push it as op.pending (and mark delivered)."""
         loop = self._loop
         if loop is None or loop.is_closed() or not self.connected(document_id):
             return
-        coro = self.push_op(document_id, op) if op else self.send(document_id, message or {})
-        asyncio.run_coroutine_threadsafe(coro, loop)
+        coro = self.push_op(document_id, op["id"]) if op else self.send(document_id, message or {})
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        future.add_done_callback(_log_failure)
+
+
+def _log_failure(future) -> None:
+    if not future.cancelled() and future.exception() is not None:
+        log.error("websocket publish failed", exc_info=future.exception())
 
 
 hub = Hub()

@@ -26,8 +26,16 @@ async function skeletonFor(op: PendingOp): Promise<Skeleton> {
   return parsed.elements as Skeleton;
 }
 
-/** Draw the op as dashed drafts (once) and return the ids of its elements on the canvas. */
-export async function drawOp(api: ExcalidrawImperativeAPI, op: PendingOp): Promise<string[]> {
+/**
+ * Draw the op as dashed drafts (once) and return the ids of its elements on the canvas.
+ * `persist` saves the scene with the drafts in it: the caller acks only after that, because an
+ * applied op is never replayed, so an unsaved draft lost to a reload would never come back.
+ */
+export async function drawOp(
+  api: ExcalidrawImperativeAPI,
+  op: PendingOp,
+  persist: (elements: readonly unknown[]) => Promise<void>,
+): Promise<string[]> {
   const prefix = op.payload.id_prefix;
   const already = opElements(api.getSceneElementsIncludingDeleted() as never as DraftElement[], prefix);
   if (already.length) return already.map((e) => e.id); // replay of an op drawn before a reload
@@ -39,5 +47,6 @@ export async function drawOp(api: ExcalidrawImperativeAPI, op: PendingOp): Promi
   const drafts = toDrafts(converted as never as DraftElement[], op);
   if (!drafts.length) throw new Error("the op produced no elements");
   api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...drafts] as never });
+  await persist(api.getSceneElementsIncludingDeleted());
   return drafts.map((e) => e.id);
 }
