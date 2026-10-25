@@ -19,7 +19,12 @@ class Recognition:
 
 
 class RecognizerError(Exception):
-    """Base class: the worker retries these with backoff and never surfaces them to the editor."""
+    """Base class: the worker retries these with backoff and never surfaces them to the editor,
+    except `PermanentError` subclasses, which retrying cannot fix."""
+
+
+class PermanentError(RecognizerError):
+    """A configuration problem (missing or rejected key): the worker must stop, not retry."""
 
 
 class RateLimited(RecognizerError):
@@ -34,12 +39,12 @@ class BadResponse(RecognizerError):
     """The provider answered, but not with the JSON shape we asked for."""
 
 
-class MissingApiKey(RecognizerError):
+class MissingApiKey(PermanentError):
     """GEMINI_API_KEY is not set."""
 
 
-class InvalidApiKey(RecognizerError):
-    """The provider rejected the key (401/403): retrying cannot help, fix the key."""
+class InvalidApiKey(PermanentError):
+    """The provider rejected the key (401/403, or 400 "API key not valid"): fix the key."""
 
 
 class Recognizer(Protocol):
