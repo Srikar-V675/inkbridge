@@ -1,121 +1,168 @@
-// Day-1 spike: throwaway page that runs the five feasibility checks from docs/project-doc.html §11.
-import { useEffect, useState } from "react";
-import {
-  Excalidraw,
-  convertToExcalidrawElements,
-  exportToBlob,
-  restoreElements,
-  serializeAsJSON,
-} from "@excalidraw/excalidraw";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
+import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
-import { parseMermaidToExcalidraw } from "@excalidraw/mermaid-to-excalidraw";
+import { readRoute } from "./route";
+import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
+import { createStatusStore } from "./status";
+import { loadView, saveView, type View } from "./view";
 
-const KEY = "inkbridge-spike-scene";
-const MERMAID = "flowchart LR\n  A[Region] --> B[Gemini]\n  B --> C[Agent]";
+const LABEL: Record<SaveState, string> = {
+  loading: "Loading…",
+  saved: "Saved",
+  dirty: "Unsaved changes",
+  saving: "Saving…",
+  retry: "Offline, retrying",
+  conflict: "Conflict",
+  error: "Error",
+};
+
+type Restored = ReturnType<typeof restoreElements>;
+type Initial = { elements: Restored; view: View | null } | "failed" | null;
+
+function SaveBadge({ store }: { store: ReturnType<typeof createStatusStore> }) {
+  const status = useSyncExternalStore(store.subscribe, store.get);
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: "absolute",
+        bottom: 12,
+        left: "50%",
+        transform: "translateX(-50%)",
+        padding: "2px 10px",
+        borderRadius: 4,
+        font: "12px system-ui, sans-serif",
+        background: status.state === "saved" ? "#e6f4ea" : "#fff3cd",
+        color: "#202124",
+        pointerEvents: "none",
+        zIndex: 10,
+      }}
+    >
+      {LABEL[status.state]}
+      {status.detail ? `: ${status.detail}` : ""}
+    </div>
+  );
+}
+
+// Memoised so nothing outside the canvas (save status, route) can re-render it mid-stroke.
+const Canvas = memo(function Canvas(props: {
+  initial: { elements: Restored; view: View | null };
+  onApi: (api: ExcalidrawImperativeAPI) => void;
+  onChange: (elements: readonly unknown[], appState: { scrollX: number; scrollY: number; zoom: { value: number } }) => void;
+}) {
+  const { initial, onApi, onChange } = props;
+  const initialData = useMemo(
+    () => ({
+      elements: initial.elements,
+      ...(initial.view && {
+        appState: {
+          scrollX: initial.view.scrollX,
+          scrollY: initial.view.scrollY,
+          zoom: { value: initial.view.zoom as never },
+        },
+      }),
+    }),
+    [initial],
+  );
+  return <Excalidraw excalidrawAPI={onApi} initialData={initialData} onChange={onChange as never} />;
+});
 
 export default function App() {
-  const [api, setApi] = useState<any>(null);
-  const [log, setLog] = useState<string[]>([]);
-  const [png, setPng] = useState<string | null>(null);
-  const say = (s: string) => {
-    setLog((l) => [s, ...l].slice(0, 40));
-    fetch("/__log", { method: "POST", body: s }).catch(() => {});
-  };
+  const route = useMemo(() => readRoute(), []);
+  const status = useMemo(() => createStatusStore(), []);
+  const [initial, setInitial] = useState<Initial>(null);
+  const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const syncRef = useRef<SceneSync | null>(null);
+  const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fitOnOpen = useRef(false);
 
-  // Check 1: secure context + what the stylus reports.
+  // Load the saved scene before Excalidraw mounts so restoreElements runs ahead of initialData
+  // (it keeps freedraw pressures and simulatePressure=false).
   useEffect(() => {
-    say(`secure context: ${window.isSecureContext} | origin: ${location.origin}`);
-    const onDown = (e: PointerEvent) =>
-      say(`pointerdown type=${e.pointerType} pressure=${e.pressure.toFixed(2)}`);
-    window.addEventListener("pointerdown", onDown);
-    return () => window.removeEventListener("pointerdown", onDown);
+    const sync = new SceneSync({
+      documentId: route.canvas,
+      storage: window.localStorage,
+      onState: (state, detail) => status.set(state, detail),
+      onReload: (elements) => {
+        const api = apiRef.current;
+        if (!api) return;
+        // Keep the live objects of local elements (one may be a stroke still being drawn) and
+        // restore only the ones that came from the server.
+        const live = new Set<unknown>(api.getSceneElementsIncludingDeleted());
+        const restored = restoreElements(elements.filter((e) => !live.has(e)) as never, null);
+        const byId = new Map(restored.map((e) => [e.id, e]));
+        api.updateScene({
+          elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
+        });
+      },
+    });
+    syncRef.current = sync;
+    let cancelled = false;
+    void sync.load().then((elements) => {
+      if (cancelled) return;
+      if (!elements) return setInitial("failed");
+      const view = loadView(window.localStorage, route.canvas);
+      const restored = restoreElements(elements as never, null);
+      // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
+      fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
+      setInitial({ elements: restored, view });
+    });
+    const onHide = () => {
+      if (document.visibilityState === "hidden") void sync.flushNow();
+    };
+    const onPageHide = () => void sync.flushNow();
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+      sync.dispose();
+    };
+  }, [route.canvas, status]);
+
+  const onApi = useCallback((api: ExcalidrawImperativeAPI) => {
+    apiRef.current = api;
   }, []);
 
-  const selected = () => {
-    const ids = api.getAppState().selectedElementIds;
-    return api.getSceneElements().filter((e: any) => ids[e.id]);
-  };
-
-  // Check 2: read selection, incl. freedraw pressures.
-  const check2 = () => {
-    const sel = selected();
-    if (!sel.length) return say("select something first");
-    sel.forEach((e: any) =>
-      say(`${e.type} ${e.id.slice(0, 6)} points=${e.points?.length ?? "-"} pressures=${
-        e.pressures ? `${e.pressures.length} (simulate=${e.simulatePressure})` : "none"
-      }`),
-    );
-  };
-
-  // Check 3: add a text element and a Mermaid flowchart.
-  const check3 = async () => {
-    try {
-      const text = convertToExcalidrawElements([
-        { type: "text", x: 0, y: 0, text: "agent draft", strokeStyle: "dashed" } as any,
-      ]);
-      const { elements, files } = await parseMermaidToExcalidraw(MERMAID);
-      const flow = convertToExcalidrawElements(elements as any).map((e: any) => ({
-        ...e,
-        x: e.x + 40,
-        y: e.y + 120,
-      }));
-      if (files) api.addFiles(Object.values(files));
-      api.updateScene({ elements: [...api.getSceneElements(), ...text, ...flow] });
-      say(`added ${text.length} text + ${flow.length} mermaid elements`);
-    } catch (err) {
-      say(`check3 failed: ${err}`);
-    }
-  };
-
-  // Check 4: tag selection with customData, save, then reload the page and read it back.
-  const check4Save = () => {
-    const ids = api.getAppState().selectedElementIds;
-    const els = api
-      .getSceneElements()
-      .map((e: any) => (ids[e.id] ? { ...e, customData: { author: "agent", draft: true } } : e));
-    api.updateScene({ elements: els });
-    localStorage.setItem(KEY, serializeAsJSON(els, api.getAppState(), api.getFiles(), "local"));
-    say("saved with customData; now reload the page and press 'Read customData'");
-  };
-  const check4Read = () => {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return say("nothing saved");
-    const els = restoreElements(JSON.parse(raw).elements, null);
-    api.updateScene({ elements: els });
-    const tagged = els.filter((e: any) => e.customData);
-    say(`restored ${els.length} elements, ${tagged.length} with customData: ${JSON.stringify(tagged[0]?.customData)}`);
-  };
-
-  // Check 5: export only the selection as PNG.
-  const check5 = async () => {
-    const sel = selected();
-    if (!sel.length) return say("select something first");
-    const blob = await exportToBlob({
-      elements: sel,
-      appState: { ...api.getAppState(), exportBackground: true },
-      files: api.getFiles(),
-      mimeType: "image/png",
-    });
-    setPng(URL.createObjectURL(blob));
-    say(`exported selection PNG: ${(blob.size / 1024).toFixed(1)} KB`);
-  };
+  const onChange = useCallback(
+    (
+      elements: readonly unknown[],
+      appState: { scrollX: number; scrollY: number; zoom: { value: number } },
+    ) => {
+      syncRef.current?.notify(elements as unknown as SceneElement[]);
+      // First open of this canvas on this device: show all the ink instead of its centre at 100%.
+      // Done on the first change event that carries the loaded scene (the API handle arrives earlier).
+      if (fitOnOpen.current && elements.length > 0 && apiRef.current) {
+        fitOnOpen.current = false;
+        apiRef.current.scrollToContent(undefined, {
+          fitToViewport: true,
+          viewportZoomFactor: 0.9,
+          maxZoom: 1,
+          animate: false,
+        });
+        return;
+      }
+      if (viewTimer.current) clearTimeout(viewTimer.current);
+      viewTimer.current = setTimeout(
+        () =>
+          saveView(window.localStorage, route.canvas, {
+            scrollX: appState.scrollX,
+            scrollY: appState.scrollY,
+            zoom: appState.zoom.value,
+          }),
+        500,
+      );
+    },
+    [route.canvas],
+  );
 
   return (
-    <div style={{ display: "grid", gridTemplateRows: "auto 1fr auto", height: "100vh" }}>
-      <div style={{ display: "flex", gap: 8, padding: 8, flexWrap: "wrap" }}>
-        <button onClick={check2} disabled={!api}>2 Read selection</button>
-        <button onClick={check3} disabled={!api}>3 Add text + Mermaid</button>
-        <button onClick={check4Save} disabled={!api}>4 Tag + save</button>
-        <button onClick={check4Read} disabled={!api}>4 Read customData</button>
-        <button onClick={check5} disabled={!api}>5 Export selection PNG</button>
-      </div>
-      <div style={{ minHeight: 0 }}>
-        <Excalidraw excalidrawAPI={setApi} />
-      </div>
-      <div style={{ display: "flex", gap: 12, padding: 8, maxHeight: "25vh", overflow: "auto", font: "12px monospace" }}>
-        <div style={{ flex: 1 }}>{log.map((l, i) => <div key={i}>{l}</div>)}</div>
-        {png && <img src={png} alt="selection export" style={{ maxHeight: 120, border: "1px solid #999" }} />}
-      </div>
+    <div style={{ height: "100dvh", position: "relative" }}>
+      {initial && initial !== "failed" && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
+      <SaveBadge store={status} />
     </div>
   );
 }
