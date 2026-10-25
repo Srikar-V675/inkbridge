@@ -83,7 +83,7 @@ def test_default_caps_fit_the_documented_limits():
     from inkbridge.api.regions import MAX_UPLOAD_BYTES
 
     assert limits.MAX_IMAGE_BODY_BYTES > MAX_UPLOAD_BYTES  # multipart framing fits on top
-    assert limits.MAX_BODY_BYTES >= 32 * 1024 * 1024
+    assert limits.MAX_BODY_BYTES >= 128 * 1024 * 1024  # ~3,800 dense 35 KB strokes
 
 
 def test_bodyless_requests_and_health_are_unaffected(client, small_caps):

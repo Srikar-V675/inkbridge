@@ -49,7 +49,8 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
             applied = _migrate_locked(conn)
             conn.execute("COMMIT")
         except BaseException:
-            conn.execute("ROLLBACK")
+            if conn.in_transaction:  # SQLite may already have rolled back (e.g. RAISE(ROLLBACK))
+                conn.execute("ROLLBACK")
             raise
     finally:
         conn.execute(f"PRAGMA busy_timeout = {timeout}")

@@ -13,8 +13,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from inkbridge.api.regions import MAX_UPLOAD_BYTES
 
-# Scenes: 50,000 elements is the element cap; a dense handwritten page is a few MB.
-MAX_BODY_BYTES = 32 * 1024 * 1024
+# Scenes: the whole canvas is one PUT, and a long freedraw stroke with pressures is ~35 KB, so
+# 128 MiB is room for a few thousand dense strokes. It bounds memory, it is not a content limit.
+MAX_BODY_BYTES = 128 * 1024 * 1024
 # Crop uploads: the 10 MB PNG cap plus room for multipart framing and form fields.
 MAX_IMAGE_BODY_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
 
@@ -42,10 +43,11 @@ class BodySizeLimit:
         declared = dict(scope["headers"]).get(b"content-length")
         if declared is not None:
             try:
-                too_big = int(declared) > cap
+                too_big = not 0 <= int(declared) <= cap
             except ValueError:
                 too_big = False  # the server rejects a malformed length before we get here
             if too_big:
+                # Not draining the body: uvicorn closes the connection after the response.
                 await _reject(send, cap)
                 return
 

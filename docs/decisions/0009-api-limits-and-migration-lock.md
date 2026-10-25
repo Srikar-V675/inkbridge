@@ -7,13 +7,18 @@ Status: accepted (INK-040)
   A declared `Content-Length` over the cap is rejected without reading; otherwise the body is read
   up to the cap and replayed, so chunked uploads with no length are capped too.
 - Caps: **11 MiB** for crop uploads (`POST /documents/{id}/regions`, `PUT /regions/{id}/image`:
-  the 10 MB PNG cap plus 1 MiB for multipart framing and form fields) and **32 MiB** for every
-  other request, which in practice means the scene `PUT`. A dense handwritten page is a few MB;
-  the 50,000-element cap at a typical ~0.5 KB per element is about 25 MB. The route-level 10 MB
-  PNG check stays as the exact limit.
+  the 10 MB PNG cap plus 1 MiB for multipart framing and form fields) and **128 MiB** for every
+  other request, which in practice means the scene `PUT`. The whole canvas is one PUT and a long
+  freedraw stroke with pressures is ~35 KB (600 points), so 128 MiB holds ~3,800 such strokes. It
+  bounds server memory; it cannot match the 50,000-element cap, so a very large canvas will need
+  to be split. The client shows a 413 as "Save rejected (413)". The route-level 10 MB PNG check
+  stays as the exact limit.
 - Why middleware: FastAPI parses a JSON body whole and Starlette spools a multipart upload to
   disk before the route runs, so a check inside the route comes after the cost was paid.
-- Buffering up to the cap in memory is what FastAPI does for JSON anyway.
+- Buffering up to the cap in memory is what FastAPI does for JSON anyway. For uploads it means up
+  to 11 MiB is held in memory before Starlette spools it, which is acceptable at that size.
+- An early 413 does not drain the body; uvicorn closes the connection, so a client still sending
+  a large body may see a reset instead of the 413.
 
 ## Migration lock
 - `migrate()` runs all pending files, and the v2 backfill, in **one `BEGIN IMMEDIATE`
@@ -24,6 +29,10 @@ Status: accepted (INK-040)
   with `sqlite3.complete_statement` (semicolons inside strings and trigger bodies are kept).
 - Consequence: a failing migration rolls back **everything** in that run, including files before
   it. The old per-file `executescript` left a half-applied file behind on error.
+- A backfill on a large database runs under the same lock; a second process waiting longer than
+  120 s fails to start with "database is locked" and must be restarted.
+- The lock test runs two connections in one process; SQLite locks are per connection, and a
+  manual check with two processes racing `init_db` on a fresh file passed 5/5.
 - The interrupted-backfill heal moved from `init_db` into the locked section and is the only
   backfill trigger: "version 4 recorded and some region has no content_hash".
 
