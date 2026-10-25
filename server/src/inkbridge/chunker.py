@@ -30,7 +30,7 @@ class ChunkerConfig:
     min_median: float = 4.0  # floor for the median size, in px
     # A new cluster keeps an old chunk's id when their element-id Jaccard is above this. Small
     # chunks are fragile (2 elements gaining 3 is J = 0.4); INK-038 may switch to a 60%
-    # containment test instead (docs/decisions/0009-chunk-identity.md).
+    # containment test instead (docs/decisions/0011-chunk-identity.md).
     match_threshold: float = 0.5
 
 

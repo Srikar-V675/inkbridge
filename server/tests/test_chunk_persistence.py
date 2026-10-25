@@ -3,11 +3,13 @@
 import copy
 import time
 
+import pytest
+
 from inkbridge import db
 from tests.test_chunker import stroke as _stroke
 from tests.test_region_staleness import Scene
 from tests.test_region_staleness import region as get
-from tests.test_regions_api import PNG, REGIONS, post
+from tests.test_regions_api import PNG, REGIONS, SCENE, post
 from tests.test_search import recognise, search
 
 
@@ -221,3 +223,44 @@ def test_scene_put_on_2000_elements_stays_fast(client):
     canvas.put()
     elapsed = time.perf_counter() - start
     assert elapsed < 1.5, f"scene PUT took {elapsed:.2f} s"
+
+
+def test_a_failure_while_chunking_rolls_back_the_whole_save(client, monkeypatch):
+    canvas = Canvas(client, row("a", 3))
+    before = canvas.chunks()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("chunker failed")
+
+    canvas.elements.append(stroke("a3", 45, 0))
+    with monkeypatch.context() as m:
+        m.setattr(db, "_sync_chunks", boom)
+        with pytest.raises(RuntimeError):
+            client.put(SCENE, json={"base_version": canvas.version, "elements": canvas.elements})
+    scene = client.get(SCENE).json()
+    assert scene["version"] == canvas.version and len(scene["elements"]) == 3
+    assert canvas.chunks() == before
+
+
+def test_restart_rekeys_hashes_stored_before_integral_floats_hashed_as_ints(client):
+    from inkbridge.regions import content_hash, legacy_content_hash
+
+    canvas = Canvas(client, [stroke("f0", 0.5, 0), stroke("f1", 15.5, 0)])  # offset 15.0 (float)
+    chunk = canvas.chunk_of("f0")
+    els = canvas.elements
+    old = legacy_content_hash(els)
+    assert old != chunk["content_hash"] == content_hash(els)
+    conn = db.connect()
+    try:  # pretend the row and its reading were written by INK-029's hash
+        conn.execute("UPDATE regions SET content_hash = ? WHERE id = ?", (old, chunk["id"]))
+        conn.commit()
+        recognise(chunk, "gradient", content_hash=old)
+        db.init_db()
+        assert get(client, chunk["id"])["content_hash"] == chunk["content_hash"]
+        assert get(client, chunk["id"])["text"] == "gradient"
+    finally:
+        conn.close()
+    for e in canvas.elements:  # a pure move keeps the reading and the search hit
+        e["x"] += 100
+    canvas.put()
+    assert [h["region_id"] for h in search(client, "gradient")] == [chunk["id"]]

@@ -77,8 +77,12 @@ def _integral(value: Any) -> Any:
     return value
 
 
+def _plain_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
 def _canonical(value: Any) -> str:
-    return json.dumps(_integral(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return _plain_json(_integral(value))
 
 
 def content_hash(elements: list[dict[str, Any]]) -> str:
@@ -89,6 +93,15 @@ def content_hash(elements: list[dict[str, Any]]) -> str:
     Integral floats hash as ints anywhere. Rows are sorted by rounded offset (then content), so draw
     order and ids are irrelevant.
     """
+    return _content_hash(elements, _canonical)
+
+
+def legacy_content_hash(elements: list[dict[str, Any]]) -> str:
+    """content_hash as INK-029 shipped it (15.0 and 15 differ). Only for re-keying stored rows."""
+    return _content_hash(elements, _plain_json)
+
+
+def _content_hash(elements: list[dict[str, Any]], canonical) -> str:
     live = [e for e in elements if not e.get("isDeleted")]
     if not live:
         return hashlib.sha256(b"[]").hexdigest()
@@ -99,8 +112,8 @@ def content_hash(elements: list[dict[str, Any]]) -> str:
         row["dx"] = round(e.get("x", 0) - origin["x"], 3)
         row["dy"] = round(e.get("y", 0) - origin["y"], 3)
         rows.append(row)
-    rows.sort(key=lambda r: (round(r["dy"]), round(r["dx"]), _canonical(r)))
-    return hashlib.sha256(_canonical(rows).encode()).hexdigest()
+    rows.sort(key=lambda r: (round(r["dy"]), round(r["dx"]), canonical(r)))
+    return hashlib.sha256(canonical(rows).encode()).hexdigest()
 
 
 def text_hash(text: str | None, latex: str | None) -> str:

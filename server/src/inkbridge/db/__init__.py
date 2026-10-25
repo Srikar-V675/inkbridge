@@ -9,7 +9,13 @@ from pathlib import Path
 
 from inkbridge import config
 from inkbridge.chunker import ChunkerConfig, cluster, kind_hint, match_chunks
-from inkbridge.regions import bbox_of, content_hash, stroke_hash, text_hash
+from inkbridge.regions import (
+    bbox_of,
+    content_hash,
+    legacy_content_hash,
+    stroke_hash,
+    text_hash,
+)
 
 DEFAULT_DOCUMENT_ID = "default"
 RECOGNITION_SOURCES = ("user", "agent", "gemini")
@@ -84,6 +90,38 @@ def _backfill_v2(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _rekey_integral_hashes(conn: sqlite3.Connection) -> None:
+    """Move rows hashed before content_hash wrote integral floats as ints to the new key.
+
+    Idempotent and cheap to rerun: a region is only touched when its stored hash is the old form
+    of its current ink and differs from the new form, so the ink is identical and its readings
+    (and search hit) carry over instead of being lost on the next move.
+    """
+    scenes: dict[str, dict] = {}
+    for region in conn.execute(
+        "SELECT id, document_id, element_ids_json, content_hash FROM regions"
+    ):
+        doc = region["document_id"]
+        if doc not in scenes:
+            row = conn.execute(
+                "SELECT elements_json FROM scenes WHERE document_id = ?", (doc,)
+            ).fetchone()
+            scenes[doc] = {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
+        present = [
+            scenes[doc][i] for i in json.loads(region["element_ids_json"]) if i in scenes[doc]
+        ]
+        old, new = region["content_hash"], content_hash(present)
+        if old == new or old != legacy_content_hash(present):
+            continue
+        conn.execute("UPDATE regions SET content_hash = ? WHERE id = ?", (new, region["id"]))
+        conn.execute(
+            "UPDATE OR IGNORE recognitions SET content_hash = ? WHERE region_id = ? AND content_hash = ?",
+            (new, region["id"], old),
+        )
+        _reindex_region(conn, region["id"])
+    conn.commit()
+
+
 def ensure_default_document(conn: sqlite3.Connection) -> None:
     now = _now()
     conn.execute(
@@ -105,6 +143,7 @@ def init_db(path: Path | None = None) -> None:
         # The backfill commits after schema_version is recorded, so a crash in between must heal.
         if conn.execute("SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1").fetchone():
             _backfill_v2(conn)
+        _rekey_integral_hashes(conn)
         ensure_default_document(conn)
     finally:
         conn.close()

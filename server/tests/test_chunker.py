@@ -365,3 +365,10 @@ def test_tie_prefers_an_active_chunk():
 def test_deleted_chunk_has_no_successor():
     m = match_chunks({"c": ids("e", 3)}, [ids("x", 3)], tops=[0.0])
     assert m.assigned == [None] and m.successors == {"c": None}
+
+
+def test_equal_jaccard_goes_to_the_larger_overlap():
+    # Orphaned chunks may overlap active ones. Both have J = 0.5 with the cluster.
+    old = {"a": ids("e", 2), "b": ids("e", 4) + ids("x", 4)}  # 2/4 and 4/8
+    m = match_chunks(old, [ids("e", 4)], tops=[0.0], threshold=0.4)
+    assert m.assigned == ["b"]

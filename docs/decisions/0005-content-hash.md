@@ -15,9 +15,10 @@ Status: accepted (INK-029)
   recognition, never a wrong reading);
   rows are sorted by rounded offset then content, so draw order and ids never matter.
 - Integral floats are hashed as ints at any depth (INK-031): browser JSON gives `15`, but after a 0.25 px
-  drag the offset is computed as `15.0`, which used to change the hash on a pure move. Readings keyed by
-  the earlier form for such ink miss once and are re-read. `stroke_hash` is unchanged (re-keying it
-  would flag every crop stale for nothing).
+  drag the offset is computed as `15.0`, which used to change the hash on a pure move. On start-up
+  `db._rekey_integral_hashes` moves any region whose stored hash is the old form of its current ink (and
+  its readings and search row) to the new form, so nothing is re-read. `stroke_hash` is unchanged
+  (re-keying it would flag every crop stale for nothing).
 - Text elements also hash `text`, `fontSize` and `fontFamily` (a fixed-width text edit changes no geometry).
 - `version`, `versionNonce`, `updated`, `seed` and `customData` are never hashed.
 - Migration 0004 re-keys `recognitions` to `content_hash` (table rebuild). `db._backfill_v2` moves a reading
