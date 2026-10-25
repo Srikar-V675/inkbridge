@@ -17,7 +17,7 @@ make lint             # ruff + oxlint + tsc -b
 ```
 
 - Single server test: `cd server && uv run pytest tests/test_health.py::test_health`
-- Web has no test runner yet; checks are `npm run lint`, `npx tsc -b`, `npm run build` (run in `web/`).
+- Web: `npm test` runs framework-free logic tests with Node's built-in runner (`web/tests/`, no extra dependency); other checks are `npm run lint`, `npx tsc -b`, `npm run build` (run in `web/`). The dev server proxies `/documents`, `/regions`, `/search`, `/health` and `/ws` to the API (`INKBRIDGE_API_URL`, default `http://127.0.0.1:8000`) because the API sends no CORS headers; the canvas is selected with `?canvas=<id>`.
 - Add dependencies only when a ticket needs them: `cd server && uv add <pkg>` or `cd web && npm install <pkg>`.
 - CI (`.github/workflows/ci.yml`) runs the same lint, test and build; keep `make lint test` green before pushing.
 

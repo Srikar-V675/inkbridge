@@ -12,6 +12,7 @@ dev-server:
 
 test:
 	cd server && uv run pytest
+	cd web && npm test
 
 lint:
 	cd server && uv run ruff check .
