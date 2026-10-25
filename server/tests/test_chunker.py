@@ -184,7 +184,7 @@ def test_mixed_small_strokes_and_oversize_elements_stay_fast():
     start = time.perf_counter()
     chunks = cluster(small + big)
     assert time.perf_counter() - start < 1.0
-    assert sum(len(c) for c in chunks) == 5700
+    assert sorted(i for c in chunks for i in c) == sorted(e["id"] for e in small + big)
 
 
 def test_oversize_element_still_merges_with_neighbours():
@@ -230,3 +230,63 @@ def test_grid_clustering_matches_brute_force_on_mixed_sizes():
     for i in boxes:
         expected.setdefault(find(i), set()).add(i)
     assert as_sets(cluster(els)) == {frozenset(v) for v in expected.values()}
+
+
+def _label(i, container, x=5000, y=5000):
+    return {
+        "id": i,
+        "type": "text",
+        "x": x,
+        "y": y,
+        "width": 20,
+        "height": 20,
+        "containerId": container,
+    }
+
+
+def test_label_of_a_draft_or_deleted_container_is_not_content():
+    els = [
+        rect("draft", 0, 0, customData={"author": "agent", "draft": True}),
+        _label("draft-label", "draft"),
+        rect("gone", 0, 0, isDeleted=True),
+        _label("gone-label", "gone", x=5010),
+        stroke("ink", 300, 0),
+    ]
+    assert cluster(els) == [["ink"]]
+
+
+def test_arrow_label_does_not_cluster_by_proximity():
+    arrow = {"id": "arr", "type": "arrow", "x": 0, "y": 0, "points": [[0, 0], [300, 0]]}
+    els = [arrow, _label("arr-label", "arr", x=140, y=-5), stroke("near", 150, 20)]
+    assert cluster(els) == [["near"]]  # the label goes with its arrow (INK-032)
+
+
+def test_dangling_container_id_clusters_by_proximity():
+    els = [_label("t", "missing", x=0, y=0), stroke("near", 25, 0)]
+    assert cluster(els) == [["near", "t"]]
+
+
+def test_an_element_named_none_does_not_capture_unbound_elements():
+    els = [stroke("None", 0, 0), stroke("a", 2000, 0), stroke("b", 4000, 0)]
+    assert as_sets(cluster(els)) == {frozenset({"None"}), frozenset("a"), frozenset("b")}
+
+
+def test_dense_overlapping_ink_stays_fast():
+    rng = random.Random(7)
+    hatch = [stroke(f"h{i}", (i % 70) * 1.0, (i // 70) * 1.0) for i in range(2500)]
+    pile = [stroke(f"p{i}", 1000 + rng.uniform(0, 3), rng.uniform(0, 3)) for i in range(2500)]
+    start = time.perf_counter()
+    chunks = cluster(hatch + pile)
+    assert time.perf_counter() - start < 1.0
+    assert len(chunks) == 2
+
+
+def test_kind_hint_ignores_drafts():
+    draft = rect("d", 0, 0, customData={"author": "agent", "draft": True})
+    assert kind_hint([stroke("a", 0, 0), draft]) == "handwriting"
+
+
+def test_identical_boxes_form_one_chunk_even_when_tiny():
+    # Two strokes over the same spot plus a far one; the floor keeps the threshold at 6 px.
+    els = [stroke("a", 0, 0, w=0, h=0), stroke("b", 0, 0, w=0, h=0), stroke("far", 50, 0)]
+    assert as_sets(cluster(els)) == {frozenset("ab"), frozenset({"far"})}

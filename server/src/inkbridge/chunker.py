@@ -5,6 +5,7 @@ and id matching live elsewhere (INK-032, INK-031); their constants sit in Chunke
 object tunes the whole pipeline.
 """
 
+import bisect
 import math
 import statistics
 from dataclasses import dataclass
@@ -32,13 +33,33 @@ def is_draft(element: dict[str, Any]) -> bool:
     return bool((element.get("customData") or {}).get("draft"))
 
 
+def _takes_part(element: dict[str, Any]) -> bool:
+    return (
+        not element.get("isDeleted")
+        and not is_draft(element)
+        and element.get("type") not in _CONNECTORS
+    )
+
+
 def clustering_elements(elements: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Live elements that cluster by proximity: no deleted, no drafts, no arrows or lines."""
-    return [
-        e
-        for e in elements
-        if not e.get("isDeleted") and not is_draft(e) and e.get("type") not in _CONNECTORS
-    ]
+    """Live elements that cluster by proximity: no deleted, no drafts, no arrows or lines.
+
+    Bound text follows its container: when the container is in the scene but does not take
+    part (deleted, an unaccepted draft, or an arrow/line whose label goes with it in INK-032),
+    the text is left out too, so a draft's label never becomes content. Text whose container
+    id is missing from the scene clusters by proximity like any other element.
+    """
+    by_id = {str(e.get("id")): e for e in elements}
+    out = []
+    for e in elements:
+        if not _takes_part(e):
+            continue
+        container_id = e.get("containerId")
+        container = by_id.get(str(container_id)) if container_id is not None else None
+        if container is not None and not _takes_part(container):
+            continue
+        out.append(e)
+    return out
 
 
 class _UnionFind:
@@ -82,13 +103,18 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
 
     # Bound text joins its container directly, whatever the distance.
     for i, e in enumerate(live):
-        container = index.get(str(e.get("containerId")))
+        container_id = e.get("containerId")
+        container = index.get(str(container_id)) if container_id is not None else None
         if container is not None:
             uf.union(i, container)
 
     # Multi-level grid: an element is indexed at the finest level where it covers few cells, so
-    # oversize elements never fall back to comparing against everything.
-    levels: list[dict[tuple[int, int], list[int]]] = []
+    # oversize elements never fall back to comparing against everything. Level-0 cells are half
+    # the threshold wide, so any two boxes touching one cell are at most threshold / sqrt(2)
+    # apart: each level-0 cell is merged up front and then skipped as a whole once it is in the
+    # same group, which keeps dense ink (hatching, overwritten strokes) near-linear.
+    base = threshold / 2
+    levels: list[dict[tuple[int, int], list[int]]] = [{}]
 
     def span(b: tuple[float, float, float, float], pad: float, cell: float):
         return (
@@ -96,10 +122,22 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
             range(math.floor((b[1] - pad) / cell), math.floor((b[3] + pad) / cell) + 1),
         )
 
+    # Elements with identical boxes (overwritten strokes, stacked shapes) touch, so they merge
+    # here and only the first of them goes into the grid.
+    first_with_box: dict[tuple[float, float, float, float], int] = {}
+    indexed = []
     for i, b in enumerate(boxes):
+        first = first_with_box.setdefault(b, i)
+        if first == i:
+            indexed.append(i)
+        else:
+            uf.union(first, i)
+
+    for i in indexed:
+        b = boxes[i]
         level = 0
         while True:
-            xs, ys = span(b, 0.0, threshold * _LEVEL_FACTOR**level)
+            xs, ys = span(b, 0.0, base * _LEVEL_FACTOR**level)
             if len(xs) * len(ys) <= _MAX_CELLS:
                 break
             level += 1
@@ -109,21 +147,41 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
             for cy in ys:
                 levels[level].setdefault((cx, cy), []).append(i)
 
-    for i, b in enumerate(boxes):
-        candidates: set[int] = set()
+    for members in levels[0].values():
+        for j in members[1:]:
+            uf.union(members[0], j)
+    # Per level, cells known to hold a single group (one member stands for all). Groups only
+    # grow, so a cell stays single-group once it is; coarser cells are checked lazily.
+    single: list[dict[tuple[int, int], int]] = [{key: m[0] for key, m in levels[0].items()}]
+    single += [{} for _ in levels[1:]]
+
+    for i in indexed:
+        b = boxes[i]
+        root = uf.find(i)
         for level, cells in enumerate(levels):
-            xs, ys = span(b, threshold, threshold * _LEVEL_FACTOR**level)
+            xs, ys = span(b, threshold, base * _LEVEL_FACTOR**level)
             if len(xs) * len(ys) > len(cells):  # cheaper to scan the occupied cells
-                for (cx, cy), members in cells.items():
-                    if xs.start <= cx < xs.stop and ys.start <= cy < ys.stop:
-                        candidates.update(members)
+                keys = [
+                    key
+                    for key in cells
+                    if xs.start <= key[0] < xs.stop and ys.start <= key[1] < ys.stop
+                ]
             else:
-                for cx in xs:
-                    for cy in ys:
-                        candidates.update(cells.get((cx, cy), ()))
-        for j in candidates:
-            if j > i and uf.find(i) != uf.find(j) and _gap(b, boxes[j]) < threshold:
-                uf.union(i, j)
+                keys = [(cx, cy) for cx in xs for cy in ys if (cx, cy) in cells]
+            for key in keys:
+                rep = single[level].get(key)
+                if rep is not None and uf.find(rep) == root:
+                    continue  # the whole cell is already in this group
+                members = cells[key]
+                # Members are stored in index order; pairs are tested once, from the lower index.
+                for j in members[bisect.bisect_right(members, i) :]:
+                    if uf.find(j) != root and _gap(b, boxes[j]) < threshold:
+                        uf.union(i, j)
+                        root = uf.find(i)
+                        if rep is not None:
+                            break  # one member joined, so the whole cell did
+                if rep is None and all(uf.find(m) == root for m in members):
+                    single[level][key] = members[0]
 
     groups: dict[int, list[str]] = {}
     for i, e in enumerate(live):
@@ -156,7 +214,7 @@ def reading_order(boxes: dict[str, dict[str, float]]) -> list[str]:
 
 def kind_hint(elements: list[dict[str, Any]]) -> str:
     """handwriting / diagram / mixed from element types. A hint only, never used to decide."""
-    live = [e for e in elements if not e.get("isDeleted")]
+    live = [e for e in elements if not e.get("isDeleted") and not is_draft(e)]
     shapes = sum(1 for e in live if e.get("type") in _SHAPES)
     writing = sum(1 for e in live if e.get("type") in {"freedraw", "text"})
     if shapes == 0:
