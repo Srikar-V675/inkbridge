@@ -86,7 +86,7 @@ describe("resolveChunk", () => {
     });
     const r = await resolveChunk("a", "doc", fetchFn);
     assert.equal(r.outcome, "orphaned");
-    assert.ok(calls.length <= 3);
+    assert.deepEqual(calls, ["/regions/a", "/regions/b"]);
   });
 
   it("treats an unknown id, a manual region or another canvas's chunk as missing", async () => {
@@ -108,6 +108,37 @@ describe("resolveChunk", () => {
     const { fetchFn, calls } = api({});
     await resolveChunk("a/b?c", "doc", fetchFn);
     assert.deepEqual(calls, ["/regions/a%2Fb%3Fc"]);
+  });
+});
+
+describe("resolveChunk limits", () => {
+  it("stops following at a successor on another canvas", async () => {
+    const { fetchFn } = api({
+      a: chunk("a", { status: "orphaned", successor_of: "x" }),
+      x: chunk("x", { document_id: "elsewhere" }),
+    });
+    const r = await resolveChunk("a", "doc", fetchFn);
+    assert.equal(r.outcome, "orphaned");
+    assert.equal(r.chunk?.id, "a");
+  });
+
+  it("gives up after ten hops", async () => {
+    const rows: Record<string, Chunk> = {};
+    for (let i = 0; i < 20; i++) rows[`n${i}`] = chunk(`n${i}`, { status: "orphaned", successor_of: `n${i + 1}` });
+    const { fetchFn, calls } = api(rows);
+    const r = await resolveChunk("n0", "doc", fetchFn);
+    assert.equal(r.outcome, "orphaned");
+    assert.equal(calls.length, 11);
+  });
+
+  it("passes an abort signal so a stalled request times out", async () => {
+    let signal: AbortSignal | undefined;
+    const fetchFn = (async (_u: string, init?: RequestInit) => {
+      signal = init?.signal ?? undefined;
+      return new Response(JSON.stringify(chunk("c1")), { status: 200 });
+    }) as unknown as typeof fetch;
+    await resolveChunk("c1", "doc", fetchFn);
+    assert.ok(signal instanceof AbortSignal);
   });
 });
 

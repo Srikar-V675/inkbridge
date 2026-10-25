@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "./ChunkOverlay";
@@ -31,7 +31,10 @@ function applyJump(api: Api, jump: JumpResult) {
   const ids = jump.outcome === "orphaned" ? [] : liveIds(chunk, scene);
   if (ids.length > 0) {
     const want = new Set(ids);
-    api.updateScene({ appState: { selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) as never } });
+    api.updateScene({
+      appState: { selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) as never },
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
     api.scrollToContent(
       scene.filter((e) => want.has(e.id)),
       { fitToViewport: true, viewportZoomFactor: 0.7, maxZoom: 1, animate: false },
@@ -40,7 +43,10 @@ function applyJump(api: Api, jump: JumpResult) {
   }
   const { width, height } = api.getAppState();
   const v = viewForBounds(chunk.bounds, { width, height });
-  api.updateScene({ appState: { scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom as never } } });
+  api.updateScene({
+    appState: { scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom as never } },
+    captureUpdate: CaptureUpdateAction.NEVER,
+  });
 }
 
 function Notice({ text, onClose }: { text: string; onClose: () => void }) {
@@ -131,6 +137,7 @@ export default function App() {
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
   const pendingJump = useRef<JumpResult | null>(null);
+  const sceneReady = useRef(false);
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
@@ -157,19 +164,25 @@ export default function App() {
     });
     syncRef.current = sync;
     let cancelled = false;
-    // The deep-linked chunk resolves in parallel with the scene, so the jump costs no extra wait.
-    const linked = route.chunk ? resolveChunk(route.chunk, route.canvas) : Promise.resolve(null);
-    void Promise.all([sync.load(), linked]).then(([elements, resolved]) => {
+    // The deep-linked chunk resolves beside the scene load and never holds the canvas back: it is
+    // applied on the first change event, or as soon as it arrives if the scene is already up.
+    if (route.chunk) {
+      void resolveChunk(route.chunk, route.canvas).then((resolved) => {
+        if (cancelled) return;
+        setJump(resolved);
+        if (!resolved.chunk) return;
+        if (sceneReady.current && apiRef.current) applyJump(apiRef.current, resolved);
+        else pendingJump.current = resolved;
+      });
+    }
+    void sync.load().then((elements) => {
       if (cancelled) return;
       if (!elements) return setInitial("failed");
-      const target = resolved?.chunk ? resolved : null;
-      // A link wins over the remembered view; it is applied on the first change event below.
-      const view = target ? null : loadView(window.localStorage, route.canvas);
+      // A link wins over the remembered view (it is fitted to all ink until the chunk arrives).
+      const view = route.chunk ? null : loadView(window.localStorage, route.canvas);
       const restored = restoreElements(elements as never, null);
-      pendingJump.current = target;
-      setJump(resolved);
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
-      fitOnOpen.current = !target && !view && restored.some((e) => !e.isDeleted);
+      fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
       setInitial({ elements: restored, view });
     });
     const onHide = () => {
@@ -197,9 +210,12 @@ export default function App() {
       appState: { scrollX: number; scrollY: number; zoom: { value: number } },
     ) => {
       syncRef.current?.notify(elements as unknown as SceneElement[]);
+      // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
+      sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {
         const target = pendingJump.current;
         pendingJump.current = null;
+        fitOnOpen.current = false;
         applyJump(apiRef.current, target);
         return;
       }

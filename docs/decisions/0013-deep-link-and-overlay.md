@@ -3,9 +3,10 @@
 Status: accepted (INK-035). Implements F7 and tech ref 5.8 on the web side. (0012 is taken by INK-042.)
 
 - **Lookup.** `?canvas=<id>&chunk=<chunk_id>` resolves through `GET /regions/{id}`, which already
-  serves chunks with `status`, `successor_of`, `element_ids` and `bounds` (INK-031). It runs in
-  parallel with the scene load, so a link adds no wait; the jump is applied on the first change event
-  and wins over the remembered per-device view.
+  serves chunks with `status`, `successor_of`, `element_ids` and `bounds` (INK-031). It runs beside
+  the scene load and never holds the canvas back (each request times out after 8 s); the jump is
+  applied on the first change event, or on arrival if the scene is already up, without an undo entry.
+  A link skips the remembered per-device view.
 - **Orphans.** An orphaned chunk follows `successor_of` until an active chunk (at most 10 hops,
   cycle-safe) and shows a "Source changed" banner naming both ids. A chain that ends in an orphan
   (no successor, or a successor that is gone or on another canvas) opens at that orphan's old bounding
@@ -20,6 +21,7 @@ Status: accepted (INK-035). Implements F7 and tech ref 5.8 on the web side. (001
   They are never Excalidraw elements, so autosave cannot persist them. The list is fetched when the
   toggle turns on and again after each save (chunks are re-derived on save).
 - **Temporary list endpoint.** The overlay lists chunks with `GET /documents/{id}/regions?chunks=true&limit=500`
-  filtered to `active`, because INK-033's `GET /documents/{id}/chunks` is not merged yet. Only
+  filtered to `active` (the limit applies before that filter, so a canvas with over 500 chunk rows
+  can miss some), because INK-033's `GET /documents/{id}/chunks` is not merged yet. Only
   `listChunks` in `web/src/chunks.ts` changes when it lands.
 - **LAN HTTP.** Plain `fetch` and DOM only; no clipboard, `crypto.randomUUID` or other secure-context API.

@@ -26,8 +26,12 @@ function useChunks(canvas: string, on: boolean, status: StatusStore): Chunk[] {
   const [chunks, setChunks] = useState<Chunk[]>([]);
   useEffect(() => {
     if (!on) return;
-    let alive = true;
-    const load = () => void listChunks(canvas).then((rows) => alive && setChunks(rows));
+    // Saves can overlap the fetch: only the latest request may set the list.
+    let latest = 0;
+    const load = () => {
+      const n = ++latest;
+      void listChunks(canvas).then((rows) => n === latest && setChunks(rows));
+    };
     load();
     let last = status.get().state;
     const unsubscribe = status.subscribe(() => {
@@ -36,8 +40,9 @@ function useChunks(canvas: string, on: boolean, status: StatusStore): Chunk[] {
       last = now;
     });
     return () => {
-      alive = false;
+      latest = -1;
       unsubscribe();
+      setChunks([]);
     };
   }, [canvas, on, status]);
   return on ? chunks : [];
@@ -50,7 +55,6 @@ const box = (b: Bounds, v: View): React.CSSProperties => {
 
 const label: React.CSSProperties = {
   position: "absolute",
-  top: -16,
   left: -1,
   padding: "0 4px",
   font: "11px ui-monospace, monospace",
@@ -84,7 +88,8 @@ export function ChunkOverlay(props: {
           {on &&
             chunks.map((c) => (
               <div key={c.id} data-chunk-id={c.id} style={{ ...box(c.bounds, view), border: "1.5px solid #1971c2" }}>
-                <span style={label}>{c.id}</span>
+                {/* Above the box, or inside it when the box touches the top edge. */}
+                <span style={{ ...label, top: toScreen(c.bounds, view).top < 16 ? 0 : -16 }}>{c.id}</span>
               </div>
             ))}
           {ghost && (

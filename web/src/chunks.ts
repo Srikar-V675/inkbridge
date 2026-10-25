@@ -36,11 +36,23 @@ export interface View {
 }
 
 const MAX_HOPS = 10;
+const TIMEOUT_MS = 8000;
 
 class NotFound extends Error {}
 
+/** fetch with a timeout (AbortController works in insecure contexts), so a stalled API ends as "error". */
+async function fetchWithTimeout(fetchFn: typeof fetch, url: string): Promise<Response> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  try {
+    return await fetchFn(url, { signal: ctl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getChunk(id: string, fetchFn: typeof fetch): Promise<Chunk> {
-  const res = await fetchFn(`/regions/${encodeURIComponent(id)}`);
+  const res = await fetchWithTimeout(fetchFn, `/regions/${encodeURIComponent(id)}`);
   if (res.status === 404) throw new NotFound(id);
   if (!res.ok) throw new Error(`GET /regions/${id}: ${res.status}`);
   return (await res.json()) as Chunk;
@@ -103,13 +115,15 @@ export function jumpNotice(r: JumpResult): string | null {
 /**
  * Active chunks of a canvas for the overlay. Uses `?chunks=true` on the regions list until INK-033
  * ships `GET /documents/{id}/chunks`; only this function changes then. Failures give an empty list.
+ * Known limit: the server applies `limit` before this status filter and orders by recency, so a canvas
+ * with more than 500 chunk rows (orphans included) can miss active ones; INK-033 removes this.
  */
 export async function listChunks(
   canvas: string,
   fetchFn: typeof fetch = (...a) => fetch(...a),
 ): Promise<Chunk[]> {
   try {
-    const res = await fetchFn(`/documents/${encodeURIComponent(canvas)}/regions?chunks=true&limit=500`);
+    const res = await fetchWithTimeout(fetchFn, `/documents/${encodeURIComponent(canvas)}/regions?chunks=true&limit=500`);
     if (!res.ok) return [];
     const rows = (await res.json()) as Chunk[];
     return rows.filter((c) => c.status === "active");
