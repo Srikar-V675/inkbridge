@@ -1,6 +1,8 @@
 # 0004: Chunks replace manual regions as the default unit
 
-Status: accepted (INK-028)
+Status: accepted (INK-028). Built: the proximity clustering in `chunker.py` (INK-030: k, floor, bound text,
+exclusion of arrows, lines, drafts and deleted elements). Planned: running it on save and stable ids with
+`successor_of` (INK-031), arrow merge and links (INK-032), manual override precedence (INK-059).
 
 - You write on one large canvas per topic, so boxing every group by hand does not scale. The server proposes
   **chunks** after every scene save and stores them in the existing `regions` table with `created_by='auto'`;
