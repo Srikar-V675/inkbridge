@@ -13,21 +13,33 @@ class ApiError(Exception):
     """An API failure phrased so an agent knows what to do next."""
 
 
+class NotFound(ApiError):
+    """The API answered 404: the resource does not exist (as opposed to any other failure)."""
+
+
 class ApiClient:
     def __init__(self, http: httpx.Client | None = None):
+        self._owns_http = http is None  # a client passed in (tests) belongs to the caller
         self.http = http or httpx.Client(
             base_url=os.environ.get("INKBRIDGE_API_URL", DEFAULT_URL), timeout=30
         )
         self.default_document = os.environ.get("INKBRIDGE_DOCUMENT", "default")
 
+    def close(self) -> None:
+        if self._owns_http:
+            self.http.close()
+
     @staticmethod
-    def _wrap(exc: Exception) -> ApiError:
+    def _status_error(code: int) -> ApiError:
+        return ApiError(
+            f"The Inkbridge API returned an error ({code}). "
+            "Retry, or call list_regions to check the request is valid; see the server log."
+        )
+
+    @classmethod
+    def _wrap(cls, exc: Exception) -> ApiError:
         if isinstance(exc, httpx.HTTPStatusError):
-            code = exc.response.status_code
-            return ApiError(
-                f"The Inkbridge API returned an error ({code}). "
-                "Retry, or call list_regions to check the request is valid; see the server log."
-            )
+            return cls._status_error(exc.response.status_code)
         return ApiError(f"Unexpected response from the Inkbridge API ({exc.__class__.__name__}).")
 
     def _get(self, path: str, **params: Any) -> httpx.Response:
@@ -40,11 +52,12 @@ class ApiClient:
                 "Is `make dev-server` running, and is INKBRIDGE_API_URL correct?"
             ) from e
         if r.status_code == 404:
-            raise ApiError(f"Not found: {path}. Call list_regions to see valid region ids.")
-        try:
-            r.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            raise self._wrap(e) from e
+            raise NotFound(f"Not found: {path}. Call list_regions to see valid region ids.")
+        # By status code, not raise_for_status(): the error class differs between httpx builds
+        # (Starlette's TestClient ships its own). Anything but 2xx is an ApiError, including an
+        # unfollowed 3xx, which would otherwise pass as an empty image or a JSON decode error.
+        if not r.is_success:
+            raise self._status_error(r.status_code)
         return r
 
     def _json(self, r: httpx.Response) -> Any:

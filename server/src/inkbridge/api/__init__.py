@@ -9,8 +9,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from inkbridge import db
-from inkbridge.api import regions, search
+from inkbridge.api import ops, regions, search
 from inkbridge.api.deps import Conn
+from inkbridge.api.limits import BodySizeLimit
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
+app.add_middleware(BodySizeLimit)  # 413 before any route reads an oversized body
 
 
 @app.exception_handler(RequestValidationError)
@@ -29,6 +31,7 @@ async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResp
     return JSONResponse(status_code=422, content={"detail": errors})
 
 
+app.include_router(ops.router)
 app.include_router(regions.router)
 app.include_router(search.router)
 
