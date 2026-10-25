@@ -172,3 +172,25 @@ def test_invalid_key_is_its_own_non_retryable_type():
         rec(PNG, None)
     assert len(t.calls) == 1 and sleeps == []
     assert not issubclass(InvalidApiKey, RateLimited)
+
+
+def test_a_single_item_list_reply_is_unwrapped():
+    rec, _ = make(FakeTransport('[{"text": "hello", "latex": null, "kind": "handwriting"}]'))
+    assert rec(PNG, None).text == "hello"
+
+
+def test_a_multi_item_list_reply_is_joined():
+    rec, _ = make(
+        FakeTransport(
+            '[{"text": "line one", "latex": null, "kind": "handwriting"},'
+            ' {"text": "x^2", "latex": "x^2", "kind": "equation"}]'
+        )
+    )
+    out = rec(PNG, None)
+    assert out.text == "line one\nx^2" and out.latex == "x^2"
+
+
+def test_kind_aliases_text_and_math_are_mapped():
+    for given, expected in [("text", "handwriting"), ("math", "equation")]:
+        rec, _ = make(FakeTransport(json.dumps({"text": "t", "latex": None, "kind": given})))
+        assert rec(PNG, None).kind == expected

@@ -20,7 +20,7 @@ from inkbridge.recognizer import (
     RecognizerTimeout,
 )
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 
 PROMPT = (
     "Transcribe the handwriting in this image. Reply with JSON only: "
@@ -28,6 +28,8 @@ PROMPT = (
     '"kind": one of "handwriting", "equation", "diagram", "mixed"}. '
     "Do not add commentary."
 )
+
+_KIND_ALIASES = {"text": "handwriting", "math": "equation"}
 
 Transport = Callable[[bytes, str, str], str]  # (png, prompt, model) -> raw response text
 
@@ -99,13 +101,17 @@ class GeminiRecognizer:
             data: Any = json.loads(body)
         except ValueError:
             raise BadResponse("model reply was not JSON") from None
-        if not isinstance(data, dict) or not isinstance(data.get("text"), str):
+        # Models sometimes wrap the object in a list (one item per line or block).
+        items = data if isinstance(data, list) else [data]
+        if not items or not all(
+            isinstance(i, dict) and isinstance(i.get("text"), str) for i in items
+        ):
             raise BadResponse("model reply is missing a string 'text'")
-        latex = data.get("latex")
-        kind = data.get("kind")
+        latexes = [i["latex"] for i in items if isinstance(i.get("latex"), str) and i["latex"]]
+        kind = _KIND_ALIASES.get(items[0].get("kind"), items[0].get("kind"))
         return Recognition(
-            text=data["text"],
-            latex=latex if isinstance(latex, str) and latex else None,
+            text="\n".join(i["text"] for i in items),
+            latex="\n".join(latexes) or None,
             kind=kind if kind in KINDS else "mixed",
             model=self.model,
         )
@@ -130,7 +136,7 @@ class GeminiRecognizer:
                     raise RateLimited("Gemini rate limit (429)") from None
                 if e.code in (401, 403):
                     raise InvalidApiKey(f"Gemini rejected the API key ({e.code})") from None
-                raise RecognizerError(f"Gemini error {e.code}") from None
+                raise RecognizerError(f"Gemini error {e.code}: {str(e.message)[:200]}") from None
             except Exception as e:  # noqa: BLE001 - httpx timeouts surface as several types
                 if "timeout" in type(e).__name__.lower() or "timed out" in str(e).lower():
                     raise RecognizerTimeout("Gemini request timed out") from None
