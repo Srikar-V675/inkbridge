@@ -137,3 +137,61 @@ def test_stdio_server_speaks_only_protocol_on_stdout():
     assert all(f.get("jsonrpc") == "2.0" for f in frames)
     listing = frames[-1]
     assert {"list_regions", "get_region"} <= {t["name"] for t in listing["result"]["tools"]}
+
+
+def test_only_a_404_is_reported_as_a_missing_crop(seeded, client):
+    import httpx
+
+    class ImageBoom(ApiClient):
+        def get_image(self, region_id):
+            raise self._wrap(httpx.HTTPStatusError("x", request=None, response=httpx.Response(500)))
+
+    server.set_client(ImageBoom(client))
+    result = call("get_region", region_id=seeded)
+    assert len(result.content) == 2
+    note = result.content[1].text
+    assert "missing" not in note
+    assert "image unavailable" in note and "500" in note  # the real cause, so the agent can retry
+    assert text_of(result)["id"] == seeded  # the transcription still arrives
+
+
+def test_api_client_raises_not_found_only_for_404(seeded, client):
+    from inkbridge.mcp.client import ApiError, NotFound
+
+    api = ApiClient(client)
+    with pytest.raises(NotFound):
+        api.get_image("nope")
+    try:
+        api.search("x" * 10, limit=0)  # 422 from the API
+    except NotFound:
+        pytest.fail("a 422 is not a missing resource")
+    except ApiError:
+        pass
+
+
+def test_mcp_shutdown_closes_the_http_client(monkeypatch):
+    client = ApiClient()
+    server.set_client(client)
+    monkeypatch.setattr(server.mcp, "run", lambda transport: None)
+    try:
+        server.main()
+        assert client.http.is_closed
+        assert server._client is None
+    finally:
+        server.set_client(None)
+
+
+def test_mcp_shutdown_closes_the_http_client_even_on_error(monkeypatch):
+    client = ApiClient()
+    server.set_client(client)
+
+    def crash(transport):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(server.mcp, "run", crash)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            server.main()
+        assert client.http.is_closed
+    finally:
+        server.set_client(None)

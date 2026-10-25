@@ -12,7 +12,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from inkbridge.mcp.client import ApiClient, ApiError
+from inkbridge.mcp.client import ApiClient, ApiError, NotFound
 
 mcp = MCPServer(
     "inkbridge",
@@ -111,9 +111,12 @@ def get_region(
     if include_image:
         try:
             content.append(Image(data=client.get_image(region_id), format="png"))
-        except ApiError:
+        except NotFound:
             # The transcription is still useful; do not fail the whole call over a missing crop.
             content.append("(image unavailable for this region; the crop file is missing)")
+        except ApiError as e:
+            # Any other failure is not a missing crop: keep the transcription, give the real cause.
+            content.append(f"(image unavailable for this region: {e})")
     return content
 
 
@@ -132,4 +135,9 @@ def search(
 
 def main() -> None:
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
-    mcp.run("stdio")
+    try:
+        mcp.run("stdio")
+    finally:  # release the HTTP connection pool when the client disconnects or we are stopped
+        if _client is not None:
+            _client.close()
+        set_client(None)

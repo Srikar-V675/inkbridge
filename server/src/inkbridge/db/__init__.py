@@ -29,8 +29,35 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+# How long a second process waits for another one's migration before giving up.
+MIGRATE_LOCK_TIMEOUT_MS = 120_000
+
+
 def migrate(conn: sqlite3.Connection) -> list[int]:
-    """Apply pending numbered .sql files; return the versions applied by this call."""
+    """Apply pending numbered .sql files; return the versions applied by this call.
+
+    The whole run is one BEGIN IMMEDIATE transaction, which doubles as a cross-process lock: a
+    second API process or worker starting at the same time waits here, then sees the versions
+    the first one recorded and applies nothing. A failure rolls everything back (decision 0009).
+    """
+    isolation, timeout = conn.isolation_level, conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    conn.isolation_level = None  # manual transactions: the sqlite3 module must not commit for us
+    conn.execute(f"PRAGMA busy_timeout = {MIGRATE_LOCK_TIMEOUT_MS}")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            applied = _migrate_locked(conn)
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {timeout}")
+        conn.isolation_level = isolation
+    return applied
+
+
+def _migrate_locked(conn: sqlite3.Connection) -> list[int]:
     conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
     done = {r["version"] for r in conn.execute("SELECT version FROM schema_version")}
     applied = []
@@ -39,14 +66,36 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
         version = int(m.group(1)) if m else None
         if version is None or version in done:
             continue
-        # executescript commits first, so wrap file + version row in one explicit transaction.
-        conn.executescript(
-            f"BEGIN;\n{f.read_text()}\nINSERT INTO schema_version VALUES ({version});\nCOMMIT;"
-        )
+        _apply_migration(conn, version, f.read_text())
         applied.append(version)
-        if version == 4:
-            _backfill_v2(conn)
+    # Version 4 needs a data backfill. Checking for unfilled rows (rather than "4 was just
+    # applied") also heals a database whose backfill was interrupted before this lock existed.
+    if 4 in done | set(applied) and conn.execute(
+        "SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1"
+    ).fetchone():
+        _backfill_v2(conn)
     return applied
+
+
+def _apply_migration(conn: sqlite3.Connection, version: int, sql: str) -> None:
+    # Not executescript: it commits first, which would release the lock mid-run.
+    for statement in _statements(sql):
+        conn.execute(statement)
+    conn.execute("INSERT INTO schema_version VALUES (?)", (version,))
+
+
+def _statements(sql: str) -> list[str]:
+    """Split a script into complete statements (semicolons in strings and triggers are kept)."""
+    out, buf = [], ""
+    for part in sql.split(";"):
+        buf += part + ";"
+        if sqlite3.complete_statement(buf):
+            out.append(buf)
+            buf = ""
+    # Whatever is left has no terminating semicolon: comments, whitespace or a last statement.
+    if buf[:-1].strip():
+        out.append(buf[:-1])
+    return out
 
 
 def _backfill_v2(conn: sqlite3.Connection) -> None:
@@ -79,7 +128,6 @@ def _backfill_v2(conn: sqlite3.Connection) -> None:
         )
     for region in conn.execute("SELECT id FROM regions").fetchall():
         _reindex_region(conn, region["id"])
-    conn.commit()
 
 
 def ensure_default_document(conn: sqlite3.Connection) -> None:
@@ -99,10 +147,7 @@ def ensure_default_document(conn: sqlite3.Connection) -> None:
 def init_db(path: Path | None = None) -> None:
     conn = connect(path)
     try:
-        migrate(conn)
-        # The backfill commits after schema_version is recorded, so a crash in between must heal.
-        if conn.execute("SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1").fetchone():
-            _backfill_v2(conn)
+        migrate(conn)  # also heals an interrupted v2 backfill
         ensure_default_document(conn)
     finally:
         conn.close()

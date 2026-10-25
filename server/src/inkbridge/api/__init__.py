@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 from inkbridge import db
 from inkbridge.api import regions, search
 from inkbridge.api.deps import Conn
+from inkbridge.api.limits import BodySizeLimit
 
 
 @asynccontextmanager
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
+app.add_middleware(BodySizeLimit)  # 413 before any route reads an oversized body
 
 
 @app.exception_handler(RequestValidationError)
