@@ -89,3 +89,27 @@ def test_default_caps_fit_the_documented_limits():
 def test_bodyless_requests_and_health_are_unaffected(client, small_caps):
     assert client.get("/health").json() == {"status": "ok"}
     assert client.get(SCENE).status_code == 200
+
+
+def test_declared_oversized_length_is_rejected_without_reading_the_body():
+    import asyncio
+
+    async def app(scope, receive, send):
+        raise AssertionError("the app must not run")
+
+    async def receive():
+        raise AssertionError("the body must not be read")
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "method": "PUT",
+        "path": "/documents/default/scene",
+        "headers": [(b"content-length", str(limits.MAX_BODY_BYTES + 1).encode())],
+    }
+    asyncio.run(limits.BodySizeLimit(app)(scope, receive, send))
+    assert sent[0]["status"] == 413

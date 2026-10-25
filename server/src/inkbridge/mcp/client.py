@@ -54,8 +54,9 @@ class ApiClient:
         if r.status_code == 404:
             raise NotFound(f"Not found: {path}. Call list_regions to see valid region ids.")
         # By status code, not raise_for_status(): the error class differs between httpx builds
-        # (Starlette's TestClient ships its own), and any 4xx/5xx must become an ApiError.
-        if r.is_error:
+        # (Starlette's TestClient ships its own). Anything but 2xx is an ApiError, including an
+        # unfollowed 3xx, which would otherwise pass as an empty image or a JSON decode error.
+        if not r.is_success:
             raise self._status_error(r.status_code)
         return r
 
