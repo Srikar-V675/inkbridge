@@ -382,6 +382,7 @@ def list_regions(
     limit: int = 100,
     chunks: bool = False,
     png_stale: bool | None = None,
+    status: str | None = None,
 ) -> list[dict]:
     """Manual regions, or with chunks=True the auto chunks (both kinds via get_region by id).
 
@@ -397,6 +398,9 @@ def list_regions(
     if png_stale is not None:
         sql += " AND png_stale = ?"
         args.append(int(png_stale))
+    if status:
+        sql += " AND status = ?"
+        args.append(status)
     sql += " ORDER BY updated_at DESC, id LIMIT ?"
     args.append(limit)
     return [_region_dict(conn, r) for r in conn.execute(sql, args)]

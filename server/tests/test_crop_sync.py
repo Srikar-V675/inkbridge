@@ -1,5 +1,6 @@
 """INK-057: the browser lists stale chunk crops and uploads them against the scene version it rendered."""
 
+import sqlite3
 from pathlib import Path
 
 from inkbridge import config, db
@@ -105,3 +106,41 @@ def test_two_uploads_never_share_a_temp_file(client, monkeypatch):
     upload(client, rid, PNG, canvas.version)
     assert len(written) == 2 and written[0] != written[1]
     assert not list(config.crops_dir().glob("*.tmp"))
+
+
+def test_check_rename_and_clear_hold_the_scene_write_lock(client, monkeypatch):
+    """No save can land between the version check and the clear: it would wait for the lock."""
+    canvas = Canvas(client, row("a", 3))
+    rid = canvas.chunk_of("a0")["id"]
+    blocked = []
+    real = Path.replace
+
+    def replace_then_try_a_save(self, target):
+        other = sqlite3.connect(config.db_path(), timeout=0)
+        try:
+            other.execute("BEGIN IMMEDIATE")
+            other.rollback()
+        except sqlite3.OperationalError as e:
+            blocked.append(str(e))
+        finally:
+            other.close()
+        return real(self, target)
+
+    monkeypatch.setattr(Path, "replace", replace_then_try_a_save)
+    assert upload(client, rid, PNG, canvas.version).status_code == 200
+    assert blocked == ["database is locked"]
+
+
+def test_status_filter_keeps_orphaned_chunks_out_of_the_crop_list(client):
+    canvas = Canvas(client, row("a", 3) + row("b", 3, y=500))
+    gone = canvas.chunk_of("b0")["id"]
+    for e in canvas.elements:
+        if e["id"].startswith("b"):
+            e["isDeleted"] = True
+            e["version"] += 1
+    canvas.put()
+    params = {"chunks": True, "png_stale": True, "status": "active"}
+    listed = {c["id"] for c in client.get(REGIONS, params=params).json()}
+    assert gone not in listed and canvas.chunk_of("a0")["id"] in listed
+    assert gone in {c["id"] for c in stale(client)}  # without the filter it is listed
+    assert client.get(REGIONS, params={"status": "nope"}).status_code == 422

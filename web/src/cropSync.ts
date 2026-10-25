@@ -20,23 +20,29 @@ export interface CropSyncOptions {
   fetchFn?: typeof fetch;
   idleMs?: number;
   now?: () => number;
+  /** Lets the browser handle input between exports (each export blocks the main thread). */
+  yieldFn?: () => Promise<void>;
 }
 
 // INK-033 adds GET /documents/{id}/chunks?png_stale=1; until then the regions list serves it.
 const staleUrl = (doc: string) =>
-  `/documents/${encodeURIComponent(doc)}/regions?chunks=true&png_stale=true&limit=500`;
+  `/documents/${encodeURIComponent(doc)}/regions?chunks=true&png_stale=true&status=active&limit=500`;
 
 export class CropSync {
   private readonly o: CropSyncOptions;
   private readonly fetchFn: typeof fetch;
   private readonly idleMs: number;
   private readonly now: () => number;
+  private readonly yieldFn: () => Promise<void>;
   private lastActivity = -Infinity;
   private drawing = false;
   private wanted = false;
   private running = false;
   private disposed = false;
   private started = false;
+  // Scene version that got a 409: this tab is behind the stored scene, so polling again at the
+  // same version would only export and be refused again. Cleared by the next save or reload.
+  private refusedAt: number | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -45,6 +51,7 @@ export class CropSync {
     this.fetchFn = options.fetchFn ?? ((...a) => fetch(...a));
     this.idleMs = options.idleMs ?? 2000;
     this.now = options.now ?? (() => Date.now());
+    this.yieldFn = options.yieldFn ?? (() => new Promise((r) => setTimeout(r, 0)));
   }
 
   /** Call once the canvas shows the loaded scene: catch up (a reopened tab) after the idle delay,
@@ -111,7 +118,7 @@ export class CropSync {
     if (wait > 0) return this.schedule(wait);
     // Unsaved edits: the canvas is not any stored scene. The save's "saved" state requests again.
     const version = this.o.settledVersion();
-    if (version === null) return;
+    if (version === null || version === this.refusedAt) return;
     this.running = true;
     this.wanted = false;
     const since = this.lastActivity;
@@ -122,6 +129,7 @@ export class CropSync {
         (c) => c.png_stale && c.status === "active",
       );
       for (const c of chunks) {
+        await this.yieldFn(); // a pen-down queued during the last upload is handled first
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
         const png = await this.o.exportPng(c.element_ids);
         // An edit during the export may be in the picture but not in the saved scene: drop it.
@@ -134,8 +142,8 @@ export class CropSync {
           method: "PUT",
           body: form,
         });
-        // 409: the scene moved on since this tab's save; the next save or poll tries again.
-        if (put.status === 409) return;
+        // 409: the stored scene moved on (another tab saved); wait for this tab's next save.
+        if (put.status === 409) return void (this.refusedAt = version);
       }
     } catch {
       // API unreachable: the crops stay stale and the next request or poll catches up.

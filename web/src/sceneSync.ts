@@ -158,6 +158,7 @@ export class SceneSync {
       });
       if (r.ok) {
         this.version = ((await r.json()) as { version: number }).version;
+        this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
         this.lastSig = sentSig;
         this.failures = 0;
         if (this.pendingSig === sentSig) this.pending = null;

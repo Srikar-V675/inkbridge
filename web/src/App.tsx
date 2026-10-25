@@ -137,7 +137,9 @@ export default function App() {
       setInitial({ elements: restored, view });
     });
     const onHide = () => {
-      if (document.visibilityState === "hidden") void sync.flushNow();
+      if (document.visibilityState !== "hidden") return;
+      onBlur();
+      void sync.flushNow();
     };
     const onPageHide = () => void sync.flushNow();
     // A pen, finger or mouse held down on the canvas means drawing: no crop export until it lifts.
@@ -147,11 +149,14 @@ export default function App() {
       down.delete(e.pointerId);
       crops.setDrawing(down.size > 0);
     };
+    // A pointerup that never arrives (window lost focus mid-stroke) must not stall crop sync.
+    const onBlur = () => (down.clear(), crops.setDrawing(false));
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", onPageHide);
     window.addEventListener("pointerdown", onDown, true);
     window.addEventListener("pointerup", onUp, true);
     window.addEventListener("pointercancel", onUp, true);
+    window.addEventListener("blur", onBlur);
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onHide);
@@ -159,6 +164,7 @@ export default function App() {
       window.removeEventListener("pointerdown", onDown, true);
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onUp, true);
+      window.removeEventListener("blur", onBlur);
       sync.dispose();
       crops.dispose();
     };

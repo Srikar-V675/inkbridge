@@ -46,6 +46,7 @@ function harness(
     documentId: "doc 1",
     fetchFn,
     settledVersion: opts.settled ?? (() => 4),
+    yieldFn: async () => {},
     exportPng: async (ids) => {
       exported.push([...ids]);
       h.onExport(ids);
@@ -67,7 +68,7 @@ describe("CropSync", () => {
     await h.advance(1900);
     assert.equal(h.calls.length, 0, "nothing before the canvas has been idle for 2 s");
     await h.advance(100);
-    assert.equal(h.gets()[0].url, "/documents/doc%201/regions?chunks=true&png_stale=true&limit=500");
+    assert.equal(h.gets()[0].url, "/documents/doc%201/regions?chunks=true&png_stale=true&status=active&limit=500");
     assert.deepEqual(h.exported, [["c1-e"], ["c2-e"]]);
     assert.deepEqual(
       h.puts().map((c) => [c.url, c.version]),
@@ -132,6 +133,7 @@ describe("CropSync", () => {
         return json(200, {});
       }) as unknown as typeof fetch,
       settledVersion: () => version,
+      yieldFn: async () => {},
       exportPng: async (ids) => (h.exported.push([...ids]), new Blob([])),
     });
     h.sync.start(1e9);
@@ -146,13 +148,20 @@ describe("CropSync", () => {
     assert.deepEqual(h.exported, [["c1-e"]]);
   });
 
-  it("a 409 (scene moved on) ends the pass without retrying in a loop", async () => {
-    const h = harness({ putStatus: [409] });
-    h.sync.request();
+  it("a 409 (tab behind the stored scene) stops passes until the tab's version changes", async () => {
+    let version = 4;
+    const h = harness({ putStatus: [409], settled: () => version });
     await h.advance(2000);
     assert.equal(h.puts().length, 1);
-    await h.advance(20_000);
-    assert.equal(h.gets().length, 1, "no retry until the next request or poll");
+    for (let i = 0; i < 5; i++) {
+      h.sync.request(); // what every poll does
+      await h.advance(2000);
+    }
+    assert.equal(h.gets().length, 1, "no list, export or upload again at the refused version");
+    version = 5; // this tab saved (or reloaded)
+    h.sync.request();
+    await h.advance(2000);
+    assert.deepEqual(h.puts().map((c) => c.version), ["4", "5", "5"]);
   });
 
   it("start() catches up on open and polls until the WebSocket exists", async () => {
@@ -184,6 +193,7 @@ describe("CropSync", () => {
         return init?.method ? json(200, {}) : json(200, [chunk("c1")]);
       }) as unknown as typeof fetch,
       settledVersion: () => 1,
+      yieldFn: async () => {},
       exportPng: async () => new Blob([]),
     });
     sync.start(30_000);
