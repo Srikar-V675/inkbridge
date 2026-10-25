@@ -27,7 +27,8 @@ is not a trusted enforcement point. Code: `server/src/inkbridge/db/ops.py`, `api
 - **Placement is computed by the server at enqueue time** and stored as `payload.placement {x, y}`
   (top-left). Right of the anchor chunk's box (gap 40 px), else below it, else below the lowest
   occupied box at the left edge of the content, or the origin on an empty canvas. Occupied boxes
-  are the live (non-deleted) scene elements plus the reserved spots of ops still pending,
+  are the live (non-deleted) scene elements (each box widened to cover its rotated shape, since
+  Excalidraw turns an element about the centre of its box) plus the reserved spots of ops still pending,
   delivered or applied, so stacked writes do not land on each other. Sizes are estimates: text at
   20 px (0.6 em per character, 1.25 em per line); a diagram reserves 600 x 400. A diagram larger
   than that placed beside an anchor could still overlap; "below everything" cannot, whatever the
@@ -37,7 +38,7 @@ is not a trusted enforcement point. Code: `server/src/inkbridge/db/ops.py`, `api
 - **Lifecycle** `pending -> delivered -> applied -> accepted | rejected`, with `failed` and
   `expired` from pending or delivered. `delivered` is set by the server when it pushes the op
   (`mark_delivered`, INK-042), not by `PATCH`. Repeating the current status is a no-op (an
-  `applied` repeat must carry the same ids); any other move is `409 invalid_transition`.
+  `applied` repeat must carry the same set of ids, in any order); any other move is `409 invalid_transition`.
 - **Replay.** A reconnecting browser asks for `?status=pending,delivered`: an op pushed to a
   browser that went away before acking stays `delivered` and must be offered again. Delivered ops
   that never complete keep reserving their spot until the waiting tool marks them `expired`.

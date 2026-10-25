@@ -5,6 +5,7 @@ browser only draws at it. Sizes are estimates (the browser lays text and Mermaid
 "below everything" fallback is the one position that can never overlap whatever the true size.
 """
 
+import math
 from typing import Any, TypedDict
 
 
@@ -31,6 +32,21 @@ def estimate_size(op_type: str, payload: dict[str, Any]) -> tuple[float, float]:
         lines = str(payload.get("text", "")).split("\n")
         return (max(1, max(len(line) for line in lines)) * CHAR_WIDTH, len(lines) * LINE_HEIGHT)
     return DIAGRAM_SIZE
+
+
+def rotated_box(box: Box, angle: float) -> Box:
+    """Axis-aligned box around `box` turned by `angle` radians about its centre.
+
+    Excalidraw rotates an element about the centre of its unrotated box, so an upright-turned bar
+    reaches far beyond that box; placement must keep clear of the turned shape.
+    """
+    if not angle:
+        return box
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    c, s = abs(math.cos(angle)), abs(math.sin(angle))
+    w = box["width"] * c + box["height"] * s
+    h = box["width"] * s + box["height"] * c
+    return {"x": cx - w / 2, "y": cy - h / 2, "width": w, "height": h}
 
 
 def overlaps(a: Box, b: Box, margin: float = MARGIN) -> bool:

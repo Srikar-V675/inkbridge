@@ -61,3 +61,16 @@ def test_placement_never_overlaps_occupied_boxes():
         anchor = rng.choice(occupied) if rng.random() < 0.7 else None
         p = place(occupied, size, anchor)
         assert not _hits(_box(p["x"], p["y"], *size), occupied)
+
+
+def test_rotated_box_covers_the_turned_shape():
+    import math
+
+    from inkbridge.placement import rotated_box
+
+    assert rotated_box(_box(0, 0, 100, 10), 0) == _box(0, 0, 100, 10)
+    r = rotated_box(_box(0, 0, 100, 10), math.pi / 2)
+    assert math.isclose(r["x"], 45) and math.isclose(r["y"], -45)
+    assert math.isclose(r["width"], 10) and math.isclose(r["height"], 100)
+    r = rotated_box(_box(0, 0, 100, 100), math.pi / 4)
+    assert math.isclose(r["width"], 100 * math.sqrt(2))

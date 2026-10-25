@@ -363,3 +363,43 @@ def test_anchored_diagram_is_placed_beside_the_chunk_when_there_is_room(client):
     op = client.post(OPS, json={"type": "draw_diagram", "payload": payload}).json()
     box = bbox_of([USER_A])
     assert op["payload"]["placement"] == {"x": box["x"] + box["width"] + 40, "y": box["y"]}
+
+
+def test_reack_with_the_same_ids_in_another_order_is_idempotent(client):
+    op = write(client).json()
+    ids = [own(op["id"], "1"), own(op["id"], "2")]
+    assert ack(client, op["id"], ids).status_code == 200
+    r = ack(client, op["id"], list(reversed(ids)))
+    assert r.status_code == 200 and r.json()["result"] == {"element_ids": ids}
+    assert ack(client, op["id"], ids[:1]).status_code == 409  # a different set still conflicts
+
+
+def test_placement_avoids_the_corners_of_rotated_ink(client):
+    import math
+
+    from inkbridge.placement import estimate_size
+
+    # A long thin bar turned upright: its unrotated box is flat, the real shape is tall.
+    bar = {
+        "id": "bar",
+        "type": "rectangle",
+        "x": -180,
+        "y": 0,
+        "width": 400,
+        "height": 10,
+        "angle": math.pi / 2,
+    }
+    seed(client, [bar])
+    payload = {"text": "hello world, a longer note"}
+    op = client.post(OPS, json={"type": "write_text", "payload": payload}).json()
+    box = _op_box(op, estimate_size("write_text", payload))
+    cx, cy = bar["x"] + bar["width"] / 2, bar["y"] + bar["height"] / 2
+    c, s = math.cos(bar["angle"]), math.sin(bar["angle"])
+    corners = [
+        (cx + (px - cx) * c - (py - cy) * s, cy + (px - cx) * s + (py - cy) * c)
+        for px in (bar["x"], bar["x"] + bar["width"])
+        for py in (bar["y"], bar["y"] + bar["height"])
+    ]
+    xs, ys = [p[0] for p in corners], [p[1] for p in corners]
+    real = {"x": min(xs), "y": min(ys), "width": max(xs) - min(xs), "height": max(ys) - min(ys)}
+    assert not overlaps(box, real), (box, real)

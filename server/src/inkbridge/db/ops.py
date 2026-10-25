@@ -163,7 +163,11 @@ def _create_op(conn, document_id, op_type, payload, op_id):
             raise AnchorNotFound(payload["anchor"])
         anchor = json.loads(region["bbox"])
 
-    occupied = [bbox_of([e]) for e in elements if not e.get("isDeleted")]
+    occupied = [
+        placement.rotated_box(bbox_of([e]), e.get("angle") or 0)
+        for e in elements
+        if not e.get("isDeleted")
+    ]
     for row in conn.execute(
         f"SELECT type, payload_json FROM agent_ops WHERE document_id = ?"
         f" AND status IN ({','.join('?' * len(_RESERVING))})",
@@ -233,7 +237,7 @@ def _update_status(conn, op_id, status, element_ids, error):
     op = get_op(conn, op_id)
     current = op["status"]
     if status == current:
-        if status == "applied" and op["result"] != {"element_ids": element_ids}:
+        if status == "applied" and set(op["result"]["element_ids"]) != set(element_ids or []):
             raise InvalidTransition(current, status)
         conn.rollback()
         return op
