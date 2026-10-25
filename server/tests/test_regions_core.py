@@ -107,6 +107,18 @@ def test_content_hash_ignores_float_noise_from_fractional_moves():
         assert content_hash(els) == content_hash([_moved(e, dx, dy) for e in els])
 
 
+def test_content_hash_ignores_a_fractional_move_of_integer_positions():
+    # JSON from the browser gives 15, not 15.0; after a 0.25 px drag the offset comes out 15.0.
+    els = [{**STROKE, "x": 0, "y": 0}, {**STROKE, "id": "s2", "x": 15, "y": 0}]
+    assert content_hash(els) == content_hash([_moved(e, 200.25, 33.5) for e in els])
+
+
+def test_content_hash_treats_integral_floats_as_ints_at_any_depth():
+    as_ints = {**STROKE, "width": 10, "points": [[0, 0], [10, 5]]}
+    as_floats = {**STROKE, "width": 10.0, "points": [[0.0, 0.0], [10.0, 5.0]]}
+    assert content_hash([as_ints]) == content_hash([as_floats])
+
+
 def test_content_hash_ignores_ids_and_draw_order():
     other = {**STROKE, "id": "s2", "x": 50, "y": 60}
     renamed = [{**STROKE, "id": "n1"}, {**other, "id": "n2"}]

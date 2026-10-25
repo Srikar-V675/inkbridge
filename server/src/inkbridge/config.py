@@ -8,3 +8,8 @@ DATA_DIR = Path(os.environ.get("INKBRIDGE_DATA_DIR", Path(__file__).parents[3] /
 def db_path() -> Path:
     # Read at call time so tests and deployments can override INKBRIDGE_DB.
     return Path(os.environ.get("INKBRIDGE_DB", DATA_DIR / "inkbridge.db"))
+
+
+def crops_dir() -> Path:
+    # Crop PNGs sit beside the database, one per region (data/crops/<region_id>.png).
+    return db_path().parent / "crops"
