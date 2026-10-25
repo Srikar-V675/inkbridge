@@ -137,3 +137,77 @@ def test_stdio_server_speaks_only_protocol_on_stdout():
     assert all(f.get("jsonrpc") == "2.0" for f in frames)
     listing = frames[-1]
     assert {"list_regions", "get_region"} <= {t["name"] for t in listing["result"]["tools"]}
+
+
+def _api_with_image_status(client, status):
+    """An ApiClient over the real API whose image requests get `status` from the transport."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/image"):
+            return httpx.Response(status, headers={"location": "/elsewhere"})
+        r = client.request(request.method, request.url.path, params=request.url.params)
+        return httpx.Response(r.status_code, content=r.content, headers=r.headers)
+
+    return ApiClient(httpx.Client(base_url="http://api", transport=httpx.MockTransport(handler)))
+
+
+@pytest.mark.parametrize("status", [500, 503, 307])
+def test_any_non_2xx_image_reply_is_an_api_error_but_not_not_found(seeded, client, status):
+    from inkbridge.mcp.client import ApiError, NotFound
+
+    api = _api_with_image_status(client, status)
+    with pytest.raises(ApiError) as exc:
+        api.get_image(seeded)
+    assert not isinstance(exc.value, NotFound)
+    assert str(status) in str(exc.value)
+
+
+def test_only_a_404_is_reported_as_a_missing_crop(seeded, client):
+    # Through the real ApiClient._get: a 500 from the image route is not a missing crop.
+    server.set_client(_api_with_image_status(client, 500))
+    result = call("get_region", region_id=seeded)
+    assert len(result.content) == 2
+    note = result.content[1].text
+    assert "missing" not in note
+    assert "image unavailable" in note and "500" in note  # the real cause, so the agent can retry
+    assert text_of(result)["id"] == seeded  # the transcription still arrives
+
+
+def test_api_client_raises_not_found_only_for_404(seeded, client):
+    from inkbridge.mcp.client import ApiError, NotFound
+
+    api = ApiClient(client)
+    with pytest.raises(NotFound):
+        api.get_image("nope")
+    with pytest.raises(ApiError) as exc:
+        api.search("x" * 10, limit=0)  # 422 from the API
+    assert not isinstance(exc.value, NotFound), "a 422 is not a missing resource"
+
+
+def test_mcp_shutdown_closes_the_http_client(monkeypatch):
+    client = ApiClient()
+    server.set_client(client)
+    monkeypatch.setattr(server.mcp, "run", lambda transport: None)
+    try:
+        server.main()
+        assert client.http.is_closed
+        assert server._client is None
+    finally:
+        server.set_client(None)
+
+
+def test_mcp_shutdown_closes_the_http_client_even_on_error(monkeypatch):
+    client = ApiClient()
+    server.set_client(client)
+
+    def crash(transport):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(server.mcp, "run", crash)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            server.main()
+        assert client.http.is_closed
+    finally:
+        server.set_client(None)

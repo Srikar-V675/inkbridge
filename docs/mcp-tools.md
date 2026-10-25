@@ -63,4 +63,4 @@ Outside MCP: `GET /regions/{id}/png` will serve a chunk's stored crop at full si
 - Images are downscaled to at most 1024 px wide (API default; the stored crop is untouched).
 - `include_ink` returns at most 5,000 points in total; `ink.decimated` and `ink.original_point_count` say whether it was reduced. See `docs/decisions/0003-agent-output-limits.md`.
 
-`png_stale: true` means the ink changed since the crop was saved, so the image may not match the strokes. Ink strokes carry `x`, `y` and `angle`; their `points` are relative to `(x, y)`. If a crop file is missing, `get_region` still returns the transcription plus a note.
+`png_stale: true` means the ink changed since the crop was saved, so the image may not match the strokes. Ink strokes carry `x`, `y` and `angle`; their `points` are relative to `(x, y)`. If the image cannot be fetched, `get_region` still returns the transcription plus a note: "the crop file is missing" only when the API answers 404, otherwise the actual error (retry those).
