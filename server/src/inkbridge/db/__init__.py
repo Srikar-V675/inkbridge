@@ -8,10 +8,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from inkbridge import config
-from inkbridge.regions import bbox_of, content_hash, stroke_hash, text_hash
+from inkbridge.chunker import ChunkerConfig, cluster, kind_hint, match_chunks
+from inkbridge.regions import (
+    bbox_of,
+    content_hash,
+    legacy_content_hash,
+    stroke_hash,
+    text_hash,
+)
 
 DEFAULT_DOCUMENT_ID = "default"
 RECOGNITION_SOURCES = ("user", "agent", "gemini")
+AUTO = "auto"  # regions.created_by of chunks the chunker owns; anything else is a manual region
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
@@ -76,6 +84,8 @@ def _migrate_locked(conn: sqlite3.Connection) -> list[int]:
         and conn.execute("SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1").fetchone()
     ):
         _backfill_v2(conn)
+    if 4 in done | set(applied):
+        _rekey_integral_hashes(conn)  # under the migration lock, committed with it
     return applied
 
 
@@ -132,6 +142,38 @@ def _backfill_v2(conn: sqlite3.Connection) -> None:
         _reindex_region(conn, region["id"])
 
 
+def _rekey_integral_hashes(conn: sqlite3.Connection) -> None:
+    """Move rows hashed before content_hash wrote integral floats as ints to the new key.
+
+    Runs inside migrate()'s transaction on every start. Idempotent: a region is only touched when
+    its stored hash is the old form of its current ink and differs from the new form, so the ink
+    is identical and its readings (and search hit) carry over instead of being lost on the next
+    move.
+    """
+    scenes: dict[str, dict] = {}
+    for region in conn.execute(
+        "SELECT id, document_id, element_ids_json, content_hash FROM regions"
+    ):
+        doc = region["document_id"]
+        if doc not in scenes:
+            row = conn.execute(
+                "SELECT elements_json FROM scenes WHERE document_id = ?", (doc,)
+            ).fetchone()
+            scenes[doc] = {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
+        present = [
+            scenes[doc][i] for i in json.loads(region["element_ids_json"]) if i in scenes[doc]
+        ]
+        old, new = region["content_hash"], content_hash(present)
+        if old == new or old != legacy_content_hash(present):
+            continue
+        conn.execute("UPDATE regions SET content_hash = ? WHERE id = ?", (new, region["id"]))
+        conn.execute(
+            "UPDATE OR IGNORE recognitions SET content_hash = ? WHERE region_id = ? AND content_hash = ?",
+            (new, region["id"], old),
+        )
+        _reindex_region(conn, region["id"])
+
+
 def ensure_default_document(conn: sqlite3.Connection) -> None:
     now = _now()
     conn.execute(
@@ -149,7 +191,7 @@ def ensure_default_document(conn: sqlite3.Connection) -> None:
 def init_db(path: Path | None = None) -> None:
     conn = connect(path)
     try:
-        migrate(conn)  # also heals an interrupted v2 backfill
+        migrate(conn)  # also heals an interrupted v2 backfill and re-keys old content hashes
         ensure_default_document(conn)
     finally:
         conn.close()
@@ -176,26 +218,63 @@ def get_scene(conn: sqlite3.Connection, document_id: str) -> tuple[int, str]:
 
 
 def put_scene(
-    conn: sqlite3.Connection, document_id: str, base_version: int, elements_json: str
+    conn: sqlite3.Connection,
+    document_id: str,
+    base_version: int,
+    elements_json: str,
+    chunker_config: ChunkerConfig | None = None,
 ) -> int:
     """Store the scene if base_version is current; return the new version.
 
-    The compare-and-bump is one UPDATE, so two writers with the same base_version cannot both win.
+    BEGIN IMMEDIATE takes the write lock before the old scene is read, and the UPDATE compares
+    the version again, so two writers with the same base_version cannot both win even if one
+    guard is lost. Regions and chunks are re-derived in the same transaction, so they never
+    disagree with the stored scene; any error rolls the whole save back.
     """
     now = _now()
-    cur = conn.execute(
-        "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
-        " WHERE document_id = ? AND version = ?",
-        (elements_json, now, document_id, base_version),
-    )
-    if cur.rowcount == 0:
-        current, _ = get_scene(conn, document_id)  # raises DocumentNotFound if missing
+    conn.execute("BEGIN IMMEDIATE")  # read the old scene and replace it under one write lock
+    try:
+        old = conn.execute(
+            "SELECT version, elements_json FROM scenes WHERE document_id = ?", (document_id,)
+        ).fetchone()
+        if old is None:
+            raise DocumentNotFound(document_id)
+        if old["version"] != base_version:
+            raise VersionConflict(old["version"])
+        cur = conn.execute(
+            "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
+            " WHERE document_id = ? AND version = ?",
+            (elements_json, now, document_id, base_version),
+        )
+        if cur.rowcount == 0:  # second guard: only reachable if the write lock was not held
+            raise VersionConflict(get_scene(conn, document_id)[0])
+        elements = json.loads(elements_json)
+        by_id = {e["id"]: e for e in elements}
+        changed = _changed_ids(json.loads(old["elements_json"]), by_id)
+        _refresh_regions(conn, document_id, by_id, changed, now)
+        _sync_chunks(conn, document_id, elements, by_id, changed, now, chunker_config)
+        conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
+        conn.commit()
+    except BaseException:
         conn.rollback()
-        raise VersionConflict(current)
-    _refresh_regions(conn, document_id, json.loads(elements_json), now)
-    conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
-    conn.commit()
+        raise
     return base_version + 1
+
+
+def _changed_ids(old_elements: list[dict], new_by_id: dict[str, dict]) -> set[str]:
+    """Ids added, removed or edited since the last save (tech ref gap 7).
+
+    Excalidraw bumps `version` on every edit, but comparing whole elements is just as cheap on
+    parsed JSON and stays right for clients that do not bump it. Volatile-field churn counts as a
+    change here; the hashes then come out equal and nothing is written.
+    """
+    old_by_id = {e["id"]: e for e in old_elements}
+    changed = {i for i, e in new_by_id.items() if old_by_id.get(i) != e}
+    return changed | (old_by_id.keys() - new_by_id.keys())
+
+
+class ReservedCreator(ValueError):
+    """created_by='auto' marks chunker-owned rows and cannot be used for a manual region."""
 
 
 class UnknownElements(Exception):
@@ -227,6 +306,7 @@ def _region_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "stroke_hash": row["stroke_hash"],
         "content_hash": row["content_hash"],
         "status": row["status"],
+        "successor_of": row["successor_of"],
         "png_stale": bool(row["png_stale"]),
         "updated_at": row["updated_at"],
         "text": rec["text"] if rec else None,
@@ -255,6 +335,8 @@ def create_region(
 
 
 def _create_region(conn, document_id, element_ids, png_path, kind, created_by, region_id):
+    if created_by == AUTO:
+        raise ReservedCreator(AUTO)  # the chunker owns these rows; it would adopt or orphan it
     _, elements_json = get_scene(conn, document_id)
     by_id = {e["id"]: e for e in json.loads(elements_json)}
     missing = [i for i in element_ids if i not in by_id]
@@ -294,10 +376,17 @@ def get_region_png_path(conn: sqlite3.Connection, region_id: str) -> str | None:
 
 
 def list_regions(
-    conn: sqlite3.Connection, document_id: str, kind: str | None = None, limit: int = 100
+    conn: sqlite3.Connection,
+    document_id: str,
+    kind: str | None = None,
+    limit: int = 100,
+    chunks: bool = False,
 ) -> list[dict]:
-    sql = "SELECT * FROM regions WHERE document_id = ?"
-    args: list = [document_id]
+    """Manual regions, or with chunks=True the auto chunks (both kinds via get_region by id)."""
+    sql = "SELECT * FROM regions WHERE document_id = ? AND created_by IS " + (
+        "?" if chunks else "NOT ?"
+    )
+    args: list = [document_id, AUTO]
     if kind:
         sql += " AND kind = ?"
         args.append(kind)
@@ -307,21 +396,30 @@ def list_regions(
 
 
 def _refresh_regions(
-    conn: sqlite3.Connection, document_id: str, elements: list[dict], now: str
+    conn: sqlite3.Connection,
+    document_id: str,
+    by_id: dict[str, dict],
+    changed: set[str],
+    now: str,
 ) -> None:
-    """Re-derive hash/status of the document's regions from a new scene (same transaction).
+    """Re-derive hash/status of the document's manual regions from a new scene (same transaction).
 
-    A region is only written when a hash or its status actually changed, so unrelated edits and
-    volatile-field churn leave it (and its updated_at) alone. A new stroke_hash means the crop PNG
-    is flagged stale until the client saves it again; a new content_hash means the ink itself
-    changed, so the old reading no longer applies and a new recognition is needed. A pure move
-    changes only the stroke_hash: the reading and its search hit stay.
+    Only regions holding a changed element are looked at, and a region is only written when a hash
+    or its status actually changed, so unrelated edits and volatile-field churn leave it (and its
+    updated_at) alone. A new stroke_hash means the crop PNG is flagged stale until the client
+    saves it again; a new content_hash means the ink itself changed, so the old reading no longer
+    applies and a new recognition is needed. A pure move changes only the stroke_hash: the reading
+    and its search hit stay. Auto chunks are kept by _sync_chunks instead.
     """
-    by_id = {e["id"]: e for e in elements}
+    if not changed:
+        return
     for row in conn.execute(
-        "SELECT * FROM regions WHERE document_id = ?", (document_id,)
+        "SELECT * FROM regions WHERE document_id = ? AND created_by IS NOT ?", (document_id, AUTO)
     ).fetchall():
-        present = [by_id[i] for i in json.loads(row["element_ids_json"]) if i in by_id]
+        ids = json.loads(row["element_ids_json"])
+        if changed.isdisjoint(ids):
+            continue
+        present = [by_id[i] for i in ids if i in by_id]
         new_hash = stroke_hash(present)
         new_content = content_hash(present)
         alive = any(not e.get("isDeleted") for e in present)
@@ -341,6 +439,97 @@ def _refresh_regions(
         )
         if new_content != row["content_hash"]:
             _reindex_region(conn, row["id"])  # old reading no longer describes the ink
+
+
+def _sync_chunks(
+    conn: sqlite3.Connection,
+    document_id: str,
+    elements: list[dict],
+    by_id: dict[str, dict],
+    changed: set[str],
+    now: str,
+    chunker_config: ChunkerConfig | None,
+) -> None:
+    """Re-run the chunker and upsert one created_by='auto' region per chunk (tech ref 5.6, 5.8).
+
+    New clusters inherit ids from old chunks (orphaned ones too, so undo reactivates them) by
+    element-id Jaccard. A kept chunk whose element set is unchanged and holds no changed element
+    is skipped without hashing. Chunks that lose their id become orphaned, keep their last
+    element ids and hashes, and point successor_of at the cluster that took most of their ink.
+    """
+    cfg = chunker_config or ChunkerConfig()
+    clusters = cluster(elements, cfg)
+    rows = {
+        r["id"]: r
+        for r in conn.execute(
+            "SELECT * FROM regions WHERE document_id = ? AND created_by = ?", (document_id, AUTO)
+        ).fetchall()
+    }
+    old = {rid: json.loads(r["element_ids_json"]) for rid, r in rows.items()}
+    boxes = [bbox_of([by_id[i] for i in members]) for members in clusters]
+    matching = match_chunks(
+        old,
+        clusters,
+        tops=[b["y"] for b in boxes],
+        active={rid for rid, r in rows.items() if r["status"] == "active"},
+        threshold=cfg.match_threshold,
+    )
+    ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
+
+    for rid, kept, members, box in zip(ids, matching.assigned, clusters, boxes, strict=True):
+        row = rows.get(kept) if kept else None
+        # Kept, still active and holding exactly the same elements as before.
+        same = row is not None and row["status"] == "active" and old[rid] == members
+        if same and changed.isdisjoint(members):
+            continue  # same elements, none edited: nothing to recompute
+        chunk = [by_id[i] for i in members]
+        new_stroke, new_content = stroke_hash(chunk), content_hash(chunk)
+        if row is None:
+            conn.execute(
+                "INSERT INTO regions (id, document_id, element_ids_json, bbox, kind, created_by,"
+                " stroke_hash, content_hash, png_path, status, png_stale, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,'active',1,?)",
+                (
+                    rid,
+                    document_id,
+                    json.dumps(members),
+                    json.dumps(box),
+                    kind_hint(chunk),
+                    AUTO,
+                    new_stroke,
+                    new_content,
+                    str(config.crops_dir() / f"{rid}.png"),
+                    now,
+                ),
+            )
+            continue
+        if same and new_stroke == row["stroke_hash"] and new_content == row["content_hash"]:
+            continue  # only volatile fields moved
+        content_changed = new_content != row["content_hash"]
+        conn.execute(
+            "UPDATE regions SET element_ids_json = ?, bbox = ?, stroke_hash = ?,"
+            " content_hash = ?, kind = ?, status = 'active', successor_of = NULL,"
+            " updated_at = ?,"
+            " png_stale = CASE WHEN ? != stroke_hash THEN 1 ELSE png_stale END WHERE id = ?",
+            (
+                json.dumps(members),
+                json.dumps(box),
+                new_stroke,
+                new_content,
+                kind_hint(chunk) if content_changed else row["kind"],
+                now,
+                new_stroke,
+                rid,
+            ),
+        )
+        if content_changed:
+            _reindex_region(conn, rid)  # no reading for the new ink yet: drop the search row
+
+    for rid, successor in matching.successors.items():
+        conn.execute(
+            "UPDATE regions SET status = 'orphaned', successor_of = ?, updated_at = ? WHERE id = ?",
+            (ids[successor] if successor is not None else None, now, rid),
+        )
 
 
 def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:

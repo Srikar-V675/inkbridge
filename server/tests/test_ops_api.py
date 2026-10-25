@@ -286,11 +286,14 @@ def test_ops_persist_across_restart_and_list_pending_for_replay(tmp_path, monkey
 
 
 def _anchor_region(element_ids):
+    """The chunk the scene save made for exactly these elements (INK-031 owns auto rows)."""
     conn = db.connect()
     try:
-        return db.create_region(conn, "default", element_ids, "/dev/null", created_by="auto")["id"]
+        chunks = db.list_regions(conn, "default", chunks=True, limit=500)
     finally:
         conn.close()
+    (rid,) = [c["id"] for c in chunks if sorted(c["element_ids"]) == sorted(element_ids)]
+    return rid
 
 
 def _op_box(op, size):

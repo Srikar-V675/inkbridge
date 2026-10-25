@@ -1,7 +1,7 @@
 import random
 import time
 
-from inkbridge.chunker import ChunkerConfig, cluster, kind_hint, reading_order
+from inkbridge.chunker import ChunkerConfig, cluster, kind_hint, match_chunks, reading_order
 
 
 def stroke(i, x, y, w=10, h=20, **extra):
@@ -291,3 +291,85 @@ def test_identical_boxes_form_one_chunk_even_when_tiny():
     # Two strokes over the same spot plus a far one; the floor keeps the threshold at 6 px.
     els = [stroke("a", 0, 0, w=0, h=0), stroke("b", 0, 0, w=0, h=0), stroke("far", 50, 0)]
     assert as_sets(cluster(els)) == {frozenset("ab"), frozenset({"far"})}
+
+
+# --- Stable ids (INK-031): greedy one-to-one Jaccard matching ---------------------------------
+
+
+def ids(s, n, start=0):
+    return [f"{s}{i}" for i in range(start, start + n)]
+
+
+def test_adding_a_stroke_keeps_the_id():
+    m = match_chunks({"c7": ids("e", 10)}, [ids("e", 11)], tops=[0.0])
+    assert m.assigned == ["c7"] and m.successors == {}
+
+
+def test_split_in_half_gives_new_ids_and_successor_is_the_higher_piece():
+    old = {"c7": ids("e", 10)}
+    clusters = [ids("e", 5, 5), ids("e", 5)]  # J = 0.5 each, not above 0.5
+    m = match_chunks(old, clusters, tops=[300.0, 100.0])
+    assert m.assigned == [None, None]
+    assert m.successors == {"c7": 1}  # equal overlap: the piece higher on the page
+
+
+def test_uneven_split_keeps_the_id_on_the_big_piece():
+    m = match_chunks({"c7": ids("e", 10)}, [ids("e", 2), ids("e", 8, 2)], tops=[0.0, 50.0])
+    assert m.assigned == [None, "c7"]
+
+
+def test_successor_is_the_piece_with_the_largest_overlap():
+    old = {"c7": ids("e", 10)}
+    clusters = [ids("e", 4), ids("e", 6, 4) + ids("x", 20)]  # J = 0.4 and 6 / 30
+    m = match_chunks(old, clusters, tops=[0.0, 500.0])
+    assert m.assigned == [None, None] and m.successors == {"c7": 1}
+
+
+def test_merge_gives_a_new_id_and_both_point_at_it():
+    old = {"c2": ids("e", 6), "c3": ids("e", 6, 6)}
+    m = match_chunks(old, [ids("e", 12)], tops=[0.0])
+    assert m.assigned == [None]
+    assert m.successors == {"c2": 0, "c3": 0}
+
+
+def test_matching_is_one_to_one_highest_jaccard_first():
+    # Both old chunks overlap the big cluster; only the better one may take it.
+    old = {"big": ids("e", 9), "small": ids("e", 7)}
+    m = match_chunks(old, [ids("e", 10)], tops=[0.0])
+    assert m.assigned == ["big"]
+    assert m.successors == {"small": 0}
+
+
+def test_threshold_is_configurable():
+    old = {"c": ids("e", 2)}
+    clusters = [ids("e", 5)]  # the small-chunk weakness: J = 0.4
+    assert match_chunks(old, clusters, tops=[0.0]).assigned == [None]
+    assert match_chunks(old, clusters, tops=[0.0], threshold=0.3).assigned == ["c"]
+    assert ChunkerConfig().match_threshold == 0.5
+
+
+def test_orphaned_chunk_wins_back_its_elements_on_undo():
+    # After a split, c7 is orphaned but still lists its ten elements; undo merges them again.
+    old = {"c7": ids("e", 10), "a": ids("e", 5), "b": ids("e", 5, 5)}
+    m = match_chunks(old, [ids("e", 10)], tops=[0.0], active={"a", "b"})
+    assert m.assigned == ["c7"]
+    assert m.successors == {"a": 0, "b": 0}  # only chunks that were active get a successor
+
+
+def test_tie_prefers_an_active_chunk():
+    # The orphan's id sorts first, so only the active-first tie-break can pick "live".
+    old = {"a-orph": ids("e", 3), "live": ids("e", 3)}
+    m = match_chunks(old, [ids("e", 3)], tops=[0.0], active={"live"})
+    assert m.assigned == ["live"] and m.successors == {}
+
+
+def test_deleted_chunk_has_no_successor():
+    m = match_chunks({"c": ids("e", 3)}, [ids("x", 3)], tops=[0.0])
+    assert m.assigned == [None] and m.successors == {"c": None}
+
+
+def test_equal_jaccard_goes_to_the_larger_overlap():
+    # Orphaned chunks may overlap active ones. Both have J = 0.5 with the cluster.
+    old = {"a": ids("e", 2), "b": ids("e", 4) + ids("x", 4)}  # 2/4 and 4/8
+    m = match_chunks(old, [ids("e", 4)], tops=[0.0], threshold=0.4)
+    assert m.assigned == ["b"]

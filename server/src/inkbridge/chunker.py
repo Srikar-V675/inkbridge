@@ -1,13 +1,14 @@
 """Pure chunker: group scene elements into chunks by proximity. No I/O, no SQLite.
 
-Steps 1-3 and 6 of the pipeline in the technical reference (section 5). Arrow merge/link rules
-and id matching live elsewhere (INK-032, INK-031); their constants sit in ChunkerConfig so one
-object tunes the whole pipeline.
+Steps 1-3 and 6 of the pipeline in the technical reference (section 5). Step 5, stable ids,
+is `match_chunks` (INK-031); arrow merge/link rules live in INK-032. Their constants sit in
+ChunkerConfig so one object tunes the whole pipeline.
 """
 
 import bisect
 import math
 import statistics
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +28,10 @@ class ChunkerConfig:
     arrow_merge: float = 6.0  # arrows shorter than this * median merge their chunks (INK-032)
     link_reach: float = 3.0  # free arrow ends link to chunks within this * median (INK-032)
     min_median: float = 4.0  # floor for the median size, in px
+    # A new cluster keeps an old chunk's id when their element-id Jaccard is above this. Small
+    # chunks are fragile (2 elements gaining 3 is J = 0.4); INK-038 may switch to a 60%
+    # containment test instead (docs/decisions/0011-chunk-identity.md).
+    match_threshold: float = 0.5
 
 
 def is_draft(element: dict[str, Any]) -> bool:
@@ -222,3 +227,61 @@ def kind_hint(elements: list[dict[str, Any]]) -> str:
     if writing == 0:
         return "diagram"
     return "mixed"
+
+
+@dataclass(frozen=True)
+class Matching:
+    assigned: list[str | None]  # per new cluster: the old chunk id it keeps, or None for a new id
+    successors: dict[str, int | None]  # newly orphaned old id -> cluster index (None: no overlap)
+
+
+def match_chunks(
+    old: Mapping[str, Sequence[str]],
+    clusters: Sequence[Sequence[str]],
+    tops: Sequence[float],
+    active: Collection[str] | None = None,
+    threshold: float = ChunkerConfig.match_threshold,
+) -> Matching:
+    """Give new clusters the ids of old chunks by element-id Jaccard (tech ref 5.6).
+
+    `old` holds every auto chunk of the canvas, orphaned ones included, so undo that restores
+    elements brings an orphaned chunk back under its own id. `active` names the old chunks that
+    were active (default: all). Matching is greedy and one-to-one: every pair with J above
+    `threshold`, highest J first (ties: larger overlap, active before orphaned, then ids).
+    An active chunk left unmatched becomes orphaned; its successor is the cluster sharing the most
+    elements with it (tie: higher on the page, by `tops`), or None when it shares none.
+    """
+    active_ids = set(old) if active is None else set(active)
+    # Chunk member lists come from cluster(): sorted and free of duplicates.
+    owner: dict[str, list[str]] = {}
+    for oid, members in old.items():
+        for e in members:
+            owner.setdefault(e, []).append(oid)
+
+    # old id -> [(cluster index, shared elements)], and candidate pairs above the threshold.
+    shared: dict[str, list[tuple[int, int]]] = {}
+    pairs = []
+    for ci, members in enumerate(clusters):
+        counts: dict[str, int] = {}
+        for e in members:
+            for oid in owner.get(e, ()):
+                counts[oid] = counts.get(oid, 0) + 1
+        for oid, inter in counts.items():
+            shared.setdefault(oid, []).append((ci, inter))
+            j = inter / (len(members) + len(old[oid]) - inter)
+            if j > threshold:
+                pairs.append((-j, -inter, oid not in active_ids, oid, ci))
+    pairs.sort()
+
+    assigned: list[str | None] = [None] * len(clusters)
+    taken: set[str] = set()
+    for *_, oid, ci in pairs:
+        if oid not in taken and assigned[ci] is None:
+            assigned[ci] = oid
+            taken.add(oid)
+
+    successors: dict[str, int | None] = {}
+    for oid in sorted(active_ids - taken):
+        best = min(shared.get(oid, ()), key=lambda p: (-p[1], tops[p[0]], p[0]), default=None)
+        successors[oid] = best[0] if best else None
+    return Matching(assigned, successors)
