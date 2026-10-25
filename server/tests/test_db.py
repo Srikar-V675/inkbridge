@@ -15,6 +15,8 @@ EXPECTED = {
         "kind",
         "created_by",
         "stroke_hash",
+        "content_hash",
+        "successor_of",
         "png_stale",
         "png_path",
         "status",
@@ -22,14 +24,24 @@ EXPECTED = {
     },
     "recognitions": {
         "region_id",
-        "stroke_hash",
+        "content_hash",
         "source",
         "model",
         "text",
         "latex",
+        "text_hash",
         "created_at",
     },
-    "agent_ops": {"id", "type", "payload_json", "status"},
+    "agent_ops": {
+        "id",
+        "type",
+        "payload_json",
+        "status",
+        "document_id",
+        "created_at",
+        "result_json",
+        "error",
+    },
 }
 
 
