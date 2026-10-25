@@ -1,7 +1,14 @@
 import random
 import time
 
-from inkbridge.chunker import ChunkerConfig, cluster, kind_hint, match_chunks, reading_order
+from inkbridge.chunker import (
+    ChunkerConfig,
+    chunk_scene,
+    cluster,
+    kind_hint,
+    match_chunks,
+    reading_order,
+)
 
 
 def stroke(i, x, y, w=10, h=20, **extra):
@@ -373,3 +380,123 @@ def test_equal_jaccard_goes_to_the_larger_overlap():
     old = {"a": ids("e", 2), "b": ids("e", 4) + ids("x", 4)}  # 2/4 and 4/8
     m = match_chunks(old, [ids("e", 4)], tops=[0.0], threshold=0.4)
     assert m.assigned == ["b"]
+
+
+# --- Arrows (INK-032): merge, link, attach -------------------------------------------------
+
+
+def arrow(i, x, y, dx, dy=0, start=None, end=None, type="arrow", **extra):
+    el = {"id": i, "type": type, "x": x, "y": y, "points": [[0, 0], [dx, dy]], **extra}
+    if start:
+        el["startBinding"] = {"elementId": start, "focus": 0, "gap": 4}
+    if end:
+        el["endBinding"] = {"elementId": end, "focus": 0, "gap": 4}
+    return el
+
+
+def boxes_far_apart():
+    # Median element size 100 (the rects): merge if the arrow is <= 600, reach 300.
+    return [rect("a", 0, 0, 100, 100), rect("b", 2000, 0, 100, 100), rect("c", 0, 2000, 100, 100)]
+
+
+def named(result):
+    return [tuple(result.chunks[i][0] for i in pair) for pair in result.links]
+
+
+def test_bound_arrow_links_exactly_the_two_owning_chunks():
+    # The arrow's points end well away from b; the binding decides, not the geometry.
+    els = [*boxes_far_apart(), arrow("arr", 100, 50, 1000, start="b", end="c")]
+    r = chunk_scene(els)
+    assert r.chunks == [["a"], ["arr", "b"], ["c"]]
+    assert named(r) == [("arr", "c")]  # from b's chunk (which now holds the arrow) to c
+
+
+def test_free_arrow_links_the_nearest_chunks():
+    els = [*boxes_far_apart(), arrow("arr", 150, 50, 1800)]  # ends 50 px from a and from b
+    r = chunk_scene(els)
+    assert r.chunks == [["a", "arr"], ["b"], ["c"]]
+    assert named(r) == [("a", "b")]
+
+
+def test_dangling_arrow_links_nothing_and_still_belongs_to_a_chunk():
+    els = [*boxes_far_apart(), arrow("arr", 150, 50, 1000)]  # end is 850 px from b: dangling
+    r = chunk_scene(els)
+    assert r.links == [] and r.chunks == [["a", "arr"], ["b"], ["c"]]
+    alone = chunk_scene([*boxes_far_apart(), arrow("arr", 800, 800, 300)])
+    assert alone.links == [] and ["arr"] in alone.chunks
+
+
+def test_short_arrow_merges_two_nodes_and_a_long_one_stays_a_link():
+    near = [rect("a", 0, 0, 100, 100), rect("b", 500, 0, 100, 100)]
+    short = chunk_scene([*near, arrow("arr", 100, 50, 400, start="a", end="b")])
+    assert short.chunks == [["a", "arr", "b"]] and short.links == []
+    far = [rect("a", 0, 0, 100, 100), rect("b", 900, 0, 100, 100)]
+    long = chunk_scene([*far, arrow("arr", 100, 50, 800, start="a", end="b")])
+    assert long.chunks == [["a", "arr"], ["b"]]
+    assert named(long) == [("a", "b")]
+
+
+def test_arrow_merge_and_link_reach_are_configurable():
+    far = [rect("a", 0, 0, 100, 100), rect("b", 900, 0, 100, 100)]
+    els = [*far, arrow("arr", 100, 50, 800, start="a", end="b")]
+    assert len(chunk_scene(els, ChunkerConfig(arrow_merge=9)).chunks) == 1
+    free = [*boxes_far_apart(), arrow("arr", 150, 50, 1000)]
+    assert named(chunk_scene(free, ChunkerConfig(link_reach=9))) == [("a", "b")]
+
+
+def test_arrow_label_travels_with_its_arrow():
+    els = [
+        *boxes_far_apart(),
+        arrow("arr", 150, 50, 1800),
+        _label("lbl", "arr", x=1000, y=40),
+        stroke("ink", 1010, 70),  # near the label, but the label is not proximity content
+    ]
+    r = chunk_scene(els)
+    assert ["a", "arr", "lbl"] in r.chunks and ["ink"] in r.chunks
+
+
+def test_deleted_and_draft_arrows_take_no_part_and_their_labels_neither():
+    els = [
+        *boxes_far_apart(),
+        arrow("gone", 150, 50, 1800, isDeleted=True),
+        _label("gone-lbl", "gone"),
+        arrow("draft", 150, 50, 1800, customData={"draft": True}),
+        _label("draft-lbl", "draft", x=6000),
+    ]
+    r = chunk_scene(els)
+    assert r.chunks == [["a"], ["b"], ["c"]] and r.links == []
+
+
+def test_lines_attach_but_never_merge_or_link():
+    near = [rect("a", 0, 0, 100, 100), rect("b", 500, 0, 100, 100)]
+    r = chunk_scene([*near, arrow("ln", 100, 50, 400, type="line")])
+    assert r.chunks == [["a", "ln"], ["b"]] and r.links == []
+
+
+def test_arrows_inside_one_chunk_or_into_a_merged_chunk_make_no_self_link():
+    near = [rect("a", 0, 0, 100, 100), rect("b", 500, 0, 100, 100)]
+    els = [
+        *near,
+        arrow("m", 100, 50, 400, start="a", end="b"),  # merges a and b
+        arrow("loop", 100, 20, 1500, start="a", end="b"),  # long, but now within one chunk
+    ]
+    r = chunk_scene(els)
+    assert r.chunks == [["a", "b", "loop", "m"]] and r.links == []
+
+
+def test_link_direction_follows_the_arrow_and_duplicates_collapse():
+    els = [
+        *boxes_far_apart(),
+        arrow("x1", 100, 50, 1000, start="a", end="b"),
+        arrow("x2", 100, 60, 1000, start="a", end="b"),
+        arrow("back", 2000, 50, -1000, start="b", end="a"),
+    ]
+    assert sorted(named(chunk_scene(els))) == [("a", "b"), ("b", "a")]
+
+
+def test_config_rejects_values_that_break_the_maths():
+    import pytest
+
+    for bad in ({"k": 0}, {"min_median": 0}, {"arrow_merge": -1}, {"match_threshold": 1}):
+        with pytest.raises(ValueError):
+            ChunkerConfig(**bad)

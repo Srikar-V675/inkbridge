@@ -1,11 +1,12 @@
 """Pure chunker: group scene elements into chunks by proximity. No I/O, no SQLite.
 
-Steps 1-3 and 6 of the pipeline in the technical reference (section 5). Step 5, stable ids,
-is `match_chunks` (INK-031); arrow merge/link rules live in INK-032. Their constants sit in
-ChunkerConfig so one object tunes the whole pipeline.
+Steps 1-6 of the pipeline in the technical reference (section 5): `cluster` is proximity,
+`chunk_scene` adds arrows (merge or link, INK-032), `match_chunks` keeps ids stable (INK-031).
+Their constants sit in ChunkerConfig so one object tunes the whole pipeline.
 """
 
 import bisect
+import itertools
 import math
 import statistics
 from collections.abc import Collection, Mapping, Sequence
@@ -32,6 +33,13 @@ class ChunkerConfig:
     # chunks are fragile (2 elements gaining 3 is J = 0.4); INK-038 may switch to a 60%
     # containment test instead (docs/decisions/0011-chunk-identity.md).
     match_threshold: float = 0.5
+
+    def __post_init__(self) -> None:
+        for name in ("k", "arrow_merge", "link_reach", "min_median"):
+            if not getattr(self, name) > 0:
+                raise ValueError(f"ChunkerConfig.{name} must be positive")
+        if not 0 <= self.match_threshold < 1:
+            raise ValueError("ChunkerConfig.match_threshold must be in [0, 1)")
 
 
 def is_draft(element: dict[str, Any]) -> bool:
@@ -90,11 +98,17 @@ def _gap(a: tuple[float, float, float, float], b: tuple[float, float, float, flo
 
 
 def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None) -> list[list[str]]:
-    """Return chunks as sorted lists of element ids, ordered by their smallest id."""
-    config = config or ChunkerConfig()
+    """Proximity step only: chunks as sorted lists of element ids, ordered by their smallest id."""
+    return _proximity(elements, config or ChunkerConfig())[0]
+
+
+def _proximity(
+    elements: list[dict[str, Any]], config: ChunkerConfig
+) -> tuple[list[list[str]], float]:
+    """Proximity clusters and the median element size they were measured with."""
     live = sorted(clustering_elements(elements), key=lambda e: str(e["id"]))
     if not live:
-        return []
+        return [], config.min_median
     boxes = []
     for e in live:
         b = bbox_of([e])
@@ -191,7 +205,109 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
     groups: dict[int, list[str]] = {}
     for i, e in enumerate(live):
         groups.setdefault(uf.find(i), []).append(str(e["id"]))
-    return sorted((sorted(g) for g in groups.values()), key=lambda g: g[0])
+    return sorted((sorted(g) for g in groups.values()), key=lambda g: g[0]), median
+
+
+@dataclass(frozen=True)
+class Chunking:
+    chunks: list[list[str]]  # sorted element ids per chunk, ordered by their smallest id
+    links: list[tuple[int, int]]  # arrow links (from, to) as indices into chunks, sorted, unique
+
+
+def _live(element: dict[str, Any]) -> bool:
+    return not element.get("isDeleted") and not is_draft(element)
+
+
+def _box_distance(point: tuple[float, float], box: dict[str, float]) -> float:
+    dx = max(box["x"] - point[0], point[0] - (box["x"] + box["width"]), 0.0)
+    dy = max(box["y"] - point[1], point[1] - (box["y"] + box["height"]), 0.0)
+    return math.hypot(dx, dy)
+
+
+def _path_length(points: list[list[float]]) -> float:
+    return sum(math.dist(a[:2], b[:2]) for a, b in itertools.pairwise(points))
+
+
+def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = None) -> Chunking:
+    """Proximity clusters plus the arrow rules of tech ref 5.5.
+
+    Each arrow end maps to a chunk: the chunk of its bound element (startBinding/endBinding), else
+    the nearest chunk whose box is within link_reach * median of the end point (x + points[0],
+    x + points[-1] in canvas coordinates); with neither, the end dangles. An arrow whose path is at
+    most arrow_merge * median long merges its two chunks; a longer one becomes a link. A dangling
+    arrow creates neither. Lines never merge or link. Every live arrow or line joins the chunk of
+    its start (else of its end, else forms a chunk of its own), and its bound label goes with it,
+    so connectors are part of some chunk's hash and crop.
+    """
+    config = config or ChunkerConfig()
+    groups, median = _proximity(elements, config)
+    by_id = {str(e.get("id")): e for e in elements}
+    owner = {eid: gi for gi, members in enumerate(groups) for eid in members}
+    boxes = [bbox_of([by_id[i] for i in members]) for members in groups]
+    reach = config.link_reach * median
+
+    connectors = sorted(
+        (e for e in elements if e.get("type") in _CONNECTORS and _live(e)),
+        key=lambda e: str(e["id"]),
+    )
+    labels: dict[str, list[str]] = {}
+    for e in elements:
+        container_id = e.get("containerId")
+        if container_id is not None and _live(e) and str(container_id) in by_id:
+            labels.setdefault(str(container_id), []).append(str(e["id"]))
+
+    def end_chunk(c: dict[str, Any], binding: str, point_index: int) -> int | None:
+        bound = (c.get(binding) or {}).get("elementId")
+        if bound is not None and str(bound) in owner:
+            return owner[str(bound)]
+        points = c.get("points") or [[0, 0]]
+        p = points[point_index]
+        point = (c.get("x", 0) + p[0], c.get("y", 0) + p[1])
+        best = min(
+            range(len(boxes)),
+            key=lambda gi: (_box_distance(point, boxes[gi]), gi),
+            default=None,
+        )
+        if best is None or _box_distance(point, boxes[best]) > reach:
+            return None
+        return best
+
+    uf = _UnionFind(len(groups))
+    ends = []
+    for c in connectors:
+        start, end = end_chunk(c, "startBinding", 0), end_chunk(c, "endBinding", -1)
+        is_arrow = c.get("type") == "arrow"
+        short = _path_length(c.get("points") or []) <= config.arrow_merge * median
+        if is_arrow and short and start is not None and end is not None:
+            uf.union(start, end)
+            ends.append((c, start, end, False))
+        else:
+            ends.append((c, start, end, is_arrow))
+
+    merged: dict[int, list[str]] = {}
+    for gi, members in enumerate(groups):
+        merged.setdefault(uf.find(gi), []).extend(members)
+    raw_links: set[tuple[int, int]] = set()
+    extra: list[list[str]] = []
+    for c, start, end, links in ends:
+        cid = str(c["id"])
+        joined = [cid, *labels.get(cid, [])]
+        home = start if start is not None else end
+        if home is None:
+            extra.append(joined)
+        else:
+            merged[uf.find(home)].extend(joined)
+        if links and start is not None and end is not None and uf.find(start) != uf.find(end):
+            raw_links.add((uf.find(start), uf.find(end)))
+
+    # (members, root) per chunk; a dangling connector's own chunk has no root and no links.
+    final = sorted(
+        [(sorted(m), r) for r, m in merged.items()] + [(sorted(m), None) for m in extra],
+        key=lambda item: item[0][0],
+    )
+    index = {r: i for i, (_, r) in enumerate(final) if r is not None}
+    links = sorted({(index[a], index[b]) for a, b in raw_links})
+    return Chunking([m for m, _ in final], links)
 
 
 def reading_order(boxes: dict[str, dict[str, float]]) -> list[str]:
