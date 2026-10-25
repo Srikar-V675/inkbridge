@@ -1,4 +1,4 @@
-# 0009: Request body caps and the migration lock
+# 0010: Request body caps and the migration lock
 
 Status: accepted (INK-040)
 
@@ -15,6 +15,8 @@ Status: accepted (INK-040)
   stays as the exact limit.
 - Why middleware: FastAPI parses a JSON body whole and Starlette spools a multipart upload to
   disk before the route runs, so a check inside the route comes after the cost was paid.
+- The body is buffered before routing, so even an unknown route reads up to 128 MiB before its
+  404. Acceptable for a single-user LAN tool.
 - Buffering up to the cap in memory is what FastAPI does for JSON anyway. For uploads it means up
   to 11 MiB is held in memory before Starlette spools it, which is acceptable at that size.
 - An early 413 does not drain the body; uvicorn closes the connection, so a client still sending
@@ -41,4 +43,5 @@ Status: accepted (INK-040)
   image error keeps the transcription and attaches the real error text.
 - Status errors are detected by status code, not `raise_for_status()`: Starlette's TestClient uses
   its own httpx build whose exception class the client did not catch.
+  Any non-2xx reply is an error, so an unfollowed 3xx is not mistaken for an empty image.
 - The MCP server closes the `httpx.Client` it created when `mcp.run` returns or raises.

@@ -1,4 +1,4 @@
-"""Request body caps, enforced before any route parses the body (decision 0009).
+"""Request body caps, enforced before any route parses the body (decision 0010).
 
 FastAPI reads a JSON body whole and Starlette spools a multipart upload to disk before a route
 runs, so a route-level check comes too late. This middleware answers 413 when the declared

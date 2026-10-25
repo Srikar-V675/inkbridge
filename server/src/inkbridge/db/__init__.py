@@ -38,7 +38,7 @@ def migrate(conn: sqlite3.Connection) -> list[int]:
 
     The whole run is one BEGIN IMMEDIATE transaction, which doubles as a cross-process lock: a
     second API process or worker starting at the same time waits here, then sees the versions
-    the first one recorded and applies nothing. A failure rolls everything back (decision 0009).
+    the first one recorded and applies nothing. A failure rolls everything back (decision 0010).
     """
     isolation, timeout = conn.isolation_level, conn.execute("PRAGMA busy_timeout").fetchone()[0]
     conn.isolation_level = None  # manual transactions: the sqlite3 module must not commit for us
@@ -71,9 +71,10 @@ def _migrate_locked(conn: sqlite3.Connection) -> list[int]:
         applied.append(version)
     # Version 4 needs a data backfill. Checking for unfilled rows (rather than "4 was just
     # applied") also heals a database whose backfill was interrupted before this lock existed.
-    if 4 in done | set(applied) and conn.execute(
-        "SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1"
-    ).fetchone():
+    if (
+        4 in done | set(applied)
+        and conn.execute("SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1").fetchone()
+    ):
         _backfill_v2(conn)
     return applied
 
