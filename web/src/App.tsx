@@ -2,6 +2,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExterna
 import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
+import { drawOp } from "./drawOp";
+import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
@@ -19,6 +21,12 @@ const LABEL: Record<SaveState, string> = {
 
 type Restored = ReturnType<typeof restoreElements>;
 type Initial = { elements: Restored; view: View | null } | "failed" | null;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
 
 function SaveBadge({ store }: { store: ReturnType<typeof createStatusStore> }) {
   const status = useSyncExternalStore(store.subscribe, store.get);
@@ -123,9 +131,33 @@ export default function App() {
     };
   }, [route.canvas, status]);
 
-  const onApi = useCallback((api: ExcalidrawImperativeAPI) => {
-    apiRef.current = api;
-  }, []);
+  // Resolves once Excalidraw hands over its API, so an op that arrives first waits instead of failing.
+  const apiReady = useMemo(() => deferred<ExcalidrawImperativeAPI>(), []);
+  const onApi = useCallback(
+    (api: ExcalidrawImperativeAPI) => {
+      apiRef.current = api;
+      apiReady.resolve(api);
+    },
+    [apiReady],
+  );
+
+  // Agent ops arrive over the WebSocket once the canvas exists; they are drawn as dashed drafts.
+  const canvasReady = initial !== null && initial !== "failed";
+  useEffect(() => {
+    if (!canvasReady) return;
+    const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    const socket = new OpsSocket({
+      url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}`,
+      onOp: async (op) => {
+        // Save what is pending first, so the server's next placement sees the newest ink.
+        void syncRef.current?.flushNow();
+        return drawOp(apiRef.current ?? (await apiReady.promise), op);
+      },
+      onOpError: (m) => console.warn("op refused by the server", m),
+    });
+    socket.start();
+    return () => socket.dispose();
+  }, [canvasReady, route.canvas, apiReady]);
 
   const onChange = useCallback(
     (
