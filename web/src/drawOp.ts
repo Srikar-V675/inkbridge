@@ -37,8 +37,14 @@ export async function drawOp(
   persist: (elements: readonly unknown[]) => Promise<void>,
 ): Promise<string[]> {
   const prefix = op.payload.id_prefix;
-  const already = opElements(api.getSceneElementsIncludingDeleted() as never as DraftElement[], prefix);
-  if (already.length) return already.map((e) => e.id); // replay of an op drawn before a reload
+  const scene = api.getSceneElementsIncludingDeleted();
+  const already = opElements(scene as never as DraftElement[], prefix);
+  if (already.length) {
+    // Replay of an op drawn before a reload or reconnect: its ack may have been lost before the
+    // drafts were saved, so make sure they are saved before acking again.
+    await persist(scene);
+    return already.map((e) => e.id);
+  }
   const skeleton = await skeletonFor(op);
   // Text boxes are measured at conversion; measuring before the hand-drawn font has loaded makes
   // them too narrow and clips the text.

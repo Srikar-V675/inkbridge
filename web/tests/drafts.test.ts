@@ -106,4 +106,13 @@ describe("drafts", () => {
     assert.equal(out[1], other); // "op10:" does not start with "op1:"
     assert.ok(out.slice(2).every((e) => e.isDeleted && e.version === 1));
   });
+
+  it("reject leaves a user's duplicate of a draft alone (new random id, copied tags)", () => {
+    const [draft] = toDrafts(converted(), op);
+    // Excalidraw's duplicate (Ctrl+D, Alt-drag) keeps customData but gives a fresh random id.
+    const dup = { ...draft, id: "Xk3_9aQ-random", version: 1 };
+    const out = rejectOp([draft, dup], "op1:");
+    assert.equal(out[0].isDeleted, true);
+    assert.equal(out[1], dup);
+  });
 });

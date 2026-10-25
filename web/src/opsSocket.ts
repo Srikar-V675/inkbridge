@@ -80,8 +80,16 @@ export class OpsSocket {
     return this.queue;
   }
 
+  // A socket that is closed or still connecting (a reconnect started while an op was being drawn)
+  // throws on send. Drop the message instead: the server replays an unacked op on the next
+  // connect, and the drawn drafts are found and acked then. Throwing here would report a drawn op
+  // as failed, and a rejected queue would never run another op.
   private send(msg: unknown) {
-    this.ws?.send(JSON.stringify(msg));
+    try {
+      this.ws?.send(JSON.stringify(msg));
+    } catch {
+      // see above
+    }
   }
 
   private receive(data: unknown) {

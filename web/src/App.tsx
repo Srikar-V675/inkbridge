@@ -23,6 +23,10 @@ const LABEL: Record<SaveState, string> = {
 type Restored = ReturnType<typeof restoreElements>;
 type Initial = { elements: Restored; view: View | null } | "failed" | null;
 
+// How long an op waits for its drafts to be saved before it is reported as failed (about 30 s).
+const SAVE_ATTEMPTS = 15;
+const SAVE_RETRY_MS = 2000;
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
@@ -150,12 +154,24 @@ export default function App() {
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}`,
       onOp: async (op) => {
-        // Saving now also makes the server's next placement see the newest ink.
+        // Saving now also makes the server's next placement see the newest ink. flushNow does not
+        // throw when a save fails (offline, 409 merge, 4xx), so check that the server really holds
+        // the drafts: an acked op is never replayed, so an unsaved draft lost to a reload would be
+        // gone for good. Give up after a while; op.failed then sweeps the drafts.
         const persist = async (elements: readonly unknown[]) => {
           const sync = syncRef.current;
-          if (!sync) return;
-          sync.notify(elements as SceneElement[]);
-          await sync.flushNow();
+          if (!sync) throw new Error("the canvas is not loaded");
+          const scene = elements as SceneElement[];
+          const ids = scene
+            .filter((e) => e.id.startsWith(op.payload.id_prefix) && !e.isDeleted)
+            .map((e) => e.id);
+          sync.notify(scene);
+          for (let attempt = 0; ; attempt++) {
+            await sync.flushNow();
+            if (sync.hasSaved(ids)) return;
+            if (attempt >= SAVE_ATTEMPTS) throw new Error("the drafts could not be saved");
+            await new Promise((r) => setTimeout(r, SAVE_RETRY_MS));
+          }
         };
         return drawOp(apiRef.current ?? (await apiReady.promise), op, persist);
       },

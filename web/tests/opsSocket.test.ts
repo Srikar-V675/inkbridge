@@ -82,6 +82,21 @@ describe("OpsSocket", () => {
     assert.equal(sockets[0].sent.length, 2);
   });
 
+  it("keeps handling ops when an ack cannot be sent (socket still connecting)", async () => {
+    const { s, sockets } = setup(async (op) => [`${op.op_id}:1`]);
+    const first = sockets[0];
+    first.send = () => {
+      throw new Error("InvalidStateError: still in CONNECTING state");
+    };
+    first.push(pending("a"));
+    await s.idle().catch(() => undefined);
+    // The lost ack is recovered by the server's replay; the queue itself must keep going.
+    first.send = FakeSocket.prototype.send;
+    first.push(pending("b"));
+    await s.idle();
+    assert.deepEqual(first.sent, [{ type: "op.applied", op_id: "b", element_ids: ["b:1"] }]);
+  });
+
   it("reconnects after a drop and stops after dispose", () => {
     const { s, sockets, timers } = setup(async () => []);
     sockets[0].close();
