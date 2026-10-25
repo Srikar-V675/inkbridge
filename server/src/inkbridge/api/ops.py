@@ -58,8 +58,10 @@ def _existing(ids: list[str]) -> HTTPException:
 
 def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     try:
-        # Before the schema: an existing id must be refused whichever field carries it.
-        ops_db.check_payload(conn, document_id, body.payload)
+        # Before the schema: an existing id must be refused whichever field carries it. A retry of
+        # an op that already exists skips this; create_op returns the stored op or a conflict.
+        if body.op_id is None or not ops_db.op_exists(conn, body.op_id):
+            ops_db.check_payload(conn, document_id, body.payload)
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
     except ops_db.ExistingElementIds as e:

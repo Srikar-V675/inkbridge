@@ -42,6 +42,11 @@ def write(client, text="hello", **extra):
     return client.post(OPS, json={"type": "write_text", "payload": {"text": text}, **extra})
 
 
+def own(op_id, n="1"):
+    """An element id issued for this op (see ops_db.id_prefix)."""
+    return f"{op_id}:{n}"
+
+
 def ack(client, op_id, ids):
     return client.patch(f"/ops/{op_id}", json={"status": "applied", "element_ids": ids})
 
@@ -122,47 +127,78 @@ def test_unknown_anchor_is_422(client):
 def test_ack_with_an_existing_user_element_id_is_rejected(client):
     seed(client)
     op = write(client).json()
-    r = ack(client, op["id"], ["new-1", "user-a"])
+    r = ack(client, op["id"], [own(op["id"]), "user-a"])
     assert r.status_code == 422
     assert r.json()["detail"] == {"code": "existing_element_id", "ids": ["user-a"]}
     assert client.get(f"/ops/{op['id']}").json()["status"] == "pending"
 
 
+def test_ack_with_ids_not_issued_for_the_op_is_rejected(client):
+    # Not in the scene yet, but not this op's ids either: a later Reject must never reach them.
+    op = write(client).json()
+    r = ack(client, op["id"], ["random-new-id"])
+    assert r.status_code == 422 and r.json()["detail"]["ids"] == ["random-new-id"]
+
+
 def test_ack_with_new_ids_applies_and_records_them(client):
     seed(client)
     op = write(client).json()
-    r = ack(client, op["id"], ["new-1", "new-2"])
+    assert op["payload"]["id_prefix"] == f"{op['id']}:"
+    ids = [own(op["id"], "1"), own(op["id"], "2")]
+    r = ack(client, op["id"], ids)
     assert r.status_code == 200
     assert r.json()["status"] == "applied"
-    assert r.json()["result"] == {"element_ids": ["new-1", "new-2"]}
+    assert r.json()["result"] == {"element_ids": ids}
 
 
 def test_ack_after_autosave_accepts_the_ops_own_drafts(client):
-    # Autosave may store the drafts before the ack arrives; they are tagged with this op.
+    # Autosave may store the drafts before the ack arrives.
     seed(client)
     op = write(client).json()
-    draft = stroke(
-        "new-1", 0, 500, customData={"author": "agent", "draft": True, "op_id": op["id"]}
-    )
-    seed(client, [USER_A, USER_B, draft])
-    assert ack(client, op["id"], ["new-1"]).status_code == 200
+    tag = {"author": "agent", "draft": True, "op_id": op["id"]}
+    seed(client, [USER_A, USER_B, stroke(own(op["id"]), 0, 500, customData=tag)])
+    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
 
 
-def test_ack_cannot_claim_a_user_element_tagged_for_another_op(client):
-    seed(client)
+def test_ack_cannot_claim_a_user_element_tagged_with_this_op(client):
+    # customData is written by the client, so a tag proves nothing about who made the element.
     op = write(client).json()
-    other = stroke("new-1", 0, 500, customData={"author": "agent", "draft": True, "op_id": "zzz"})
-    seed(client, [USER_A, USER_B, other])
-    r = ack(client, op["id"], ["new-1"])
-    assert r.status_code == 422 and r.json()["detail"]["ids"] == ["new-1"]
+    tag = {"author": "agent", "draft": True, "op_id": op["id"]}
+    seed(client, [stroke("user-a", 10, 20, customData=tag)])
+    r = ack(client, op["id"], ["user-a"])
+    assert r.status_code == 422 and r.json()["detail"]["ids"] == ["user-a"]
 
 
 def test_ack_cannot_claim_ids_of_another_op(client):
-    seed(client)
     first, second = write(client, "one").json(), write(client, "two").json()
-    assert ack(client, first["id"], ["new-1"]).status_code == 200
-    r = ack(client, second["id"], ["new-1"])
-    assert r.status_code == 422 and r.json()["detail"]["ids"] == ["new-1"]
+    assert ack(client, first["id"], [own(first["id"])]).status_code == 200
+    r = ack(client, second["id"], [own(first["id"])])
+    assert r.status_code == 422 and r.json()["detail"]["ids"] == [own(first["id"])]
+
+
+def test_client_op_id_whose_prefix_is_already_in_the_scene_is_rejected(client):
+    seed(client, [stroke("op-x:1", 0, 0)])
+    r = write(client, op_id="op-x")
+    assert r.status_code == 422 and r.json()["detail"]["ids"] == ["op-x:1"]
+
+
+def test_in_lock_guard_refuses_existing_ids_on_its_own(client):
+    seed(client)
+    conn = db.connect()
+    try:
+        with pytest.raises(ops_db.ExistingElementIds):
+            ops_db.create_op(conn, "default", "write_text", {"text": "user-a"})
+    finally:
+        conn.close()
+
+
+def test_deeply_nested_payload_is_a_422_not_a_crash(client):
+    seed(client)
+    nested: list = ["user-a"]
+    for _ in range(5000):
+        nested = [nested]
+    r = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "deep": nested}})
+    assert r.status_code == 422
 
 
 # --- lifecycle --------------------------------------------------------------------------------
@@ -172,9 +208,9 @@ def test_full_lifecycle_and_invalid_transitions(client):
     op = write(client).json()
     assert op["status"] == "pending" and op["document_id"] == "default"
     assert client.patch(f"/ops/{op['id']}", json={"status": "accepted"}).status_code == 409
-    assert ack(client, op["id"], ["n1"]).status_code == 200
-    assert ack(client, op["id"], ["n1"]).status_code == 200  # same ack again: idempotent
-    assert ack(client, op["id"], ["n2"]).status_code == 409  # different ids: conflict
+    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
+    assert ack(client, op["id"], [own(op["id"])]).status_code == 200  # same ack again: idempotent
+    assert ack(client, op["id"], [own(op["id"], "2")]).status_code == 409  # different ids: conflict
     r = client.patch(f"/ops/{op['id']}", json={"status": "rejected"})
     assert r.status_code == 200 and r.json()["status"] == "rejected"
     assert client.patch(f"/ops/{op['id']}", json={"status": "accepted"}).status_code == 409
@@ -184,7 +220,7 @@ def test_failed_records_the_error(client):
     op = client.post(OPS, json={"type": "draw_diagram", "payload": {"mermaid": "nope"}}).json()
     r = client.patch(f"/ops/{op['id']}", json={"status": "failed", "error": "parse error"})
     assert r.status_code == 200 and r.json()["error"] == "parse error"
-    assert ack(client, op["id"], ["n1"]).status_code == 409
+    assert ack(client, op["id"], [own(op["id"])]).status_code == 409
 
 
 def test_delivered_ops_can_be_applied_or_expire(client):
@@ -196,7 +232,7 @@ def test_delivered_ops_can_be_applied_or_expire(client):
     finally:
         conn.close()
     assert client.get(f"/ops/{a['id']}").json()["status"] == "delivered"
-    assert ack(client, a["id"], ["n1"]).status_code == 200
+    assert ack(client, a["id"], [own(a["id"])]).status_code == 200
     assert client.patch(f"/ops/{b['id']}", json={"status": "expired"}).json()["status"] == "expired"
 
 
@@ -229,13 +265,20 @@ def test_ops_persist_across_restart_and_list_pending_for_replay(tmp_path, monkey
     monkeypatch.setenv("INKBRIDGE_DB", str(tmp_path / "restart.db"))
     with TestClient(app) as c:
         a, b, c3 = (write(c, t).json() for t in ("a", "b", "c"))
-        ack(c, b["id"], ["n1"])
+        ack(c, b["id"], [own(b["id"])])
+        conn = db.connect()
+        try:
+            ops_db.mark_delivered(conn, c3["id"])  # pushed, then the browser went away
+        finally:
+            conn.close()
     with TestClient(app) as c:  # a fresh lifespan on the same file, as after an API restart
         pending = c.get(OPS, params={"status": "pending"}).json()["ops"]
-        assert [o["id"] for o in pending] == [a["id"], c3["id"]]
+        assert [o["id"] for o in pending] == [a["id"]]
         assert pending[0]["payload"]["text"] == "a"
-        both = c.get(OPS, params={"status": "pending,applied"}).json()["ops"]
-        assert [o["id"] for o in both] == [a["id"], b["id"], c3["id"]]
+        replay = c.get(OPS, params={"status": "pending,delivered"}).json()["ops"]
+        assert [o["id"] for o in replay] == [a["id"], c3["id"]]
+        everything = c.get(OPS).json()["ops"]
+        assert [o["id"] for o in everything] == [a["id"], b["id"], c3["id"]]
         assert c.get(OPS, params={"status": "bogus"}).status_code == 422
 
 
@@ -296,11 +339,27 @@ def test_deleted_ink_does_not_block_placement(client):
 
 def test_ops_rows_hold_document_created_at_and_result(client):
     op = write(client).json()
-    ack(client, op["id"], ["n1"])
+    ack(client, op["id"], [own(op["id"])])
     conn = db.connect()
     try:
         row = conn.execute("SELECT * FROM agent_ops WHERE id = ?", (op["id"],)).fetchone()
     finally:
         conn.close()
     assert row["document_id"] == "default" and row["created_at"]
-    assert json.loads(row["result_json"]) == {"element_ids": ["n1"]}
+    assert json.loads(row["result_json"]) == {"element_ids": [own(op["id"])]}
+
+
+def test_resolved_ops_release_their_spot(client):
+    first = write(client).json()
+    assert first["payload"]["placement"] == {"x": 0, "y": 0}
+    client.patch(f"/ops/{first['id']}", json={"status": "expired"})
+    assert write(client).json()["payload"]["placement"] == {"x": 0, "y": 0}
+
+
+def test_anchored_diagram_is_placed_beside_the_chunk_when_there_is_room(client):
+    seed(client, [USER_A])
+    rid = _anchor_region(["user-a"])
+    payload = {"mermaid": "flowchart TD\nA-->B", "anchor": rid}
+    op = client.post(OPS, json={"type": "draw_diagram", "payload": payload}).json()
+    box = bbox_of([USER_A])
+    assert op["payload"]["placement"] == {"x": box["x"] + box["width"] + 40, "y": box["y"]}

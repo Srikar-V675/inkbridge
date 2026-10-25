@@ -2,9 +2,11 @@
 
 Two checks hold invariant N1 here, not in the client:
 - an op payload may not name any element id that exists in the stored scene (ExistingElementIds);
-- the ids the browser reports for an applied op must be new: absent from the stored scene, or
-  present only as this op's own drafts, and not claimed by another op. Reject removes exactly an
-  op's recorded ids, so a user element recorded here would be deleted by a Reject.
+- the ids the browser reports for an applied op must be new ids issued for this op: each starts
+  with the op's `id_prefix`, which no element had when the op was enqueued. Reject removes exactly
+  an op's recorded ids, so a user element recorded here would be deleted by a Reject. A prefix
+  (rather than trusting customData tags, which any client can write) means a user element can
+  only be claimed if the client renamed it, which is a client bug, not an agent capability.
 
 Lifecycle: pending -> delivered -> applied -> accepted | rejected, plus failed and expired.
 """
@@ -54,17 +56,24 @@ class InvalidTransition(Exception):
 
 
 def _strings(value: Any) -> set[str]:
-    """Every string anywhere in value, dict keys included."""
-    if isinstance(value, str):
-        return {value}
-    if isinstance(value, dict):
-        out = set()
-        for k, v in value.items():
-            out |= _strings(k) | _strings(v)
-        return out
-    if isinstance(value, list):
-        return set().union(*(_strings(v) for v in value)) if value else set()
-    return set()
+    """Every string anywhere in value, dict keys included (iterative: any nesting depth)."""
+    out: set[str] = set()
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, str):
+            out.add(v)
+        elif isinstance(v, dict):
+            stack += list(v.keys()) + list(v.values())
+        elif isinstance(v, list):
+            stack += v
+    return out
+
+
+def id_prefix(op_id: str) -> str:
+    """Every element an op creates has an id starting with this. Op ids never contain ':', so no
+    op's prefix is a prefix of another's."""
+    return f"{op_id}:"
 
 
 def referenced_existing_ids(payload: Any, elements: list[dict]) -> list[str]:
@@ -122,15 +131,13 @@ def create_op(
 def _create_op(conn, document_id, op_type, payload, op_id):
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
-    elements = _scene_elements(conn, document_id)
-    ids = referenced_existing_ids(payload, elements)
-    if ids:
-        raise ExistingElementIds(ids)
     if op_id is not None:
         row = conn.execute("SELECT * FROM agent_ops WHERE id = ?", (op_id,)).fetchone()
         if row is not None:
             existing = _row_dict(row)
-            stored = {k: v for k, v in existing["payload"].items() if k != "placement"}
+            stored = {
+                k: v for k, v in existing["payload"].items() if k not in ("placement", "id_prefix")
+            }
             if (existing["document_id"], existing["type"], stored) != (
                 document_id,
                 op_type,
@@ -139,6 +146,12 @@ def _create_op(conn, document_id, op_type, payload, op_id):
                 raise OpConflict(op_id)
             conn.rollback()
             return existing, False
+    elements = _scene_elements(conn, document_id)
+    ids = referenced_existing_ids(payload, elements)
+    oid = op_id or uuid.uuid4().hex[:12]
+    ids += sorted(e["id"] for e in elements if e["id"].startswith(id_prefix(oid)))
+    if ids:
+        raise ExistingElementIds(ids)
 
     anchor = None
     if payload.get("anchor") is not None:
@@ -162,14 +175,23 @@ def _create_op(conn, document_id, op_type, payload, op_id):
             occupied.append({**other["placement"], "width": w, "height": h})
     spot = placement.place(occupied, placement.estimate_size(op_type, payload), anchor)
 
-    oid = op_id or uuid.uuid4().hex[:12]
     conn.execute(
         "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at)"
         " VALUES (?, ?, ?, ?, 'pending', ?)",
-        (oid, document_id, op_type, json.dumps({**payload, "placement": spot}), _now()),
+        (
+            oid,
+            document_id,
+            op_type,
+            json.dumps({**payload, "placement": spot, "id_prefix": id_prefix(oid)}),
+            _now(),
+        ),
     )
     conn.commit()
     return get_op(conn, oid), True
+
+
+def op_exists(conn: sqlite3.Connection, op_id: str) -> bool:
+    return conn.execute("SELECT 1 FROM agent_ops WHERE id = ?", (op_id,)).fetchone() is not None
 
 
 def get_op(conn: sqlite3.Connection, op_id: str) -> dict:
@@ -219,7 +241,7 @@ def _update_status(conn, op_id, status, element_ids, error):
         raise InvalidTransition(current, status)
     result_json = None
     if status == "applied":
-        _check_new_ids(conn, op, element_ids or [])
+        _check_new_ids(op, element_ids or [])
         result_json = json.dumps({"element_ids": element_ids})
     conn.execute(
         "UPDATE agent_ops SET status = ?, result_json = COALESCE(?, result_json),"
@@ -230,25 +252,11 @@ def _update_status(conn, op_id, status, element_ids, error):
     return get_op(conn, op_id)
 
 
-def _check_new_ids(conn: sqlite3.Connection, op: dict, ids: list[str]) -> None:
-    """Every acked id must be fresh: not ink, not another op's, at most this op's own draft."""
-    by_id = {e["id"]: e for e in _scene_elements(conn, op["document_id"])}
-    taken = set()
-    for i in ids:
-        el = by_id.get(i)
-        if el is None:
-            continue
-        tag = el.get("customData") or {}
-        if not (tag.get("author") == "agent" and tag.get("op_id") == op["id"]):
-            taken.add(i)
-    for row in conn.execute(
-        "SELECT result_json FROM agent_ops WHERE document_id = ? AND id != ?"
-        " AND result_json IS NOT NULL",
-        (op["document_id"], op["id"]),
-    ):
-        taken |= set(json.loads(row["result_json"]).get("element_ids", [])) & set(ids)
+def _check_new_ids(op: dict, ids: list[str]) -> None:
+    """Every acked id must be one issued for this op. Its own drafts may already be autosaved."""
+    taken = sorted(i for i in ids if not i.startswith(op["payload"]["id_prefix"]))
     if taken:
-        raise ExistingElementIds(sorted(taken))
+        raise ExistingElementIds(taken)
 
 
 def mark_delivered(conn: sqlite3.Connection, op_id: str) -> dict:
