@@ -381,8 +381,12 @@ def list_regions(
     kind: str | None = None,
     limit: int = 100,
     chunks: bool = False,
+    png_stale: bool | None = None,
 ) -> list[dict]:
-    """Manual regions, or with chunks=True the auto chunks (both kinds via get_region by id)."""
+    """Manual regions, or with chunks=True the auto chunks (both kinds via get_region by id).
+
+    png_stale filters on the crop flag; the browser's crop sync lists png_stale=True (INK-057).
+    """
     sql = "SELECT * FROM regions WHERE document_id = ? AND created_by IS " + (
         "?" if chunks else "NOT ?"
     )
@@ -390,6 +394,9 @@ def list_regions(
     if kind:
         sql += " AND kind = ?"
         args.append(kind)
+    if png_stale is not None:
+        sql += " AND png_stale = ?"
+        args.append(int(png_stale))
     sql += " ORDER BY updated_at DESC, id LIMIT ?"
     args.append(limit)
     return [_region_dict(conn, r) for r in conn.execute(sql, args)]
@@ -629,8 +636,30 @@ def document_exists(conn: sqlite3.Connection, document_id: str) -> bool:
     )
 
 
-def mark_png_fresh(conn: sqlite3.Connection, region_id: str) -> dict | None:
-    """Clear png_stale after the client has saved a new crop; None if the region is unknown."""
-    cur = conn.execute("UPDATE regions SET png_stale = 0 WHERE id = ?", (region_id,))
+def scene_version_of_region(conn: sqlite3.Connection, region_id: str) -> int | None:
+    """Current scene version of the region's document; None if the region is unknown."""
+    row = conn.execute(
+        "SELECT s.version FROM regions r JOIN scenes s ON s.document_id = r.document_id"
+        " WHERE r.id = ?",
+        (region_id,),
+    ).fetchone()
+    return row["version"] if row else None
+
+
+def mark_png_fresh(
+    conn: sqlite3.Connection, region_id: str, scene_version: int | None = None
+) -> dict | None:
+    """Clear png_stale after the client has saved a new crop; None if nothing was cleared.
+
+    With scene_version the clear is a compare-and-set against the document's scene version, in
+    one statement: a save that lands after the crop was rendered (even after its file was
+    written) leaves the flag set, so a crop of older ink is never reported fresh (INK-057).
+    """
+    sql = "UPDATE regions SET png_stale = 0 WHERE id = ?"
+    args: list = [region_id]
+    if scene_version is not None:
+        sql += " AND (SELECT version FROM scenes WHERE document_id = regions.document_id) = ?"
+        args.append(scene_version)
+    cur = conn.execute(sql, args)
     conn.commit()
     return get_region(conn, region_id) if cur.rowcount else None
