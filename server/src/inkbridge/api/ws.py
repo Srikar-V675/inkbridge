@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
@@ -28,6 +29,19 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 
 REPLAY_STATUSES = ["pending", "delivered"]
+# Same limits as PATCH /ops/{id} (api/ops.py OpPatch), which this ack path mirrors.
+MAX_ACK_IDS = 10_000
+MAX_ELEMENT_ID = 256
+
+
+def _same_origin(ws: WebSocket) -> bool:
+    """Browsers do not apply CORS to WebSockets, so any page the user opens could connect and read
+    or ack ops. Only a page served from this host (directly or through the Vite proxy, which keeps
+    the Host header) may connect; clients without an Origin (scripts, tests) are not browsers."""
+    origin = ws.headers.get("origin")
+    if origin is None:
+        return True
+    return urlsplit(origin).netloc.lower() == ws.headers.get("host", "").lower()
 
 
 def _pending_message(op: dict) -> dict:
@@ -118,7 +132,11 @@ async def _handle(ws: WebSocket, document_id: str, msg: Any) -> None:
         return
     if kind == "op.applied":
         ids = msg.get("element_ids")
-        if not (isinstance(ids, list) and ids and all(isinstance(i, str) for i in ids)):
+        if not (
+            isinstance(ids, list)
+            and 0 < len(ids) <= MAX_ACK_IDS
+            and all(isinstance(i, str) and 0 < len(i) <= MAX_ELEMENT_ID for i in ids)
+        ):
             await ws.send_json(
                 {"type": "op.error", "op_id": op_id, "code": "bad_ack", "detail": "element_ids"}
             )
@@ -149,6 +167,9 @@ async def _handle(ws: WebSocket, document_id: str, msg: Any) -> None:
 
 @router.websocket("/ws")
 async def ws_endpoint(ws: WebSocket, document: str = db.DEFAULT_DOCUMENT_ID) -> None:
+    if not _same_origin(ws):
+        await ws.close(code=4403, reason="cross-origin")
+        return
     if not await run_in_threadpool(_with_conn, db.document_exists, document):
         await ws.close(code=4404, reason="unknown document")
         return
@@ -161,10 +182,12 @@ async def ws_endpoint(ws: WebSocket, document: str = db.DEFAULT_DOCUMENT_ID) -> 
             await ws.send_json(_pending_message(op))
             await run_in_threadpool(_with_conn, ops_db.mark_delivered, op["id"])
         while True:
-            text = await ws.receive_text()
+            frame = await ws.receive()
+            if frame["type"] == "websocket.disconnect":
+                raise WebSocketDisconnect(frame.get("code", 1000))
             try:
-                msg = json.loads(text)
-            except ValueError:
+                msg = json.loads(frame["text"])  # a binary frame has no "text" (or None)
+            except (KeyError, TypeError, ValueError):
                 await ws.send_json({"type": "error", "detail": "messages must be JSON"})
                 continue
             await _handle(ws, document, msg)

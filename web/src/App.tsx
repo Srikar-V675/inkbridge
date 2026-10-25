@@ -26,6 +26,8 @@ type Initial = { elements: Restored; view: View | null } | "failed" | null;
 // How long an op waits for its drafts to be saved before it is reported as failed (about 30 s).
 const SAVE_ATTEMPTS = 15;
 const SAVE_RETRY_MS = 2000;
+// Op statuses whose drafts must not stay on the canvas.
+const DEAD = ["failed", "expired", "rejected"];
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -150,6 +152,14 @@ export default function App() {
   const canvasReady = initial !== null && initial !== "failed";
   useEffect(() => {
     if (!canvasReady) return;
+    const sweep = (opId: string) => {
+      const api = apiRef.current;
+      if (!api) return;
+      const prefix = `${opId}:`;
+      const scene = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
+      if (!scene.some((e) => e.id.startsWith(prefix) && !e.isDeleted)) return;
+      api.updateScene({ elements: rejectOp(scene, prefix) as never });
+    };
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}`,
@@ -175,16 +185,16 @@ export default function App() {
         };
         return drawOp(apiRef.current ?? (await apiReady.promise), op, persist);
       },
+      // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
       onOpUpdated: (m) => {
-        // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
-        const api = apiRef.current;
-        if (!api || !["failed", "expired", "rejected"].includes(m.status)) return;
-        const prefix = `${m.op_id}:`;
-        const scene = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
-        if (!scene.some((e) => e.id.startsWith(prefix) && !e.isDeleted)) return;
-        api.updateScene({ elements: rejectOp(scene, prefix) as never });
+        if (DEAD.includes(m.status)) sweep(m.op_id);
       },
-      onOpError: (m) => console.warn("op refused by the server", m),
+      onOpError: (m) => {
+        // The op ended while it was being drawn (op.updated came before the drafts existed), so
+        // the ack was refused: the drafts just drawn have no live op and must go too.
+        if (m.code === "invalid_transition" && DEAD.includes(String(m.detail))) sweep(m.op_id);
+        else console.warn("op refused by the server", m);
+      },
     });
     socket.start();
     return () => socket.dispose();

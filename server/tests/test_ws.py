@@ -189,3 +189,38 @@ def test_an_op_resolved_before_its_push_is_not_sent(client):
         fresh = write(client, "fresh")
         assert recv(ws)["op_id"] == fresh["id"]
     assert status(client, stale["id"]) == "expired"
+
+
+def test_a_binary_frame_gets_an_error_and_keeps_the_socket(client):
+    with client.websocket_connect(WS) as ws:
+        ws.send_bytes(b"\x00\x01")
+        assert recv(ws)["type"] == "error"
+        op = write(client)
+        assert recv(ws)["op_id"] == op["id"]
+
+
+def test_an_ack_over_the_http_limits_is_refused(client):
+    op = write(client)
+    prefix = op["payload"]["id_prefix"]
+    with client.websocket_connect(WS) as ws:
+        recv(ws)
+        for ids in ([prefix + "x" * 300], [f"{prefix}{i}" for i in range(10_001)]):
+            ws.send_json({"type": "op.applied", "op_id": op["id"], "element_ids": ids})
+            assert recv(ws)["code"] == "bad_ack"
+    assert status(client, op["id"]) == "delivered"
+
+
+def test_a_page_from_another_origin_cannot_connect(client):
+    with (
+        pytest.raises(WebSocketDisconnect) as e,
+        client.websocket_connect(WS, headers={"origin": "https://evil.example"}) as ws,
+    ):
+        write(client)  # an accepted socket would get this op pushed
+        recv(ws)
+    assert e.value.code == 4403
+
+
+def test_a_page_from_this_host_can_connect(client):
+    op = write(client)
+    with client.websocket_connect(WS, headers={"origin": "http://testserver"}) as ws:
+        assert recv(ws)["op_id"] == op["id"]
