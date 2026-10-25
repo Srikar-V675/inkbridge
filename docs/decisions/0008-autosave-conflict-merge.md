@@ -1,4 +1,4 @@
-# 0007: A save conflict merges instead of reloading
+# 0008: A save conflict merges instead of reloading
 
 Status: accepted (INK-007)
 

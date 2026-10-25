@@ -1,5 +1,5 @@
 // Framework-free load/autosave for one canvas. App.tsx wires it to Excalidraw's onChange.
-// Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0007).
+// Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0008).
 
 export interface SceneElement {
   id: string;
