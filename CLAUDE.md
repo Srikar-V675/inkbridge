@@ -34,6 +34,7 @@ tablet browser (web/, Excalidraw)  <-- HTTP + WebSocket -->  server/ API (FastAP
 - **Region** = saved selection: element ids + server-computed bbox + `stroke_hash` + crop PNG. Regions are the unit of agent access; there is no auto-segmentation.
 - **Recognition** is a cache keyed by `(region, stroke_hash)`; precedence `user > agent > gemini`. A changed hash means new recognition; unchanged ink never triggers a model call.
 - **Write-back**: an agent tool creates an op in `agent_ops`; the API pushes it over WebSocket; the client renders dashed draft elements tagged `customData {author:"agent", draft:true, op_id}`; Accept/Reject resolves them. Drafts are normal scene elements, so autosave persists them.
+- Write queue (INK-041, built): `POST /documents/{id}/ops`, `PATCH /ops/{id}`, `GET /documents/{id}/ops?status=` in `server/src/inkbridge/api/ops.py`, rules in `db/ops.py`, placement in `placement.py`. WebSocket push, drafts and the MCP write tools are not built yet.
 - Current state: skeleton plus a throwaway Day-1 spike in `web/src/App.tsx`. Treat everything in the ticket README as planned, not existing.
 
 ## Invariants that are easy to break
