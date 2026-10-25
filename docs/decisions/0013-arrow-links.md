@@ -2,15 +2,17 @@
 
 Status: accepted (INK-032). Refines tech ref 5.5. Code: `chunker.chunk_scene` (pure), `db._sync_chunks`.
 
-- **Ends.** A bound end (`startBinding` / `endBinding`) maps to the chunk holding the bound element. When
-  that element is in no chunk (deleted, a draft, another arrow) the end falls back to its point, as a
-  free end does: `x + points[0]` / `x + points[-1]` (with `y` likewise), mapped to the nearest chunk whose
-  box is within `link_reach * median` (ties: the chunk first in id order). Otherwise it dangles.
+- **Ends.** A bound end (`startBinding` / `endBinding`) maps to the chunk holding the bound element; when
+  that element is in no chunk (deleted, an unaccepted draft) the end dangles, so an arrow pointing at a
+  draft never merges or links. A free end uses its point, `x + points[0]` / `x + points[-1]` (with `y`
+  likewise), mapped to the nearest chunk whose box is within `link_reach * median` (ties: the chunk first
+  in id order); otherwise it dangles. An arrow with fewer than two points never merges or links.
 - **Length** is the arrow's polyline length (what was drawn), not the straight start-to-end distance.
   At most `arrow_merge * median` with both ends mapped: the two chunks merge (transitively). Otherwise a
   link `(from = start chunk, to = end chunk, 'arrow')`. Links are directed and deduplicated; an arrow whose
   ends land in the same final chunk (directly or through another merge) makes no link.
-- **Attachment.** Every live arrow joins the final chunk of its start, else of its end; an arrow with both
+- **Attachment.** Every live arrow joins the final chunk of its start, else (start dangling) of its end,
+  a small extension of the ticket so the arrow still counts as ink of the chunk it points into; an arrow with both
   ends dangling forms a chunk of its own, so no live ink is outside every chunk. Its bound label
   (`containerId` = arrow) goes with it; deleted or draft arrows take their labels out with them.
 - **Lines** are attached the same way but never merge or link: an underline or a divider should not

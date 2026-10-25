@@ -231,8 +231,8 @@ def _path_length(points: list[list[float]]) -> float:
 def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = None) -> Chunking:
     """Proximity clusters plus the arrow rules of tech ref 5.5.
 
-    Each arrow end maps to a chunk: the chunk of its bound element (startBinding/endBinding), else
-    the nearest chunk whose box is within link_reach * median of the end point (x + points[0],
+    Each arrow end maps to a chunk: the chunk of its bound element (startBinding/endBinding; a
+    binding to an element in no chunk, such as a draft, dangles), else for a free end the nearest chunk whose box is within link_reach * median of the end point (x + points[0],
     x + points[-1] in canvas coordinates); with neither, the end dangles. An arrow whose path is at
     most arrow_merge * median long merges its two chunks; a longer one becomes a link. A dangling
     arrow creates neither. Lines never merge or link. Every live arrow or line joins the chunk of
@@ -258,8 +258,8 @@ def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = N
 
     def end_chunk(c: dict[str, Any], binding: str, point_index: int) -> int | None:
         bound = (c.get(binding) or {}).get("elementId")
-        if bound is not None and str(bound) in owner:
-            return owner[str(bound)]
+        if bound is not None:  # bound to something in no chunk (deleted, a draft): dangling
+            return owner.get(str(bound))
         points = c.get("points") or [[0, 0]]
         p = points[point_index]
         point = (c.get("x", 0) + p[0], c.get("y", 0) + p[1])
@@ -276,8 +276,10 @@ def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = N
     ends = []
     for c in connectors:
         start, end = end_chunk(c, "startBinding", 0), end_chunk(c, "endBinding", -1)
-        is_arrow = c.get("type") == "arrow"
-        short = _path_length(c.get("points") or []) <= config.arrow_merge * median
+        points = c.get("points") or []
+        # A connector needs a drawn path to join or connect anything.
+        is_arrow = c.get("type") == "arrow" and len(points) >= 2
+        short = _path_length(points) <= config.arrow_merge * median
         if is_arrow and short and start is not None and end is not None:
             uf.union(start, end)
             ends.append((c, start, end, False))

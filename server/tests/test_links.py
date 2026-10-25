@@ -3,6 +3,7 @@
 from inkbridge import db
 from tests.test_chunk_persistence import Canvas
 from tests.test_chunker import arrow, rect
+from tests.test_regions_api import PNG
 
 
 def links(_canvas):
@@ -95,3 +96,19 @@ def test_arrow_label_is_part_of_the_arrow_chunk(client):
     }
     canvas = Canvas(client, [*nodes(), arrow("arr", 100, 50, 1900, start="a", end="b"), label])
     assert canvas.chunk_of("a")["element_ids"] == ["a", "arr", "lbl"]
+
+
+def test_drawing_an_arrow_out_of_a_chunk_keeps_its_id_and_flags_the_crop(client):
+    big = [rect(f"a{i}", 120 * i, 0, 100, 100) for i in range(5)]  # one chunk of 5
+    canvas = Canvas(client, [*big, rect("b", 3000, 0, 100, 100)])
+    before = canvas.chunk_of("a0")
+    r = client.put(f"/regions/{before['id']}/image", files={"image": ("c.png", PNG, "image/png")})
+    assert r.json()["png_stale"] is False
+    canvas.elements.append(arrow("arr", 580, 50, 2400, start="a4", end="b"))
+    canvas.put()
+    after = canvas.chunk_of("a0")
+    assert after["id"] == before["id"] and "arr" in after["element_ids"]
+    assert after["png_stale"] is True and after["content_hash"] != before["content_hash"]
+    assert links(canvas) == [
+        {"from": after["id"], "to": canvas.chunk_of("b")["id"], "kind": "arrow"}
+    ]

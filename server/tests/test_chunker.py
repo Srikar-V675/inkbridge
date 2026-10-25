@@ -500,3 +500,57 @@ def test_config_rejects_values_that_break_the_maths():
     for bad in ({"k": 0}, {"min_median": 0}, {"arrow_merge": -1}, {"match_threshold": 1}):
         with pytest.raises(ValueError):
             ChunkerConfig(**bad)
+
+
+def test_an_end_bound_to_a_draft_or_deleted_element_dangles():
+    els = [
+        *boxes_far_apart(),
+        rect("draft", 500, 0, 100, 100, customData={"draft": True}),
+        rect("gone", 1700, 0, 100, 100, isDeleted=True),
+        arrow("x", 100, 50, 200, start="a", end="draft"),  # short, and its end point is near a
+        arrow("y", 150, 50, 1800, start="a", end="gone"),  # end point within reach of b
+    ]
+    r = chunk_scene(els)
+    assert r.links == [] and r.chunks == [["a", "x", "y"], ["b"], ["c"]]
+
+
+def test_arrow_without_a_path_neither_merges_nor_links():
+    els = [
+        *boxes_far_apart(),
+        {
+            "id": "x",
+            "type": "arrow",
+            "x": 100,
+            "y": 50,
+            "startBinding": {"elementId": "a"},
+            "endBinding": {"elementId": "b"},
+        },
+    ]
+    r = chunk_scene(els)
+    assert r.links == [] and r.chunks == [["a", "x"], ["b"], ["c"]]
+
+
+def test_short_arrows_merge_transitively():
+    els = [
+        rect("a", 0, 0, 100, 100),
+        rect("b", 500, 0, 100, 100),
+        rect("c", 1000, 0, 100, 100),
+        arrow("ab", 100, 50, 400, start="a", end="b"),
+        arrow("bc", 600, 50, 400, start="b", end="c"),
+    ]
+    assert chunk_scene(els).chunks == [["a", "ab", "b", "bc", "c"]]
+
+
+def test_arrow_with_a_dangling_start_joins_the_chunk_it_points_into():
+    r = chunk_scene([*boxes_far_apart(), arrow("x", 900, 50, 1150)])  # start in empty space
+    assert ["b", "x"] in r.chunks and r.links == []
+
+
+def test_end_bound_to_a_container_label_maps_to_the_container_chunk():
+    els = [
+        *boxes_far_apart(),
+        _label("t", "b", x=2010, y=10),
+        arrow("x", 100, 50, 1900, start="a", end="t"),
+    ]
+    r = chunk_scene(els)
+    assert named(r) == [("a", "b")] and ["b", "t"] in r.chunks
