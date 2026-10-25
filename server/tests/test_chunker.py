@@ -183,7 +183,8 @@ def test_mixed_small_strokes_and_oversize_elements_stay_fast():
     big = [rect(f"b{i}", (i % 50) * 450, 4000 + (i // 50) * 450, w=400, h=400) for i in range(2800)]
     start = time.perf_counter()
     chunks = cluster(small + big)
-    assert time.perf_counter() - start < 1.0
+    # ~0.6 s locally and just over 1 s on CI runners; the budget only has to catch a blow-up.
+    assert time.perf_counter() - start < 3.0
     assert sorted(i for c in chunks for i in c) == sorted(e["id"] for e in small + big)
 
 
