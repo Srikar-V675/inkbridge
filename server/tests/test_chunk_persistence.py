@@ -1,6 +1,8 @@
 """INK-031: chunks are stored as regions (created_by='auto') and keep their ids across edits."""
 
 import copy
+import json
+import sqlite3
 import time
 
 import pytest
@@ -240,6 +242,86 @@ def test_a_failure_while_chunking_rolls_back_the_whole_save(client, monkeypatch)
     scene = client.get(SCENE).json()
     assert scene["version"] == canvas.version and len(scene["elements"]) == 3
     assert canvas.chunks() == before
+
+
+def test_put_scene_rolls_back_on_its_own_connection(client, monkeypatch):
+    # The API closes its connection, which would discard the transaction anyway; on a kept
+    # connection only put_scene's own rollback stops the next commit from saving half a scene.
+    canvas = Canvas(client, row("a", 3))
+    monkeypatch.setattr(db, "_sync_chunks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+    conn = db.connect()
+    try:
+        with pytest.raises(RuntimeError):
+            db.put_scene(conn, "default", canvas.version, "[]")
+        assert not conn.in_transaction
+        assert db.get_scene(conn, "default")[0] == canvas.version
+    finally:
+        conn.close()
+
+
+class _RacingConn:
+    """Delegates to a connection; just before the scene UPDATE, lets a rival save first."""
+
+    def __init__(self, conn, rival):
+        self._conn, self._rival = conn, rival
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+    def execute(self, sql, *args):
+        if sql.startswith("UPDATE scenes") and self._rival:
+            rival, self._rival = self._rival, None
+            rival()
+        return self._conn.execute(sql, *args)
+
+
+def test_two_writers_with_the_same_base_version_cannot_both_win(client):
+    canvas = Canvas(client, row("a", 3))
+    base, results = canvas.version, []
+
+    def save(conn, elements):
+        try:
+            db.put_scene(conn, "default", base, json.dumps(elements))
+            results.append("ok")
+        except (db.VersionConflict, sqlite3.OperationalError):  # conflict, or locked out
+            results.append("refused")
+
+    rival_conn = sqlite3.connect(db.config.db_path(), timeout=0.1)
+    rival_conn.row_factory = sqlite3.Row
+    conn = db.connect()
+    try:
+        racing = _RacingConn(conn, lambda: save(rival_conn, row("b", 2)))
+        save(racing, row("a", 4))
+    finally:
+        conn.close()
+        rival_conn.close()
+    assert sorted(results) == ["ok", "refused"]
+    assert client.get(SCENE).json()["version"] == base + 1
+
+
+def test_restart_leaves_a_reading_alone_when_the_ink_changed_since(client):
+    # An orphan keeps its last hash while its elements change; the re-key must not move its old
+    # reading onto ink it never described.
+    from inkbridge.regions import legacy_content_hash
+
+    canvas = Canvas(client, [stroke("f0", 0.5, 0), stroke("f1", 15.5, 0)])
+    chunk = canvas.chunk_of("f0")
+    old = legacy_content_hash(canvas.elements)
+    edited = [stroke("f0", 0.5, 0), stroke("f1", 15.5, 7)]
+    conn = db.connect()
+    try:
+        conn.execute(
+            "UPDATE regions SET content_hash = ?, status = 'orphaned' WHERE id = ?",
+            (old, chunk["id"]),
+        )
+        conn.execute("UPDATE scenes SET elements_json = ?", (json.dumps(edited),))
+        conn.commit()
+        recognise(chunk, "gradient", content_hash=old)
+        db.init_db()
+        keys = [r[0] for r in conn.execute("SELECT content_hash FROM recognitions")]
+    finally:
+        conn.close()
+    assert keys == [old] and get(client, chunk["id"])["content_hash"] == old
 
 
 def test_restart_rekeys_hashes_stored_before_integral_floats_hashed_as_ints(client):

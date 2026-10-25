@@ -178,9 +178,10 @@ def put_scene(
 ) -> int:
     """Store the scene if base_version is current; return the new version.
 
-    The compare-and-bump is one UPDATE, so two writers with the same base_version cannot both win.
-    Regions and chunks are re-derived in the same transaction, so they never disagree with the
-    stored scene; any error rolls the whole save back.
+    BEGIN IMMEDIATE takes the write lock before the old scene is read, and the UPDATE compares
+    the version again, so two writers with the same base_version cannot both win even if one
+    guard is lost. Regions and chunks are re-derived in the same transaction, so they never
+    disagree with the stored scene; any error rolls the whole save back.
     """
     now = _now()
     conn.execute("BEGIN IMMEDIATE")  # read the old scene and replace it under one write lock
@@ -192,11 +193,13 @@ def put_scene(
             raise DocumentNotFound(document_id)
         if old["version"] != base_version:
             raise VersionConflict(old["version"])
-        conn.execute(
+        cur = conn.execute(
             "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
-            " WHERE document_id = ?",
-            (elements_json, now, document_id),
+            " WHERE document_id = ? AND version = ?",
+            (elements_json, now, document_id, base_version),
         )
+        if cur.rowcount == 0:  # second guard: only reachable if the write lock was not held
+            raise VersionConflict(get_scene(conn, document_id)[0])
         elements = json.loads(elements_json)
         by_id = {e["id"]: e for e in elements}
         changed = _changed_ids(json.loads(old["elements_json"]), by_id)

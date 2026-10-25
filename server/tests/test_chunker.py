@@ -357,7 +357,8 @@ def test_orphaned_chunk_wins_back_its_elements_on_undo():
 
 
 def test_tie_prefers_an_active_chunk():
-    old = {"orph": ids("e", 3), "live": ids("e", 3)}
+    # The orphan's id sorts first, so only the active-first tie-break can pick "live".
+    old = {"a-orph": ids("e", 3), "live": ids("e", 3)}
     m = match_chunks(old, [ids("e", 3)], tops=[0.0], active={"live"})
     assert m.assigned == ["live"] and m.successors == {}
 
