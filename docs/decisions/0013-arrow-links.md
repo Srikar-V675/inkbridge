@@ -5,8 +5,8 @@ Status: accepted (INK-032). Refines tech ref 5.5. Code: `chunker.chunk_scene` (p
 - **Ends.** A bound end (`startBinding` / `endBinding`) maps to the chunk holding the bound element; when
   that element is in no chunk (deleted, an unaccepted draft) the end dangles, so an arrow pointing at a
   draft never merges or links. A free end uses its point, `x + points[0]` / `x + points[-1]` (with `y`
-  likewise), mapped to the nearest chunk whose box is within `link_reach * median` (ties: the chunk first
-  in id order); otherwise it dangles. An arrow with fewer than two points never merges or links.
+  likewise), mapped to the nearest chunk whose box is within `link_reach * median` (ties, such as an end
+  inside nested boxes: the smaller box, then the chunk first in id order); otherwise it dangles. An arrow with fewer than two points never merges or links.
 - **Length** is the arrow's polyline length (what was drawn), not the straight start-to-end distance.
   At most `arrow_merge * median` with both ends mapped: the two chunks merge (transitively). Otherwise a
   link `(from = start chunk, to = end chunk, 'arrow')`. Links are directed and deduplicated; an arrow whose
@@ -22,5 +22,9 @@ Status: accepted (INK-032). Refines tech ref 5.5. Code: `chunker.chunk_scene` (p
   reserved. `db.list_links` reads them; the HTTP and MCP surfaces arrive with INK-033 / INK-034.
 - **Config.** `arrow_merge` (6) and `link_reach` (3) are now used; `ChunkerConfig` rejects
   non-positive `k`, `arrow_merge`, `link_reach`, `min_median` and a `match_threshold` outside [0, 1).
-- **Cost.** End mapping is arrows x chunks box distance tests, fine for hundreds of chunks; index the
-  boxes in a grid if real canvases need it.
+- **Identity.** Attached connectors and their labels do not count in the chunk-id Jaccard
+  (`match_chunks(ignore=connector_ids(...))`), so drawing or deleting arrows from a one- or
+  two-element node keeps its id; a chunk of nothing but connectors is matched on them.
+- **Cost.** Free ends look up chunk boxes in a grid of `link_reach * median` cells (3 x 3 cells per
+  end; boxes covering more than 64 cells are always candidates), so 3000 chunks with 3000 free
+  arrows take tens of milliseconds. A non-finite end point dangles.

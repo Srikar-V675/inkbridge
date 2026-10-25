@@ -112,3 +112,31 @@ def test_drawing_an_arrow_out_of_a_chunk_keeps_its_id_and_flags_the_crop(client)
     assert links(canvas) == [
         {"from": after["id"], "to": canvas.chunk_of("b")["id"], "kind": "arrow"}
     ]
+
+
+def test_attaching_and_removing_arrows_keeps_small_chunk_ids(client):
+    # One-element and two-element nodes: Jaccard on all members would drop to 0.5 or below.
+    label = {
+        "id": "at",
+        "type": "text",
+        "x": 10,
+        "y": 10,
+        "width": 40,
+        "height": 20,
+        "containerId": "a",
+    }
+    canvas = Canvas(client, [*nodes(), label])
+    a, b = canvas.chunk_of("a")["id"], canvas.chunk_of("b")["id"]
+    canvas.elements += [
+        arrow("z1", 100, 50, 1900, start="a", end="b"),
+        arrow("z2", 50, 100, 0, 1900, start="a", end="c"),
+        arrow("y1", 2000, 50, -1900, start="b", end="a"),
+    ]
+    canvas.put()
+    assert canvas.chunk_of("z1")["id"] == a and canvas.chunk_of("y1")["id"] == b
+    for e in canvas.elements:
+        if e["type"] == "arrow":
+            e["isDeleted"] = True
+    canvas.put()
+    assert canvas.chunk_of("a")["id"] == a and canvas.chunk_of("b")["id"] == b
+    assert links(canvas) == []

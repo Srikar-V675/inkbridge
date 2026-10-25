@@ -1,14 +1,18 @@
+import math
 import random
+import statistics
 import time
 
 from inkbridge.chunker import (
     ChunkerConfig,
     chunk_scene,
     cluster,
+    connector_ids,
     kind_hint,
     match_chunks,
     reading_order,
 )
+from inkbridge.regions import bbox_of
 
 
 def stroke(i, x, y, w=10, h=20, **extra):
@@ -554,3 +558,94 @@ def test_end_bound_to_a_container_label_maps_to_the_container_chunk():
     ]
     r = chunk_scene(els)
     assert named(r) == [("a", "b")] and ["b", "t"] in r.chunks
+
+
+def _nearest(point, groups, by_id, reach):
+    best = None
+    for members in groups:
+        b = bbox_of([by_id[i] for i in members])
+        dx = max(b["x"] - point[0], point[0] - b["x"] - b["width"], 0.0)
+        dy = max(b["y"] - point[1], point[1] - b["y"] - b["height"], 0.0)
+        key = (math.hypot(dx, dy), b["width"] * b["height"], members[0])
+        if best is None or key < best[0]:
+            best = (key, members[0])
+    return best[1] if best and best[0][0] <= reach else None
+
+
+def test_free_end_index_matches_a_scan_of_every_chunk():
+    # Mixed sizes (dots to a 6000 px banner that skips the grid), long arrows so none merge.
+    cfg = ChunkerConfig(arrow_merge=1e-6)
+    for seed in range(5):
+        rng = random.Random(seed)
+        els = [
+            rect(
+                f"r{i:03}", rng.uniform(0, 8000), rng.uniform(0, 8000), rng.choice([8, 40, 120]), 30
+            )
+            for i in range(150)
+        ]
+        els.append(rect("banner", 0, 4000, 6000, 3000))
+        for j in range(120):
+            x, y = rng.uniform(-500, 8500), rng.uniform(-500, 8500)
+            els.append(arrow(f"z{j:03}", x, y, rng.uniform(-900, 900), rng.uniform(-900, 900)))
+        groups = cluster(els, cfg)
+        by_id = {e["id"]: e for e in els}
+        median = max(statistics.median(max(e["width"], e["height"]) for e in els[:151]), 4.0)
+        reach = cfg.link_reach * median
+        expected = set()
+        for e in els[151:]:
+            p0, p1 = e["points"]
+            s = _nearest((e["x"] + p0[0], e["y"] + p0[1]), groups, by_id, reach)
+            t = _nearest((e["x"] + p1[0], e["y"] + p1[1]), groups, by_id, reach)
+            if s and t and s != t:
+                expected.add((s, t))
+        r = chunk_scene(els, cfg)
+        first = {
+            m: min(i for i in c if i in by_id and not i.startswith("z"))
+            for c in r.chunks
+            if any(not i.startswith("z") for i in c)
+            for m in c
+        }
+        got = {(first[r.chunks[a][0]], first[r.chunks[b][0]]) for a, b in r.links}
+        assert got == expected
+
+
+def test_free_end_inside_nested_boxes_picks_the_smallest_chunk():
+    walls = [rect("u1", 0, 0, 20, 400), rect("u2", 0, 380, 500, 20), rect("u3", 480, 0, 20, 400)]
+    note = rect("w_note", 230, 100, 40, 40)  # inside the U's box, far from its walls
+    dots = [rect(f"d{i}", 5000 + 100 * i, 5000, 20, 20) for i in range(9)]  # median 20
+    els = [*walls, note, *dots, rect("x", 2000, 100, 40, 40), arrow("arr", 2000, 120, -1750)]
+    r = chunk_scene(els, ChunkerConfig(arrow_merge=1e-6))
+    assert ["u1", "u2", "u3"] in r.chunks and ["w_note"] in r.chunks
+    assert named(r) == [("arr", "w_note")]  # u1 sorts first, but the note's box is smaller
+
+
+def test_free_arrow_ends_on_a_large_canvas_stay_fast():
+    els = []
+    for i in range(3000):
+        x, y = (i % 60) * 300, (i // 60) * 300
+        els.append(rect(f"r{i:05}", x, y, 100, 60))
+        els.append(arrow(f"a{i:05}", x + 105, y + 30, 1000))  # long and free: a link each
+    start = time.perf_counter()
+    r = chunk_scene(els)
+    assert time.perf_counter() - start < 1.0
+    assert len(r.links) > 2000
+
+
+def test_a_non_finite_free_end_dangles():
+    els = [*boxes_far_apart(), arrow("arr", float("nan"), 50, 1800)]
+    r = chunk_scene(els)
+    assert r.links == [] and ["arr"] in r.chunks
+
+
+def test_connectors_do_not_count_towards_chunk_identity():
+    old = {"A": ["a", "at"], "B": ["b"]}
+    els = [rect("a", 0, 0), {"id": "at", "type": "text", "containerId": "a"}, rect("b", 900, 0)]
+    els += [arrow(f"z{j}", 100, 25, 700) for j in range(3)]
+    els += [{"id": "zl", "type": "text", "containerId": "z0"}]
+    clusters = [["a", "at", "z0", "z1", "z2", "zl"], ["b", "y0"]]
+    els += [arrow("y0", 900, 25, -700)]
+    m = match_chunks(old, clusters, [0, 0], ignore=connector_ids(els))
+    assert m.assigned == ["A", "B"]
+    # A chunk of nothing but connectors is matched on them, so it keeps its id too.
+    m = match_chunks({"C": ["y0"]}, [["y0"]], [0], ignore=connector_ids(els))
+    assert m.assigned == ["C"]

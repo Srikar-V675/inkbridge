@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from inkbridge import config
-from inkbridge.chunker import ChunkerConfig, chunk_scene, kind_hint, match_chunks
+from inkbridge.chunker import ChunkerConfig, chunk_scene, connector_ids, kind_hint, match_chunks
 from inkbridge.regions import (
     bbox_of,
     content_hash,
@@ -474,6 +474,7 @@ def _sync_chunks(
         tops=[b["y"] for b in boxes],
         active={rid for rid, r in rows.items() if r["status"] == "active"},
         threshold=cfg.match_threshold,
+        ignore=connector_ids(elements),
     )
     ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
 
