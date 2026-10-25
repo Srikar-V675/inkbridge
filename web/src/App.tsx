@@ -85,8 +85,18 @@ export default function App() {
       documentId: route.canvas,
       storage: window.localStorage,
       onState: (state, detail) => status.set(state, detail),
-      onReload: (elements) =>
-        apiRef.current?.updateScene({ elements: restoreElements(elements as never, null) }),
+      onReload: (elements) => {
+        const api = apiRef.current;
+        if (!api) return;
+        // Keep the live objects of local elements (one may be a stroke still being drawn) and
+        // restore only the ones that came from the server.
+        const live = new Set<unknown>(api.getSceneElementsIncludingDeleted());
+        const restored = restoreElements(elements.filter((e) => !live.has(e)) as never, null);
+        const byId = new Map(restored.map((e) => [e.id, e]));
+        api.updateScene({
+          elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
+        });
+      },
     });
     syncRef.current = sync;
     let cancelled = false;
@@ -94,16 +104,21 @@ export default function App() {
       if (cancelled) return;
       if (!elements) return setInitial("failed");
       const view = loadView(window.localStorage, route.canvas);
-      fitOnOpen.current = !view;
-      setInitial({ elements: restoreElements(elements as never, null), view });
+      const restored = restoreElements(elements as never, null);
+      // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
+      fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
+      setInitial({ elements: restored, view });
     });
     const onHide = () => {
       if (document.visibilityState === "hidden") void sync.flushNow();
     };
+    const onPageHide = () => void sync.flushNow();
     document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
       sync.dispose();
     };
   }, [route.canvas, status]);

@@ -40,6 +40,13 @@ function harness(responses: Array<Response | Error | (() => Response)>) {
   return { sync, calls, states, details, reloads, stored };
 }
 
+// A response the test releases by hand, to act while a request is in flight.
+function deferred() {
+  let release!: (r: Response) => void;
+  const promise = new Promise<Response>((r) => (release = r));
+  return { next: (() => promise) as unknown as () => Response, release };
+}
+
 describe("SceneSync", () => {
   beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
   afterEach(() => mock.timers.reset());
@@ -135,11 +142,16 @@ describe("SceneSync", () => {
     await settle();
     assert.equal(h.states.at(-1), "saving");
     h.sync.notify([el("a", 2)]); // edit while the first PUT is in flight
+    mock.timers.tick(1500); // its debounce fires while the PUT is still in flight, so it is skipped
+    await settle();
     release(json(200, { version: 2 }));
     await settle();
     mock.timers.tick(1500);
     await settle();
-    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 2);
+    const puts = h.calls.filter((c) => c.method === "PUT");
+    assert.equal(puts.length, 2);
+    assert.equal(puts[1].body?.base_version, 2);
+    assert.deepEqual(puts[1].body?.elements, [el("a", 2)]);
   });
 
   it("on 409 merges the server scene with ALL local edits, including ones made mid-save", async () => {
@@ -244,5 +256,117 @@ describe("SceneSync", () => {
     await settle();
     assert.equal(h.states.at(-1), "error");
     assert.equal(h.calls.length, 2);
+  });
+
+  it("keeps strokes drawn while the conflict reload is in flight", async () => {
+    const reload = deferred();
+    const h = harness([
+      json(200, { version: 1, elements: [] }),
+      json(409, { detail: {} }),
+      reload.next,
+      json(200, { version: 10 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("s1", 1)]);
+    mock.timers.tick(1500);
+    await settle(); // the PUT got a 409 and the reload GET is now in flight
+    h.sync.notify([el("s1", 1), el("s2", 1)]);
+    reload.release(json(200, { version: 9, elements: [el("server", 4)] }));
+    await settle();
+    assert.deepEqual(h.reloads.at(-1)?.map((e) => e.id).sort(), ["s1", "s2", "server"]);
+    mock.timers.tick(1500);
+    await settle();
+    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
+    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2", "server"]);
+  });
+
+  it("an element mutated in place during a save is saved again", async () => {
+    const put = deferred();
+    const h = harness([json(200, { version: 1, elements: [] }), put.next, json(200, { version: 3 })]);
+    await h.sync.load();
+    const a = el("a", 1);
+    const scene = [a];
+    h.sync.notify(scene);
+    mock.timers.tick(1500);
+    await settle();
+    a.version = 2; // Excalidraw's mutateElement changes the same object
+    h.sync.notify(scene);
+    put.release(json(200, { version: 2 }));
+    await settle();
+    assert.notEqual(h.states.at(-1), "saved");
+    mock.timers.tick(1500);
+    await settle();
+    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 2);
+    assert.equal(h.states.at(-1), "saved");
+  });
+
+  it("returning to the saved scene while a save is in flight is saved too", async () => {
+    const put = deferred();
+    const h = harness([json(200, { version: 1, elements: [] }), put.next, json(200, { version: 3 })]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    h.sync.notify([]); // back to what the server last confirmed, before [a] lands
+    put.release(json(200, { version: 2 }));
+    await settle();
+    mock.timers.tick(1500);
+    await settle();
+    const puts = h.calls.filter((c) => c.method === "PUT");
+    assert.equal(puts.length, 2);
+    assert.deepEqual(puts[1].body?.elements, []);
+  });
+
+  it("retries when the conflict reload fails instead of waiting for the next edit", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [] }),
+      json(409, { detail: {} }),
+      new TypeError("fetch failed"),
+      json(409, { detail: {} }),
+      json(200, { version: 9, elements: [] }),
+      json(200, { version: 10 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    assert.equal(h.states.at(-1), "retry");
+    mock.timers.tick(2000);
+    await settle();
+    mock.timers.tick(1500);
+    await settle();
+    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
+    assert.equal(put.body?.base_version, 9);
+    assert.deepEqual(put.body?.elements, [el("a", 1)]);
+  });
+
+  it("flushNow asks for keepalive for a small body; debounced saves do not", async () => {
+    const inits: RequestInit[] = [];
+    const sync = new SceneSync({
+      documentId: "d",
+      fetchFn: (async (_u: string, i?: RequestInit) => {
+        inits.push(i ?? {});
+        return i?.method === "PUT" ? json(200, { version: 2 }) : json(200, { version: 1, elements: [] });
+      }) as unknown as typeof fetch,
+      onState: () => {},
+      onReload: () => {},
+    });
+    await sync.load();
+    sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    assert.equal(inits[1].keepalive, false);
+    sync.notify([el("a", 2)]);
+    await sync.flushNow();
+    assert.equal(inits[2].keepalive, true);
+  });
+
+  it("a disposed instance no longer reports state", async () => {
+    const h = harness([json(200, { version: 1, elements: [] })]);
+    const p = h.sync.load();
+    const before = h.states.length;
+    h.sync.dispose();
+    await p;
+    assert.equal(h.states.length, before);
   });
 });

@@ -1,5 +1,5 @@
 // Framework-free load/autosave for one canvas. App.tsx wires it to Excalidraw's onChange.
-// Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload.
+// Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0007).
 
 export interface SceneElement {
   id: string;
@@ -18,6 +18,7 @@ export interface SyncOptions {
   onReload: (elements: SceneElement[]) => void;
 }
 
+const KEEPALIVE_MAX = 60_000;
 const RETRY_MS = [2000, 4000, 8000, 16000, 30000];
 
 // Two element lists are "the same" if every element has the same id and version.
@@ -48,10 +49,17 @@ export class SceneSync {
   private failures = 0;
   private disposed = false;
   private inflight: Promise<void> | null = null;
+  // The most recent scene Excalidraw reported, so a conflict merge never misses newer strokes.
+  private latest: readonly SceneElement[] | null = null;
 
   constructor(options: SyncOptions) {
     this.o = options;
     this.fetchFn = options.fetchFn ?? ((...a) => fetch(...a));
+  }
+
+  // A disposed instance (React StrictMode runs effects twice) must not touch the shared badge.
+  private emit(state: SaveState, detail?: string) {
+    if (!this.disposed) this.o.onState(state, detail);
   }
 
   private url() {
@@ -60,21 +68,21 @@ export class SceneSync {
 
   /** Fetch the saved scene; null (state "error") if the canvas does not exist or the API is down. */
   async load(): Promise<SceneElement[] | null> {
-    this.o.onState("loading");
+    this.emit("loading");
     try {
       const r = await this.fetchFn(this.url());
       if (!r.ok) {
-        this.o.onState("error", r.status === 404 ? "Unknown canvas" : `Load failed (${r.status})`);
+        this.emit("error", r.status === 404 ? "Unknown canvas" : `Load failed (${r.status})`);
         return null;
       }
       const body = (await r.json()) as { version: number; elements: SceneElement[] };
       this.version = body.version;
       this.lastSig = signature(body.elements);
       this.pending = null;
-      this.o.onState("saved");
+      this.emit("saved");
       return body.elements;
     } catch {
-      this.o.onState("error", "Cannot reach the Inkbridge API");
+      this.emit("error", "Cannot reach the Inkbridge API");
       return null;
     }
   }
@@ -82,12 +90,15 @@ export class SceneSync {
   /** Call from onChange with every element including deleted ones. Cheap when nothing changed. */
   notify(elements: readonly SceneElement[]) {
     if (this.disposed) return;
+    this.latest = elements;
     const sig = signature(elements);
     // Excalidraw re-fires onChange after every re-render: only a real change restarts the debounce.
-    if (sig === this.lastSig || (this.pending && sig === this.pendingSig)) return;
+    // Compare with the newest known state: while a save is pending, going back to the last saved
+    // scene (an undo) is itself a change that must be saved.
+    if (sig === (this.pending ? this.pendingSig : this.lastSig)) return;
     this.pending = elements;
     this.pendingSig = sig;
-    this.o.onState("dirty");
+    this.emit("dirty");
     this.schedule(this.o.debounceMs ?? 1500);
   }
 
@@ -96,7 +107,7 @@ export class SceneSync {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.inflight) await this.inflight; // an in-flight save may leave newer edits pending
-    await this.save();
+    await this.save(true);
   }
 
   dispose() {
@@ -112,41 +123,46 @@ export class SceneSync {
     }, ms);
   }
 
-  private save(): Promise<void> {
+  private save(flush = false): Promise<void> {
     if (this.saving || !this.pending || this.disposed) return Promise.resolve();
-    this.inflight = this.doSave().finally(() => (this.inflight = null));
+    this.inflight = this.doSave(flush).finally(() => (this.inflight = null));
     return this.inflight;
   }
 
-  private async doSave() {
+  private async doSave(flush: boolean) {
     const sent = this.pending;
     if (!sent) return;
+    // Excalidraw mutates element objects in place, so the signature of what was sent must be taken
+    // now: recomputed after the response it would include edits made during the request.
+    const sentSig = signature(sent);
     this.saving = true;
-    this.o.onState("saving");
+    this.emit("saving");
     try {
+      const body = JSON.stringify({ base_version: this.version, elements: sent });
       const r = await this.fetchFn(this.url(), {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ base_version: this.version, elements: sent }),
-        keepalive: false,
+        body,
+        // On page hide, keepalive lets the save outlive the page; browsers cap it at 64 KiB.
+        keepalive: flush && body.length < KEEPALIVE_MAX,
       });
       if (r.ok) {
         this.version = ((await r.json()) as { version: number }).version;
-        this.lastSig = signature(sent);
+        this.lastSig = sentSig;
         this.failures = 0;
-        if (this.pendingSig === signature(sent)) this.pending = null;
+        if (this.pendingSig === sentSig) this.pending = null;
         if (this.pending) {
-          this.o.onState("dirty");
+          this.emit("dirty");
           this.schedule(this.o.debounceMs ?? 1500);
         } else {
-          this.o.onState("saved");
+          this.emit("saved");
         }
       } else if (r.status === 409) {
         await this.resolveConflict(sent);
       } else if (r.status >= 400 && r.status < 500) {
         // A rejected body would be rejected again, so stop retrying until the next real edit, but
         // keep the ink in memory: the next edit sends the whole scene again.
-        this.o.onState("error", `Save rejected (${r.status}); changes are not saved yet`);
+        this.emit("error", `Save rejected (${r.status}); changes are not saved yet`);
       } else {
         this.retryLater();
       }
@@ -159,7 +175,7 @@ export class SceneSync {
 
   private retryLater() {
     const ms = RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)];
-    this.o.onState("retry", "Offline, retrying");
+    this.emit("retry", "Offline, retrying");
     this.schedule(ms);
   }
 
@@ -179,16 +195,20 @@ export class SceneSync {
     const notice = "Another tab saved first; merged its changes with yours";
     this.pending = null;
     this.pendingSig = "";
-    this.o.onState("conflict", notice);
+    this.emit("conflict", notice);
     const fresh = await this.load();
+    // The canvas stays live during the reload: merge whatever the user has drawn since, too.
+    const newest = this.latest ?? local;
     if (!fresh) {
-      this.pending = local; // could not reload: keep the ink in memory, nothing is discarded
-      this.pendingSig = signature(local);
+      this.pending = newest; // could not reload: keep the ink in memory, nothing is discarded
+      this.pendingSig = signature(newest);
+      this.retryLater(); // the retry PUT conflicts again and so reloads again
       return;
     }
-    const merged = mergeScenes(fresh, local);
+    if (this.disposed) return;
+    const merged = mergeScenes(fresh, newest);
     this.o.onReload(merged);
-    this.o.onState("conflict", notice);
+    this.emit("conflict", notice);
     if (signature(merged) !== this.lastSig) {
       this.pending = merged;
       this.pendingSig = signature(merged);
