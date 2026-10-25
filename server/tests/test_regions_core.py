@@ -1,4 +1,5 @@
 import copy
+import random
 
 from inkbridge.regions import bbox_of, content_hash, stroke_hash, text_hash
 
@@ -93,6 +94,17 @@ def _moved(el, dx, dy):
 def test_content_hash_ignores_translation_of_all_elements():
     els = [STROKE, {**STROKE, "id": "s2", "x": 50, "y": 60}]
     assert content_hash(els) == content_hash([_moved(e, 400, -120) for e in els])
+
+
+def test_content_hash_ignores_float_noise_from_fractional_moves():
+    rng = random.Random(0)
+    for _ in range(200):
+        els = [
+            {**STROKE, "id": f"s{i}", "x": rng.uniform(-500, 500), "y": rng.uniform(-500, 500)}
+            for i in range(4)
+        ]
+        dx, dy = rng.uniform(-1000, 1000), rng.uniform(-1000, 1000)
+        assert content_hash(els) == content_hash([_moved(e, dx, dy) for e in els])
 
 
 def test_content_hash_ignores_ids_and_draw_order():

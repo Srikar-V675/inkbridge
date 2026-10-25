@@ -56,11 +56,15 @@ def _backfill_v2(conn: sqlite3.Connection) -> None:
     stroke_hash describes the current ink, so it moves to the current content_hash; older
     readings keep a key that never matches and are simply never selected.
     """
+    scenes: dict[str, dict] = {}  # parse each document's scene once, not once per region
     for region in conn.execute("SELECT * FROM regions").fetchall():
-        row = conn.execute(
-            "SELECT elements_json FROM scenes WHERE document_id = ?", (region["document_id"],)
-        ).fetchone()
-        by_id = {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
+        doc = region["document_id"]
+        if doc not in scenes:
+            row = conn.execute(
+                "SELECT elements_json FROM scenes WHERE document_id = ?", (doc,)
+            ).fetchone()
+            scenes[doc] = {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
+        by_id = scenes[doc]
         present = [by_id[i] for i in json.loads(region["element_ids_json"]) if i in by_id]
         new_hash = content_hash(present)
         conn.execute("UPDATE regions SET content_hash = ? WHERE id = ?", (new_hash, region["id"]))

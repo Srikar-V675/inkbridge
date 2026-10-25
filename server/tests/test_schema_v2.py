@@ -103,6 +103,17 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
         " VALUES ('r1', ?, 'gemini', 'kept reading', 't')",
         (live_hash,),
     )
+    # A reading from before the ink was moved: same source, old key. It must neither collide with
+    # the re-keyed current reading nor be selected, and a stale index row must be rebuilt.
+    conn.execute(
+        "INSERT INTO recognitions (region_id, stroke_hash, source, text, created_at)"
+        " VALUES ('r1', ?, 'gemini', 'stale reading', 't')",
+        (stroke_hash([{**A, "x": A["x"] - 300}]),),
+    )
+    conn.execute(
+        "INSERT INTO region_fts (region_id, document_id, text, latex)"
+        " VALUES ('r1', 'default', 'stale reading', NULL)"
+    )
     conn.commit()
     monkeypatch.undo()  # back to the real migrations directory
     assert db.migrate(conn) == [4]
@@ -110,6 +121,8 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     assert region["content_hash"] == content_hash([A])
     assert region["text"] == "kept reading"
     assert region["text_hash"] == db.text_hash("kept reading", None)
+    indexed = [r["text"] for r in conn.execute("SELECT text FROM region_fts WHERE region_id='r1'")]
+    assert indexed == ["kept reading"]
     conn.close()
 
 
@@ -126,9 +139,16 @@ def test_backfill_reruns_if_a_previous_run_was_interrupted(tmp_path):
         " png_path, status, updated_at) VALUES ('r1','default','[\"a\"]','{}','user',?,'p','active','t')",
         (stroke_hash([A]),),
     )  # content_hash left NULL, as after a crash between schema_version and the backfill
+    conn.execute(  # copied by 0004 with its old stroke-hash key, not yet re-keyed
+        "INSERT INTO recognitions (region_id, content_hash, source, text, created_at)"
+        " VALUES ('r1', ?, 'gemini', 'kept reading', 't')",
+        (stroke_hash([A]),),
+    )
     conn.commit()
     db.init_db(tmp_path / "t.db")  # the normal start-up path
     c2 = db.connect(tmp_path / "t.db")
-    assert db.get_region(c2, "r1")["content_hash"] == content_hash([A])
+    healed = db.get_region(c2, "r1")
+    assert healed["content_hash"] == content_hash([A])
+    assert healed["text"] == "kept reading"
     c2.close()
     conn.close()
