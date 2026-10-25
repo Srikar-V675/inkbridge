@@ -24,10 +24,6 @@ async def _read_png(image: UploadFile) -> bytes:
     return png
 
 
-def _crops_dir() -> Path:
-    return config.db_path().parent / "crops"
-
-
 @router.post("/documents/{document_id}/regions", status_code=201)
 async def create_region(
     document_id: str,
@@ -51,7 +47,7 @@ async def create_region(
 
 def _store_region(conn, document_id, ids, png, kind, created_by) -> dict:
     rid = uuid.uuid4().hex[:12]
-    path = _crops_dir() / f"{rid}.png"
+    path = config.crops_dir() / f"{rid}.png"
     # File first: a region row must never exist without its crop.
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(png)
@@ -65,6 +61,9 @@ def _store_region(conn, document_id, ids, png, kind, created_by) -> dict:
     except db.UnknownElements as e:
         path.unlink(missing_ok=True)
         raise HTTPException(422, f"unknown element ids: {e.ids}") from None
+    except db.ReservedCreator:
+        path.unlink(missing_ok=True)
+        raise HTTPException(422, "created_by 'auto' is reserved for chunks") from None
     except BaseException:
         path.unlink(missing_ok=True)
         raise
@@ -76,10 +75,12 @@ def list_regions(
     conn: Conn,
     kind: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    chunks: bool = False,
 ):
+    """Manual regions; ?chunks=true lists the auto chunks instead (INK-033 adds reading order)."""
     if not db.document_exists(conn, document_id):
         raise HTTPException(404, "document not found")
-    return db.list_regions(conn, document_id, kind=kind, limit=limit)
+    return db.list_regions(conn, document_id, kind=kind, limit=limit, chunks=chunks)
 
 
 @router.get("/regions/{region_id}")
@@ -104,6 +105,7 @@ def _replace_image(conn, region_id: str, png: bytes) -> dict | None:
     if path is None:
         raise HTTPException(404, "region not found")
     tmp = Path(f"{path}.tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)  # a chunk's first crop creates the folder
     tmp.write_bytes(png)
     tmp.replace(path)  # atomic: a crash mid-write never leaves a half-written crop
     return db.mark_png_fresh(conn, region_id)

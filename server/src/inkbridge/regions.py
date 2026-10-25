@@ -66,8 +66,19 @@ _CONTENT_FIELDS = (
 )
 
 
+def _integral(value: Any) -> Any:
+    """Write integral floats as ints, the way browser JSON does (15.0 -> 15), at any depth."""
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, list):
+        return [_integral(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _integral(v) for k, v in value.items()}
+    return value
+
+
 def _canonical(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(_integral(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 def content_hash(elements: list[dict[str, Any]]) -> str:
@@ -75,7 +86,8 @@ def content_hash(elements: list[dict[str, Any]]) -> str:
 
     Deleted elements are not ink and are dropped. Positions become offsets from the elements'
     bounding-box origin, rounded to 0.001 px so float noise from translating does not matter.
-    Rows are sorted by rounded offset (then content), so draw order and ids are irrelevant.
+    Integral floats hash as ints anywhere. Rows are sorted by rounded offset (then content), so draw
+    order and ids are irrelevant.
     """
     live = [e for e in elements if not e.get("isDeleted")]
     if not live:
