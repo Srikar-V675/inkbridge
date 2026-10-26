@@ -42,7 +42,12 @@ class ApiClient:
             return cls._status_error(exc.response.status_code)
         return ApiError(f"Unexpected response from the Inkbridge API ({exc.__class__.__name__}).")
 
-    def _get(self, path: str, **params: Any) -> httpx.Response:
+    def _get(
+        self,
+        path: str,
+        not_found: str = "Call list_regions to see valid region ids.",
+        **params: Any,
+    ) -> httpx.Response:
         params = {k: v for k, v in params.items() if v is not None}
         try:
             r = self.http.get(path, params=params)
@@ -52,7 +57,7 @@ class ApiClient:
                 "Is `make dev-server` running, and is INKBRIDGE_API_URL correct?"
             ) from e
         if r.status_code == 404:
-            raise NotFound(f"Not found: {path}. Call list_regions to see valid region ids.")
+            raise NotFound(f"Not found: {path}. {not_found}")
         # By status code, not raise_for_status(): the error class differs between httpx builds
         # (Starlette's TestClient ships its own). Anything but 2xx is an ApiError, including an
         # unfollowed 3xx, which would otherwise pass as an empty image or a JSON decode error.
@@ -81,7 +86,19 @@ class ApiClient:
     def get_ink(self, region_id: str) -> dict:
         return self._json(self._get(f"/regions/{quote(region_id, safe='')}/ink"))
 
-    def search(self, query: str, limit: int) -> list[dict]:
-        return self._json(
-            self._get("/search", q=query, limit=limit, document_id=self.default_document)
-        )
+    def search(self, query: str, limit: int, document_id: str | None = None) -> list[dict]:
+        doc = document_id or self.default_document
+        return self._json(self._get("/search", q=query, limit=limit, document_id=doc))
+
+    def _document(self, document_id: str | None) -> str:
+        return quote(document_id or self.default_document, safe="")
+
+    _NO_CANVAS = "Check document_id (omit it for the default canvas)."
+
+    def get_chunks(self, document_id: str | None) -> dict:
+        path = f"/documents/{self._document(document_id)}/chunks"
+        return self._json(self._get(path, not_found=self._NO_CANVAS))
+
+    def get_overview(self, document_id: str | None, max_width: int) -> bytes:
+        path = f"/documents/{self._document(document_id)}/overview"
+        return self._get(path, not_found=self._NO_CANVAS, max_width=max_width).content

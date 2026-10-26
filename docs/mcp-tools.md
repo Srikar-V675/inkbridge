@@ -34,11 +34,12 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
-| `list_regions` | `document_id?`, `kind?`, `limit=50` | JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
-| `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
-| `search` | `query`, `limit=10` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
+| `list_regions` | `document_id?`, `kind?`, `limit=50` | Manual (saved) regions only; chunks come from `read_canvas`. JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
+| `get_region` | `region_id` (a chunk id or a saved region id), `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
+| `read_canvas` | `document_id?`, `include_overview=true`, `offset=0` | Compact JSON `{document, version, chunk_count, chunks: [{id, order, kind, bounds, text, latex, status, png_stale, content_hash, links: [{to, kind}], deep_link}], omitted?, note?}` in reading order, then the overview PNG (1024 px wide max) as image content. `text: null` means not read yet: open the chunk with `get_region`. Text over 60,000 chars is cut at a chunk boundary with `omitted` and a note naming the `offset` that continues; a reading over 4,000 chars is shortened and flagged `text_truncated` / `latex_truncated`. | No |
+| `search` | `query`, `limit=10`, `document_id?` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
-Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
+Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions of one canvas (`document_id`, default `INKBRIDGE_DOCUMENT`). The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
 
@@ -48,7 +49,6 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 
 | Tool | Ticket | Purpose | Mutates |
 |---|---|---|---|
-| `read_canvas` | INK-034 | Whole-canvas outline in reading order: chunks with text, kind, bounds, links, `content_hash`, `deep_link`, plus an overview image. `search` also gains `document_id`. | No |
 | `check_sync` | INK-036 | Given `[{id, hash, reading}]` from a note's frontmatter, returns `fresh`, `fresh_after_reread`, `changed`, `replaced` (with successor), `removed`, `new`. May fill the recognition cache. | Cache only |
 | `list_questions` | INK-047 | Pending Ask AI questions with focus chunks and history (the vendor-neutral pull path). | No |
 | `answer_question` | INK-047 | Store a markdown answer and sources for a question. | Questions table |

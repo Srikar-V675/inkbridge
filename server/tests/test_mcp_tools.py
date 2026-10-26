@@ -30,7 +30,7 @@ def text_of(result):
 
 def test_tools_are_registered():
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
-    assert {"list_regions", "get_region"} <= names
+    assert {"list_regions", "get_region", "search", "read_canvas"} <= names
 
 
 def test_list_regions_returns_contract_fields(seeded):
@@ -136,7 +136,9 @@ def test_stdio_server_speaks_only_protocol_on_stdout():
         proc.wait(timeout=10)
     assert all(f.get("jsonrpc") == "2.0" for f in frames)
     listing = frames[-1]
-    assert {"list_regions", "get_region"} <= {t["name"] for t in listing["result"]["tools"]}
+    assert {"list_regions", "get_region", "read_canvas"} <= {
+        t["name"] for t in listing["result"]["tools"]
+    }
 
 
 def _api_with_image_status(client, status):
