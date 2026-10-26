@@ -133,6 +133,16 @@ describe("CropSync", () => {
     assert.deepEqual(h.puts().map((c) => c.version), ["5", "5"]);
   });
 
+  it("an export that throws skips that chunk and the pass goes on", async () => {
+    const h = harness();
+    h.onExport = (ids) => {
+      if (ids[0] === "c1-e") throw new Error("canvas too large");
+    };
+    h.sync.request();
+    await h.advance(2000);
+    assert.deepEqual(h.puts().map((c) => c.url), ["/regions/c2/image"]);
+  });
+
   it("a scene change during an export (no pointer involved) drops that crop", async () => {
     const h = harness();
     h.onExport = (ids) => {

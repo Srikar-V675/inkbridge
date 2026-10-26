@@ -134,7 +134,12 @@ export class CropSync {
       for (const c of chunks) {
         await this.yieldFn(); // a pen-down queued during the last upload is handled first
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
-        const png = await this.o.exportPng(c.element_ids);
+        let png: Blob | null;
+        try {
+          png = await this.o.exportPng(c.element_ids);
+        } catch {
+          png = null; // one chunk that cannot be rendered must not starve the chunks after it
+        }
         // An edit during the export may be in the picture but not in the saved scene: drop it.
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
         if (!png) continue;

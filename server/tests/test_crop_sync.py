@@ -51,6 +51,7 @@ def test_upload_at_the_current_scene_version_clears_png_stale(client):
 def test_upload_rendered_from_an_older_scene_is_rejected_and_nothing_is_written(client):
     canvas = Canvas(client, row("a", 3))
     rid = canvas.chunk_of("a0")["id"]
+    assert upload(client, rid, PNG, canvas.version).status_code == 200  # an existing crop
     rendered_at = canvas.version
     canvas.elements[0]["x"] += 5  # the ink moved after the browser rendered its crop
     canvas.put()
@@ -58,7 +59,7 @@ def test_upload_rendered_from_an_older_scene_is_rejected_and_nothing_is_written(
     assert r.status_code == 409
     assert r.json()["detail"]["current_version"] == canvas.version
     assert canvas.chunk_of("a0")["png_stale"] is True
-    assert not Path(config.crops_dir() / f"{rid}.png").exists()  # no file was written
+    assert client.get(f"/regions/{rid}/image").content == PNG  # the old crop is untouched
     assert not list(config.crops_dir().glob("*.tmp"))  # and the refused upload's temp file is gone
 
 
@@ -75,7 +76,7 @@ def test_upload_without_a_version_keeps_the_old_behaviour(client):
     assert canvas.chunk_of("a0")["png_stale"] is False
 
 
-def test_clear_is_compare_and_set_against_a_save_landing_mid_upload(client):
+def test_mark_png_fresh_with_a_version_is_compare_and_set(client):
     """A save between the file write and the clear must leave the crop flagged stale."""
     canvas = Canvas(client, row("a", 3))
     rid = canvas.chunk_of("a0")["id"]
