@@ -41,7 +41,7 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 
 Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
 
-`check_sync` compares content hashes first (a move is `fresh`), then the reading hash (a cosmetic edit is `fresh_after_reread`; only a different reading is `changed`). Chunks that need a new reading are read by the recognition worker while the call waits (bounded by `wait_s`, only for canvases in `INKBRIDGE_RECOGNIZE_DOCUMENTS`). A reading that the note lacks for unchanged ink (exported before recognition, or corrected later) is reported as `changed`. Several `replaced` entries can share one `successor` after a merge: rewrite that block once. See decision 0018.
+`check_sync` compares content hashes first (a move is `fresh`), then the reading hash (a cosmetic edit is `fresh_after_reread`; only a different reading is `changed`). Chunks that need a new reading are read by the recognition worker while the call waits (bounded by `wait_s`, only for canvases in `INKBRIDGE_RECOGNIZE_DOCUMENTS`). A reading that the note lacks for unchanged ink (exported before recognition, or corrected later) is reported as `changed`. Several `replaced` entries can share one `successor` after a merge: rewrite that block once. See decision 0020.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
 

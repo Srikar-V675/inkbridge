@@ -1,4 +1,4 @@
-# 0018: check_sync statuses, successors and the bounded wait
+# 0020: check_sync statuses, successors and the bounded wait
 
 Status: accepted (INK-036). Implements tech ref 8.4 and 9.7.
 

@@ -1,4 +1,4 @@
-"""POST /documents/{id}/check_sync (INK-036, decision 0018). Reads only; the recognition worker
+"""POST /documents/{id}/check_sync (INK-036, decision 0020). Reads only; the recognition worker
 is the only writer it may set in motion, and only into the recognition cache."""
 
 import asyncio
