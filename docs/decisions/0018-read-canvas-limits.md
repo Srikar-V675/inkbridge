@@ -5,11 +5,13 @@ Status: accepted (INK-034). Extends [0003](0003-agent-output-limits.md) to the w
 - **Outline cap.** The JSON text of `read_canvas` never exceeds 60,000 characters (about 15k tokens),
   written compactly (no indentation) because it is read by a model, not a person. Chunks are kept in
   reading order until the next would cross the cap; the rest are counted in `omitted` and the `note`
-  names the `offset` to call again with. `chunk_count` is always the canvas total, so the model knows
+  names the `offset` (and `include_overview=false`) to call again with. `chunk_count` is always the canvas total, so the model knows
   the outline is partial. Cutting at a chunk boundary keeps every shown chunk whole.
 - **Readings.** A single `text` or `latex` over 4,000 characters is shortened with an ellipsis and flagged
   `text_truncated` / `latex_truncated`, so one runaway reading cannot push every other chunk out;
-  `get_region` still returns it in full.
+  `get_region` still returns it in full. A chunk lists at most 20 outgoing links; the rest are counted in
+  `links_omitted`. With readings and links bounded every chunk fits, so each page shows at least one
+  chunk and paging always moves forward.
 - **Overview.** One PNG at most 1024 px wide (the 0003 image cap), from `GET /documents/{id}/overview`,
   which also caps the area at 16 Mpx. If it fails, the outline still arrives with a text note giving the
   cause, as `get_region` does for a missing crop.

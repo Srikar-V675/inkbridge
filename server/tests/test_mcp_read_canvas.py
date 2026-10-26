@@ -140,3 +140,67 @@ def test_search_finds_text_in_a_canvas_other_than_default(api):
     assert json.loads(call("search", query="eigen").content[0].text)["results"] == []
     hits = json.loads(call("search", query="eigen", document_id=doc).content[0].text)["results"]
     assert [h["region_id"] for h in hits] == [chunk["id"]]
+
+
+class FakeCanvas(ApiClient):
+    """An ApiClient whose /chunks reply is given, for shapes the real canvas makes slowly."""
+
+    def __init__(self, http, chunks):
+        super().__init__(http)
+        self.chunks = chunks
+
+    def get_chunks(self, document_id):
+        return {
+            "document": "default",
+            "version": 1,
+            "chunk_count": len(self.chunks),
+            "chunks": self.chunks,
+        }
+
+
+def _chunk(i, **over):
+    return {
+        "id": f"c{i}", "order": i + 1, "kind": "handwriting",
+        "bounds": {"x": 0, "y": i, "width": 1, "height": 1}, "text": None, "latex": None,
+        "status": "active", "png_stale": False, "content_hash": "h" * 64, "links": [],
+        "deep_link": f"http://x/?canvas=default&chunk=c{i}", **over,
+    }  # fmt: skip
+
+
+def test_a_chunk_with_thousands_of_links_is_capped_and_paging_moves_on(client):
+    links = [{"to": f"t{j:05d}", "kind": "arrow"} for j in range(1500)]
+    many = [_chunk(i, links=links) for i in range(80)]
+    server.set_client(FakeCanvas(client, many))
+    try:
+        offset, seen = 0, []
+        while True:
+            text = call("read_canvas", include_overview=False, offset=offset).content[0].text
+            assert len(text) <= server.READ_CANVAS_MAX_CHARS
+            body = json.loads(text)
+            assert body["chunks"], "every page shows at least one chunk"
+            for c in body["chunks"]:
+                assert len(c["links"]) == server.MAX_LINKS and c["links_omitted"] == 1480
+            seen += [c["id"] for c in body["chunks"]]
+            if "note" not in body:
+                break
+            assert "include_overview=false" in body["note"]
+            offset += len(body["chunks"])
+        assert seen == [c["id"] for c in many]
+    finally:
+        server.set_client(None)
+
+
+def test_long_latex_is_shortened_too(client):
+    server.set_client(FakeCanvas(client, [_chunk(0, latex="\\\\frac{a}{b}" * 2000)]))
+    try:
+        (c,) = outline(call("read_canvas", include_overview=False))["chunks"]
+        assert c["latex_truncated"] is True and len(c["latex"]) == server.MAX_READING_CHARS
+    finally:
+        server.set_client(None)
+
+
+def test_offset_past_the_end_and_overview_of_an_empty_canvas(api):
+    result = call("read_canvas", offset=50)
+    body = outline(result)
+    assert body["chunks"] == [] and "note" not in body and body["chunk_count"] == 0
+    assert result.content[1].type == "image"  # the API's blank overview still arrives

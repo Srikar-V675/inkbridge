@@ -44,7 +44,9 @@ def _preview(text: str | None, n: int = 80) -> str | None:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _dump(obj: dict) -> str:
+def _dump(obj: dict, compact: bool = False) -> str:
+    if compact:  # read by a model: indentation only costs tokens
+        return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
     return json.dumps(obj, indent=2, ensure_ascii=False)
 
 
@@ -140,7 +142,7 @@ def search(
 # The outline JSON text never exceeds this (about 15k tokens), whatever the canvas holds.
 READ_CANVAS_MAX_CHARS = 60_000
 MAX_READING_CHARS = 4_000  # per chunk; a longer reading is cut and flagged
-OVERVIEW_WIDTH = 1024  # decision 0003
+MAX_LINKS = 20  # per chunk; the rest are counted in links_omitted
 _OUTLINE_FIELDS = (
     "id",
     "order",
@@ -156,10 +158,6 @@ _OUTLINE_FIELDS = (
 )
 
 
-def _compact(obj: dict) -> str:
-    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
-
-
 def _outline_chunk(c: dict) -> dict:
     out = {k: c.get(k) for k in _OUTLINE_FIELDS}
     for field in ("text", "latex"):
@@ -167,15 +165,34 @@ def _outline_chunk(c: dict) -> dict:
         if value and len(value) > MAX_READING_CHARS:
             out[field] = value[: MAX_READING_CHARS - 1] + "…"
             out[f"{field}_truncated"] = True
+    links = out["links"] or []
+    if len(links) > MAX_LINKS:
+        out["links"] = links[:MAX_LINKS]
+        out["links_omitted"] = len(links) - MAX_LINKS
     return out
 
 
+def _note(omitted: int, next_offset: int) -> str:
+    return (
+        f"{omitted} more chunks omitted (size cap). Call read_canvas with "
+        f"offset={next_offset} and include_overview=false for the rest."
+    )
+
+
 def _fit(head: dict, chunks: list[dict], offset: int) -> str:
-    """The outline as compact JSON, as many chunks as fit under READ_CANVAS_MAX_CHARS."""
+    """The outline as compact JSON, as many chunks as fit under READ_CANVAS_MAX_CHARS.
+
+    Chunks are bounded (readings and links are capped), so at least one always fits and a
+    continuation offset always moves forward.
+    """
+    # Room for the head and the longest possible note.
+    biggest = len(chunks) + offset
+    size = len(
+        _dump({**head, "chunks": [], "omitted": biggest, "note": _note(biggest, biggest)}, True)
+    )
     shown: list[dict] = []
-    size = len(_compact({**head, "chunks": [], "omitted": 0, "note": "x" * 120}))
     for c in chunks:
-        extra = len(_compact(c)) + 1
+        extra = len(_dump(c, True)) + 1
         if size + extra > READ_CANVAS_MAX_CHARS:
             break
         shown.append(c)
@@ -184,11 +201,8 @@ def _fit(head: dict, chunks: list[dict], offset: int) -> str:
     omitted = len(chunks) - len(shown)
     if omitted:
         body["omitted"] = omitted
-        body["note"] = (
-            f"{omitted} more chunks omitted (size cap). "
-            f"Call read_canvas with offset={offset + len(shown)} for the rest."
-        )
-    return _compact(body)
+        body["note"] = _note(omitted, offset + len(shown))
+    return _dump(body, True)
 
 
 @mcp.tool()
@@ -206,7 +220,7 @@ def read_canvas(
     """Read the whole canvas: its chunks in reading order, then an overview image.
 
     Each chunk has order, kind, bounds, its reading (text, latex), status, png_stale, content_hash,
-    arrow links to other chunks and a deep_link that opens it in the web app. text is null when the
+    arrow links to other chunks (at most 20 each, the rest counted in links_omitted) and a deep_link that opens it in the web app. text is null when the
     chunk has not been read yet: call get_region with its id to look at its image instead. A very
     large canvas is cut at a size cap; the reply then says how many chunks were omitted and which
     offset continues it.
@@ -221,9 +235,7 @@ def read_canvas(
     content: list = [_fit(head, chunks, offset)]
     if include_overview:
         try:
-            content.append(
-                Image(data=client.get_overview(document_id, OVERVIEW_WIDTH), format="png")
-            )
+            content.append(Image(data=client.get_overview(document_id), format="png"))
         except ApiError as e:
             content.append(f"(overview unavailable: {e})")
     return content
