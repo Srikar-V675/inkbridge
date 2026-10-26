@@ -136,19 +136,30 @@ class RecognitionWorker:
             return False
         return self._clock() - datetime.fromisoformat(updated).timestamp() >= self.idle_s
 
-    def request(self, document_id: str, region_ids: Iterable[str], ttl_s: float = 60.0) -> bool:
+    def request(self, document_id: str, region_ids: Iterable[str], ttl_s: float = 60.0) -> set[str]:
         """Read these regions now, without waiting for the canvas to go idle (check_sync is
-        waiting on them). False if this worker will not read them: canvas not opted in, or the
-        worker is stopped or not running, so the caller need not wait."""
-        if document_id not in self.documents or self.stopped or not self.is_alive():
-            return False
-        expires = self._clock() + ttl_s
-        with self._lock:
-            pending = self._urgent.setdefault(document_id, {})
-            for rid in region_ids:
-                pending[rid] = expires
-        self._wake.set()
-        return True
+        waiting on them). Returns the ids it will try: none if the canvas is not opted in, the
+        worker is stopped or not running, or calls are paused after a 429; never an id still in
+        its backoff. The caller need only wait for those."""
+        if (
+            document_id not in self.documents
+            or self.stopped
+            or self._stop.is_set()
+            or not self.is_alive()
+        ):
+            return set()
+        now = self._clock()
+        if now < self._paused_until:
+            return set()
+        backing_off = {k[0] for k, (_, at) in list(self._failures.items()) if at > now}
+        accepted = {r for r in region_ids if r not in backing_off}
+        if accepted:
+            with self._lock:
+                pending = self._urgent.setdefault(document_id, {})
+                for rid in accepted:
+                    pending[rid] = now + ttl_s
+            self._wake.set()
+        return accepted
 
     def _urgent_ids(self, document_id: str) -> set[str]:
         now = self._clock()

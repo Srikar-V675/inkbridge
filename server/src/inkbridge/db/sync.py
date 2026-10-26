@@ -55,14 +55,30 @@ def resolve(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> l
 
 
 def needs_reading(resolved: list[tuple]) -> list[str]:
-    """Live chunks whose state depends on a reading that does not exist yet."""
+    """Live chunks whose status depends on a reading that does not exist yet and that the worker
+    can read now (fresh crop). A stale crop cannot be read until the browser re-exports it, so
+    waiting for it would only spend the whole wait: it is reported at once instead."""
     ids = []
     for note, region, successor in resolved:
-        if region is not None and region["content_hash"] != note["hash"] and not region["source"]:
-            ids.append(region["id"])
-        elif successor is not None and not successor["source"]:
-            ids.append(successor["id"])
+        live = region if region is not None and region["content_hash"] != note["hash"] else None
+        live = live or successor
+        if live is not None and not live["source"] and not live["png_stale"]:
+            ids.append(live["id"])
     return list(dict.fromkeys(ids))
+
+
+def has_readings(conn: sqlite3.Connection, region_ids: list[str]) -> bool:
+    """True once every region has a reading for its current content hash (cheap poll)."""
+    return all((r := get_region(conn, i)) is None or r["source"] for i in region_ids)
+
+
+def check(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> dict:
+    """resolve + classify on one read snapshot, so a save in between cannot mix two scenes."""
+    conn.execute("BEGIN")  # deferred: a WAL read snapshot from the first SELECT on
+    try:
+        return classify(conn, document_id, resolve(conn, document_id, chunks))
+    finally:
+        conn.rollback()
 
 
 def classify(conn: sqlite3.Connection, document_id: str, resolved: list[tuple]) -> dict:
@@ -77,11 +93,17 @@ def classify(conn: sqlite3.Connection, document_id: str, resolved: list[tuple]) 
     successors = set()
     for note, region, successor in resolved:
         if region is not None:
-            if region["content_hash"] == note["hash"]:
-                result["fresh"].append(note["id"])
-                continue
             reading = region["text_hash"] if region["source"] else None
             item = {"id": region["id"], "hash": region["content_hash"], "reading": reading}
+            if region["content_hash"] == note["hash"]:
+                # Same ink. Still changed if a reading now exists that the note does not have
+                # (it was exported before recognition, or a user/agent corrected the reading):
+                # otherwise that text would never reach the note.
+                if reading is None or reading == note.get("reading"):
+                    result["fresh"].append(note["id"])
+                else:
+                    result["changed"].append(item)
+                continue
             # No reading (null) is never a match: err towards a visible update.
             same = reading is not None and reading == note.get("reading")
             result["fresh_after_reread" if same else "changed"].append(item)

@@ -499,3 +499,50 @@ def test_kept_readings_of_gone_ink_are_dropped(client, monkeypatch):
     canvas.put()  # old hash is gone; the new crop is stale, so nothing new is read either
     w.run_once()
     assert old not in w._unsaved and w._unsaved == {}
+
+
+def test_request_accepts_only_what_this_worker_will_read(client):
+    canvas = fresh_canvas(client)
+    rid = canvas.chunk_of("a0")["id"]
+    t = [float(LATER)]
+    model = FakeModel(errors=[RateLimited("429")])
+    w = worker(model, clock=lambda: t[0], poll_s=3600, idle_s=3600)
+    assert w.request("default", [rid]) == set(), "not running yet"
+    w.start()
+    try:
+        assert w.request("other-canvas", [rid]) == set(), "canvas not opted in"
+        assert w.request("default", [rid]) == {rid}
+        deadline = time.monotonic() + 5
+        while not model.calls and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert model.calls, "a request wakes the thread and skips the idle delay"
+        time.sleep(0.1)
+        assert w.request("default", [rid, "y"]) == set(), "paused after a 429: no id at all"
+        t[0] += 31
+        assert w.request("default", [rid, "x"]) == {rid, "x"}
+    finally:
+        w.stop()
+    w.is_alive = lambda: True  # even if the thread were still finishing a call
+    assert w.request("default", [rid]) == set(), "stopped"
+
+
+def test_request_skips_ids_in_backoff(client):
+    canvas = fresh_canvas(client)
+    rid = canvas.chunk_of("a0")["id"]
+    t = [float(LATER)]
+    w = worker(FakeModel(errors=[BadResponse("junk")]), clock=lambda: t[0], poll_s=3600)
+    w.run_once()  # fails: rid backs off for 30 s, no global pause for a bad reply
+    w._thread = threading.Thread(target=lambda: None)
+    w.is_alive = lambda: True
+    assert w.request("default", [rid, "other"]) == {"other"}
+
+
+def test_urgent_ids_expire_after_their_ttl(client):
+    canvas = fresh_canvas(client)
+    rid = canvas.chunk_of("a0")["id"]
+    t = [float(LATER)]
+    w = worker(FakeModel(), clock=lambda: t[0], idle_s=3600)
+    w.is_alive = lambda: True
+    assert w.request("default", [rid], ttl_s=5) == {rid}
+    t[0] += 6
+    assert w._urgent_ids("default") == set()

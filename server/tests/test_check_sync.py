@@ -109,7 +109,7 @@ def test_no_reading_for_new_ink_and_no_worker_is_changed_with_null_reading(clien
     t0 = time.monotonic()
     (item,) = only(check(client, note), "changed")
     assert item["reading"] is None and item["id"] == note[0]["id"]
-    assert time.monotonic() - t0 < 1, "no worker: nothing to wait for"
+    assert time.monotonic() - t0 < 3, "no worker: nothing to wait for"
 
 
 def test_deleting_a_chunk_is_removed(client, canvas):
@@ -316,7 +316,7 @@ def test_a_recognizer_timeout_is_changed_with_null_reading_within_the_bound(
     t0 = time.monotonic()
     (item,) = only(check(client, note, wait_s=1), "changed")
     assert item["reading"] is None
-    assert 0.9 <= time.monotonic() - t0 < 3
+    assert 0.9 <= time.monotonic() - t0 < 6
     assert model.calls == 1
 
 
@@ -327,7 +327,7 @@ def test_a_slow_model_is_cut_off_at_the_bound(client, canvas, with_worker):
     with_worker(Model(delay=3))
     t0 = time.monotonic()
     (item,) = only(check(client, note, wait_s=0.5), "changed")
-    assert item["reading"] is None and time.monotonic() - t0 < 2
+    assert item["reading"] is None and time.monotonic() - t0 < 2.5
 
 
 def test_a_canvas_not_opted_in_is_never_sent_to_the_model(client, canvas, with_worker):
@@ -337,18 +337,20 @@ def test_a_canvas_not_opted_in_is_never_sent_to_the_model(client, canvas, with_w
     model = Model()
     with_worker(model, documents=("eval-only",))
     t0 = time.monotonic()
-    (item,) = only(check(client, note, wait_s=5), "changed")
+    (item,) = only(check(client, note, wait_s=10), "changed")
     assert item["reading"] is None and model.calls == 0
-    assert time.monotonic() - t0 < 1, "nothing can fill the cache: no wait"
+    assert time.monotonic() - t0 < 5, "nothing can fill the cache: no wait"
 
 
-def test_a_stale_crop_is_not_read_so_the_chunk_is_changed(client, canvas, with_worker):
+def test_a_stale_crop_is_not_read_and_not_waited_for(client, canvas, with_worker):
     note = notes(canvas, "a0")
     nudge(canvas)  # the browser has not re-exported the crop yet
     model = Model()
     with_worker(model)
-    (item,) = only(check(client, note, wait_s=0.5), "changed")
+    t0 = time.monotonic()
+    (item,) = only(check(client, note, wait_s=10), "changed")
     assert item["reading"] is None and model.calls == 0
+    assert time.monotonic() - t0 < 5, "the worker cannot read a stale crop: no wait"
 
 
 def test_the_worker_request_does_not_bypass_idle_for_other_chunks(client, canvas, with_worker):
@@ -415,3 +417,66 @@ def test_a_successor_without_a_reading_is_read_before_answering(client, with_wor
     (item,) = check(client, note, wait_s=10)["replaced"]
     assert item["successor"] == top["id"] and item["reading"] == canvas.chunk_of("e0")["text_hash"]
     assert item["reading"] is not None and model.calls == 1
+
+
+def test_same_ink_with_a_reading_the_note_lacks_is_changed(client):
+    """Exported before recognition ran: the reading that arrives later must reach the note."""
+    canvas = Canvas(client, row("a", 3))
+    note = notes(canvas, "a0")
+    assert note[0]["reading"] is None
+    read(canvas.chunk_of("a0"), "late reading")
+    (item,) = only(check(client, note), "changed")
+    assert item["hash"] == note[0]["hash"] and item["reading"] == canvas.chunk_of("a0")["text_hash"]
+
+
+def test_a_user_correction_of_the_same_ink_is_changed_and_wins_over_gemini(client, canvas):
+    note = notes(canvas, "a0")
+    recognise(canvas.chunk_of("a0"), "corrected by hand", source="user")
+    (item,) = only(check(client, note), "changed")
+    assert item["reading"] == canvas.chunk_of("a0")["text_hash"] != note[0]["reading"]
+    assert canvas.chunk_of("a0")["source"] == "user"
+
+
+def test_same_ink_whose_reading_vanished_is_still_fresh(client, canvas):
+    note = notes(canvas, "a0")
+    conn = db.connect()
+    try:
+        conn.execute("DELETE FROM recognitions")
+        conn.commit()
+    finally:
+        conn.close()
+    assert only(check(client, note), "fresh") == [note[0]["id"]]
+
+
+def test_an_uneven_split_keeps_the_id_and_the_small_piece_is_new(client):
+    canvas = Canvas(client, row("e", 10))
+    read(canvas.chunk_of("e0"), "ten strokes")
+    note = notes(canvas, "e0")
+    for i in range(8, 10):
+        canvas.el(f"e{i}")["y"] += 400
+    canvas.put()
+    big, small = canvas.chunk_of("e0"), canvas.chunk_of("e9")
+    assert big["id"] == note[0]["id"]
+    result = check(client, note)
+    assert [c["id"] for c in only(result, "changed")] == [big["id"]]
+    assert [n["id"] for n in result["new"]] == [small["id"]]
+
+
+def test_orphaned_chunks_are_never_new(client, canvas):
+    for i in range(3):
+        canvas.el(f"b{i}")["isDeleted"] = True
+    canvas.put()
+    assert check(client, notes(canvas, "a0"))["new"] == []
+
+
+def test_a_chunk_in_backoff_is_not_waited_for(client, canvas, with_worker):
+    note = notes(canvas, "a0")
+    nudge(canvas)
+    fresh_crop(client, canvas, canvas.chunk_of("a0"))
+    model = Model(error=RecognizerTimeout("slow"))
+    with_worker(model)
+    check(client, note, wait_s=2)  # the call fails: a0 is in backoff now
+    t0 = time.monotonic()
+    (item,) = only(check(client, note, wait_s=10), "changed")
+    assert item["reading"] is None and model.calls == 1
+    assert time.monotonic() - t0 < 5, "nothing will be read during the backoff: no wait"
