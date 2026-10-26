@@ -1,4 +1,4 @@
-# 0018: Recognition worker, opt-in canvases, cache and backoff
+# 0017: Recognition worker, opt-in canvases, cache and backoff
 
 Status: accepted (INK-014). Implements tech ref 6 and 9.5.
 

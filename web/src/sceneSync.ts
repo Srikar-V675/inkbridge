@@ -114,7 +114,7 @@ export class SceneSync {
   }
 
   /** The stored scene version the canvas matches exactly; null before load or while edits are
-   *  unsaved or being saved (crop sync renders only a saved scene, decision 0017). */
+   *  unsaved or being saved (crop sync renders only a saved scene, decision 0015). */
   settledVersion(): number | null {
     return this.loaded && !this.disposed && !this.pending && !this.saving ? this.version : null;
   }

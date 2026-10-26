@@ -85,6 +85,7 @@ describe("CropSync", () => {
     h.sync.request();
     await h.advance(10_000);
     assert.equal(h.exported.length, 0);
+    assert.equal(h.calls.length, 0, "not even the stale list is fetched while the pen is down");
     h.sync.setDrawing(false);
     await h.advance(1999);
     assert.equal(h.exported.length, 0, "the idle clock restarts when the pen lifts");
@@ -119,6 +120,40 @@ describe("CropSync", () => {
     h.sync.request(); // App calls this on every "saved" state
     await h.advance(2000);
     assert.deepEqual(h.puts().map((c) => c.version), ["7", "7"]);
+  });
+
+  it("a request made while a save is in flight runs once the save settles, without another request", async () => {
+    let version: number | null = null;
+    const h = harness({ settled: () => version });
+    h.sync.request(); // e.g. load() emits "saved" during a conflict reload, before the save ends
+    await h.advance(2000);
+    assert.equal(h.calls.length, 0);
+    version = 5; // the save finished, but no further "saved" state follows
+    await h.advance(2000);
+    assert.deepEqual(h.puts().map((c) => c.version), ["5", "5"]);
+  });
+
+  it("an export that throws skips that chunk and the pass goes on", async () => {
+    const h = harness();
+    h.onExport = (ids) => {
+      if (ids[0] === "c1-e") throw new Error("canvas too large");
+    };
+    h.sync.request();
+    await h.advance(2000);
+    assert.deepEqual(h.puts().map((c) => c.url), ["/regions/c2/image"]);
+  });
+
+  it("a scene change during an export (no pointer involved) drops that crop", async () => {
+    const h = harness();
+    h.onExport = (ids) => {
+      if (ids[0] === "c1-e") {
+        mock.timers.tick(1); // a keyboard edit or undo lands while c1 is exported
+        h.sync.activity();
+      }
+    };
+    h.sync.request();
+    await h.advance(2000);
+    assert.equal(h.puts().length, 0, "the crop exported during the change is not uploaded");
   });
 
   it("aborts when the scene version changes during the pass", async () => {

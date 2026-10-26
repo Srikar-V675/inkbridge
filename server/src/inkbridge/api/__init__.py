@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from inkbridge import db
-from inkbridge.api import ops, regions, search, ws
+from inkbridge.api import chunks, ops, regions, search, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.recognition_worker import RecognitionWorker
@@ -18,7 +18,7 @@ from inkbridge.recognition_worker import RecognitionWorker
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0018).
+    # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0017).
     worker = RecognitionWorker.from_env(publish=ws.hub.publish)
     if worker is not None:
         worker.start()
@@ -40,6 +40,7 @@ async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResp
     return JSONResponse(status_code=422, content={"detail": errors})
 
 
+app.include_router(chunks.router)
 app.include_router(ops.router)
 app.include_router(regions.router)
 app.include_router(search.router)

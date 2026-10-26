@@ -1,4 +1,4 @@
-"""Background recognition of chunks (tech ref 6 and 9.5, decision 0018).
+"""Background recognition of chunks (tech ref 6 and 9.5, decision 0017).
 
 A daemon thread with its own SQLite connection wakes every `poll_s`, and for each opted-in canvas
 that has been idle for `idle_s` reads the active regions whose crop is fresh (png_stale = 0) and

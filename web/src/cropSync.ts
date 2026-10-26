@@ -1,4 +1,4 @@
-// Framework-free crop sync for server-made chunks (tech ref 9.4, docs/decisions/0017).
+// Framework-free crop sync for server-made chunks (tech ref 9.4, docs/decisions/0015).
 // The server flags a chunk png_stale when its ink changes; only the browser can render Excalidraw,
 // so this exports the chunk's elements and uploads the PNG. Rules: never while drawing (pointer
 // down or a change in the last ~2 s), only when the canvas equals a saved scene version, and the
@@ -116,9 +116,12 @@ export class CropSync {
     if (this.disposed || this.running || !this.wanted) return;
     const wait = this.idleLeft();
     if (wait > 0) return this.schedule(wait);
-    // Unsaved edits: the canvas is not any stored scene. The save's "saved" state requests again.
     const version = this.o.settledVersion();
-    if (version === null || version === this.refusedAt) return;
+    // Unsaved edits or a save in flight: the canvas is not any stored scene yet. Check again after
+    // the idle delay (no request is made), so a "saved" state emitted mid-save (a conflict reload)
+    // is not lost until the next poll.
+    if (version === null) return this.schedule(this.idleMs);
+    if (version === this.refusedAt) return;
     this.running = true;
     this.wanted = false;
     const since = this.lastActivity;
@@ -131,7 +134,12 @@ export class CropSync {
       for (const c of chunks) {
         await this.yieldFn(); // a pen-down queued during the last upload is handled first
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
-        const png = await this.o.exportPng(c.element_ids);
+        let png: Blob | null;
+        try {
+          png = await this.o.exportPng(c.element_ids);
+        } catch {
+          png = null; // one chunk that cannot be rendered must not starve the chunks after it
+        }
         // An edit during the export may be in the picture but not in the saved scene: drop it.
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
         if (!png) continue;
