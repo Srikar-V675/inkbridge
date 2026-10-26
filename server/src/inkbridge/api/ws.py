@@ -14,6 +14,7 @@ to the event loop that owns the sockets.
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 from typing import Any
@@ -99,14 +100,20 @@ class Hub:
         if await self.send(document_id, _pending_message(op)):
             await run_in_threadpool(_with_conn, ops_db.mark_delivered, op_id)
 
-    def publish(self, document_id: str, message: dict | None = None, op: dict | None = None):
-        """Thread-safe, fire and forget. With `op`, push it as op.pending (and mark delivered)."""
+    def publish(
+        self, document_id: str, message: dict | None = None, op: dict | None = None
+    ) -> concurrent.futures.Future | None:
+        """Thread-safe, fire and forget. With `op`, push it as op.pending (and mark delivered).
+
+        Returns the scheduled send (None if no browser is connected); callers need not wait.
+        """
         loop = self._loop
         if loop is None or loop.is_closed() or not self.connected(document_id):
-            return
+            return None
         coro = self.push_op(document_id, op["id"]) if op else self.send(document_id, message or {})
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         future.add_done_callback(_log_failure)
+        return future
 
 
 def _log_failure(future) -> None:
