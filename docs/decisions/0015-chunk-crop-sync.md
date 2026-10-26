@@ -1,4 +1,4 @@
-# 0012: Crop sync for chunks (browser renders, server checks the scene version)
+# 0015: Crop sync for chunks (browser renders, server checks the scene version)
 
 Status: accepted (INK-057). Implements tech ref 9.4.
 

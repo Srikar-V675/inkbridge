@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from inkbridge import config
-from inkbridge.chunker import ChunkerConfig, cluster, kind_hint, match_chunks
+from inkbridge.chunker import ChunkerConfig, chunk_scene, connector_ids, kind_hint, match_chunks
 from inkbridge.regions import (
     bbox_of,
     content_hash,
@@ -461,7 +461,7 @@ def _sync_chunks(
     now: str,
     chunker_config: ChunkerConfig | None,
 ) -> None:
-    """Re-run the chunker and upsert one created_by='auto' region per chunk (tech ref 5.6, 5.8).
+    """Re-run the chunker and upsert one created_by='auto' region per chunk (tech ref 5.5-5.8).
 
     New clusters inherit ids from old chunks (orphaned ones too, so undo reactivates them) by
     element-id Jaccard. A kept chunk whose element set is unchanged and holds no changed element
@@ -469,7 +469,8 @@ def _sync_chunks(
     element ids and hashes, and point successor_of at the cluster that took most of their ink.
     """
     cfg = chunker_config or ChunkerConfig()
-    clusters = cluster(elements, cfg)
+    chunking = chunk_scene(elements, cfg)
+    clusters = chunking.chunks
     rows = {
         r["id"]: r
         for r in conn.execute(
@@ -484,6 +485,7 @@ def _sync_chunks(
         tops=[b["y"] for b in boxes],
         active={rid for rid, r in rows.items() if r["status"] == "active"},
         threshold=cfg.match_threshold,
+        ignore=connector_ids(elements),
     )
     ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
 
@@ -541,6 +543,25 @@ def _sync_chunks(
             "UPDATE regions SET status = 'orphaned', successor_of = ?, updated_at = ? WHERE id = ?",
             (ids[successor] if successor is not None else None, now, rid),
         )
+
+    # Links are derived state: rebuilt from scratch, so they only ever name current chunks.
+    conn.execute("DELETE FROM links WHERE document_id = ?", (document_id,))
+    conn.executemany(
+        "INSERT INTO links (document_id, from_region, to_region, kind) VALUES (?, ?, ?, 'arrow')",
+        [(document_id, ids[a], ids[b]) for a, b in chunking.links],
+    )
+
+
+def list_links(conn: sqlite3.Connection, document_id: str) -> list[dict]:
+    """Links between the document's current chunks, as {from, to, kind}."""
+    return [
+        {"from": r["from_region"], "to": r["to_region"], "kind": r["kind"]}
+        for r in conn.execute(
+            "SELECT from_region, to_region, kind FROM links WHERE document_id = ?"
+            " ORDER BY from_region, to_region, kind",
+            (document_id,),
+        )
+    ]
 
 
 def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
