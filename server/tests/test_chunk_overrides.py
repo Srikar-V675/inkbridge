@@ -219,3 +219,51 @@ def test_scene_rows_unchanged_and_regions_listing_still_manual_only(client, page
     client.post(MERGE, json={"chunk_ids": [a["id"], b["id"]]})
     assert client.get(SCENE).json()["elements"] == elements
     assert client.get(REGIONS).json() == []  # overrides are chunks, not manual regions
+
+
+def all_chunk_rows():
+    conn = db.connect()
+    try:
+        return [dict(r) for r in conn.execute("SELECT * FROM regions ORDER BY id")]
+    finally:
+        conn.close()
+
+
+def test_merging_a_connector_only_chunk_is_refused_and_changes_nothing(client):
+    # An arrow with both ends dangling forms a chunk of its own (decision 0013).
+    page = Canvas(client, row("a", 5) + [arrow("ar", 2000, 2000, 900)])
+    a, lone = page.chunk_of("a0"), page.chunk_of("ar")
+    assert lone["element_ids"] == ["ar"]
+    before = all_chunk_rows()
+    r = client.post(MERGE, json={"chunk_ids": [a["id"], lone["id"]]})
+    assert r.status_code == 422 and "only arrows or lines" in r.text
+    assert all_chunk_rows() == before  # the refused override rolled back completely
+
+
+def test_split_takes_the_ink_and_connectors_follow_their_start(client):
+    page = Canvas(client, row("a", 5) + [arrow("ar", 70, 10, 900, start="a4")])
+    c = page.chunk_of("a0")
+    assert "ar" in c["element_ids"]
+    r = client.post(SPLIT, json={"chunk_id": c["id"], "element_ids": ["a0", "a1", "ar"]})
+    assert r.status_code == 200, r.text
+    picked, rest = r.json()["chunks"]
+    # The response is the real membership: the arrow stays with a4, where it starts.
+    assert picked["element_ids"] == ["a0", "a1"] and "ar" in rest["element_ids"]
+
+
+def test_selecting_a_bound_label_splits_off_its_container_too(client):
+    label = {
+        "id": "label",
+        "type": "text",
+        "x": 10,
+        "y": 10,
+        "width": 20,
+        "height": 10,
+        "containerId": "box",
+        "version": 1,
+    }
+    page = Canvas(client, [rect("box", 0, 0, version=1), label, rect("near", 110, 0, version=1)])
+    c = page.chunk_of("box")
+    r = client.post(SPLIT, json={"chunk_id": c["id"], "element_ids": ["label"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["chunks"][0]["element_ids"] == ["box", "label"]

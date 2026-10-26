@@ -88,3 +88,18 @@ def test_a_short_arrow_into_a_pinned_chunk_links_instead_of_merging():
     out = chunk_scene(els, pins=[["a"]])
     assert as_sets(out.chunks) == {frozenset({"a", "ar"}), frozenset({"b"})}
     assert len(out.links) == 1
+
+
+def test_overlapping_pins_never_separate_a_label_from_its_container():
+    label = {
+        "id": "label",
+        "type": "text",
+        "x": 10,
+        "y": 10,
+        "width": 20,
+        "height": 10,
+        "containerId": "box",
+    }
+    els = [rect("box", 0, 0), label, rect("other", 500, 0)]
+    out = chunk_scene(els, pins=[["box"], ["label", "other"]])
+    assert as_sets(out.chunks) == {frozenset({"box", "label"}), frozenset({"other"})}

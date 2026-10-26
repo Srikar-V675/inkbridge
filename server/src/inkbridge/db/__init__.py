@@ -605,7 +605,14 @@ def merge_chunks(
     if len(set(chunk_ids)) != len(chunk_ids) or len(chunk_ids) < 2:
         raise InvalidOverride("merge needs at least two different chunk ids")
 
-    def groups(rows: list[sqlite3.Row], _: list[dict]) -> list[list[str]]:
+    def groups(rows: list[sqlite3.Row], elements: list[dict]) -> list[list[str]]:
+        # A chunk of nothing but arrows or lines cannot be pinned: connectors follow their ends.
+        for r in rows:
+            if not pin_groups(elements, [json.loads(r["element_ids_json"])]):
+                raise InvalidOverride(
+                    f"chunk {r['id']} holds only arrows or lines, which follow the chunks they "
+                    "connect; merge the chunks at their ends instead"
+                )
         return [[i for r in rows for i in json.loads(r["element_ids_json"])]]
 
     (new,), orphaned = _override(conn, document_id, chunk_ids, groups, chunker_config)

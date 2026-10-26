@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Chunk } from "../src/chunks.ts";
-import { planOverride, sendOverride } from "../src/overrides.ts";
+import { connectorIds, planOverride, sendOverride } from "../src/overrides.ts";
 
 function chunk(id: string, element_ids: string[]): Chunk {
   return {
@@ -40,6 +40,35 @@ describe("planOverride", () => {
     const p = planOverride(["b1", "b2"], chunks);
     assert.equal(p.kind, "none");
     assert.match((p as { reason: string }).reason, /already/i);
+  });
+});
+
+describe("connectors", () => {
+  const scene = [
+    { id: "a1", type: "freedraw" },
+    { id: "a2", type: "freedraw" },
+    { id: "ar", type: "arrow" },
+    { id: "arl", type: "text", containerId: "ar" },
+    { id: "boxl", type: "text", containerId: "a1" },
+  ];
+  const withArrow = [chunk("A", ["a1", "a2", "ar", "arl"]), chunk("B", ["b1"])];
+
+  it("finds arrows, lines and their labels only", () => {
+    assert.deepEqual([...connectorIds(scene)].sort(), ["ar", "arl"]);
+  });
+
+  it("does not offer a split when the ink selected is the whole chunk", () => {
+    const p = planOverride(["a1", "a2"], withArrow, connectorIds(scene));
+    assert.equal(p.kind, "none");
+  });
+
+  it("splits only ink and never merges through a selected arrow alone", () => {
+    assert.deepEqual(planOverride(["a1", "ar"], withArrow, connectorIds(scene)), {
+      kind: "split",
+      chunkId: "A",
+      elementIds: ["a1"],
+    });
+    assert.equal(planOverride(["ar", "arl"], withArrow, connectorIds(scene)).kind, "none");
   });
 });
 

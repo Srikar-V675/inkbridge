@@ -1,10 +1,10 @@
 // Chunk boxes and ids drawn as plain DOM over the canvas. UI state only: nothing here touches the
 // Excalidraw scene, so the overlay can never be autosaved (docs/decisions/0014). The merge and
 // split actions only call the API (docs/decisions/0017); they never change elements either.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
-import { planOverride, sendOverride } from "./overrides";
+import { connectorIds, planOverride, sendOverride } from "./overrides";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
 
@@ -38,9 +38,19 @@ function useSelection(api: ExcalidrawImperativeAPI): string[] {
   return selected;
 }
 
-/** Active chunks while `on`, refetched after every save (the server re-derives chunks on save). */
-function useChunks(canvas: string, on: boolean, status: StatusStore): [Chunk[], () => void] {
-  const [chunks, setChunks] = useState<Chunk[]>([]);
+/**
+ * Active chunks while `on`, refetched after every save (the server re-derives chunks on save).
+ * Rows are tagged with the `session` (one per time the overlay is turned on) they were fetched in,
+ * so a reload keeps the old boxes until the new list arrives, but turning the overlay on again
+ * never shows a list from before.
+ */
+function useChunks(
+  canvas: string,
+  on: boolean,
+  session: number,
+  status: StatusStore,
+): [Chunk[], () => void] {
+  const [chunks, setChunks] = useState<{ session: number; rows: Chunk[] }>({ session: -1, rows: [] });
   const [generation, setGeneration] = useState(0);
   const reload = useCallback(() => setGeneration((g) => g + 1), []);
   useEffect(() => {
@@ -49,7 +59,7 @@ function useChunks(canvas: string, on: boolean, status: StatusStore): [Chunk[], 
     let latest = 0;
     const load = () => {
       const n = ++latest;
-      void listChunks(canvas).then((rows) => n === latest && setChunks(rows));
+      void listChunks(canvas).then((rows) => n === latest && setChunks({ session, rows }));
     };
     load();
     let last = status.get().state;
@@ -61,10 +71,9 @@ function useChunks(canvas: string, on: boolean, status: StatusStore): [Chunk[], 
     return () => {
       latest = -1;
       unsubscribe();
-      setChunks([]);
     };
-  }, [canvas, on, status, generation]);
-  return [on ? chunks : [], reload];
+  }, [canvas, on, session, status, generation]);
+  return [on && chunks.session === session ? chunks.rows : [], reload];
 }
 
 const actionButton = (enabled: boolean): React.CSSProperties => ({
@@ -77,11 +86,22 @@ const actionButton = (enabled: boolean): React.CSSProperties => ({
 });
 
 /** "Merge chunks" and "Split selection" for the current selection, next to the overlay toggle. */
-function OverrideActions(props: { canvas: string; selected: string[]; chunks: Chunk[]; onDone: () => void }) {
-  const { canvas, selected, chunks, onDone } = props;
+function OverrideActions(props: {
+  api: ExcalidrawImperativeAPI;
+  canvas: string;
+  selected: string[];
+  chunks: Chunk[];
+  onDone: () => void;
+}) {
+  const { api, canvas, selected, chunks, onDone } = props;
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const plan = planOverride(selected, chunks);
+  // Read the scene only when the selection or the list changes, never per stroke point.
+  const connectors = useMemo(
+    () => (selected.length > 0 ? connectorIds(api.getSceneElements() as never) : new Set<string>()),
+    [api, selected],
+  );
+  const plan = planOverride(selected, chunks, connectors);
   const run = async () => {
     setBusy(true);
     const r = await sendOverride(canvas, plan);
@@ -114,7 +134,7 @@ function OverrideActions(props: { canvas: string; selected: string[]; chunks: Ch
         <button
           type="button"
           disabled={!merge}
-          title={plan.kind === "none" ? plan.reason : undefined}
+          title={plan.kind === "none" ? plan.reason : "Merges the whole of every chunk the selection touches"}
           onClick={() => void run()}
           style={actionButton(merge)}
         >
@@ -160,9 +180,10 @@ export function ChunkOverlay(props: {
 }) {
   const { api, canvas, status, ghost } = props;
   const [on, setOn] = useState(false);
+  const [session, setSession] = useState(0);
   const view = useView(api);
   const selected = useSelection(api);
-  const [chunks, reload] = useChunks(canvas, on, status);
+  const [chunks, reload] = useChunks(canvas, on, session, status);
 
   return (
     <>
@@ -192,11 +213,14 @@ export function ChunkOverlay(props: {
           )}
         </div>
       )}
-      {on && <OverrideActions canvas={canvas} selected={selected} chunks={chunks} onDone={reload} />}
+      {on && <OverrideActions api={api} canvas={canvas} selected={selected} chunks={chunks} onDone={reload} />}
       <button
         type="button"
         aria-pressed={on}
-        onClick={() => setOn((v) => !v)}
+        onClick={() => {
+          if (!on) setSession((s) => s + 1);
+          setOn(!on);
+        }}
         style={{
           position: "absolute",
           right: 12,

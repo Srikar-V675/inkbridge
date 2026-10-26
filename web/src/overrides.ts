@@ -14,19 +14,35 @@ const TIMEOUT_MS = 8000;
 
 /**
  * Selection spanning two or more chunks: merge those chunks (whole). Part of one chunk: split that
- * part off. Selected ids in no chunk (drafts, ink not saved yet) are ignored.
+ * part off. Selected ids in no chunk (drafts, ink not saved yet) are ignored, and so are
+ * `connectors` (arrows, lines and their labels): the server keeps them with the chunk they start
+ * from, so only ink decides what a selection means.
  */
-export function planOverride(selected: readonly string[], chunks: readonly Chunk[]): OverridePlan {
-  const picked = new Set(selected);
-  const touched = chunks.filter((c) => c.element_ids.some((id) => picked.has(id)));
+export function planOverride(
+  selected: readonly string[],
+  chunks: readonly Chunk[],
+  connectors: ReadonlySet<string> = new Set(),
+): OverridePlan {
+  const picked = new Set(selected.filter((id) => !connectors.has(id)));
+  const ink = (c: Chunk) => c.element_ids.filter((id) => !connectors.has(id));
+  const touched = chunks.filter((c) => ink(c).some((id) => picked.has(id)));
   if (touched.length === 0) return { kind: "none", reason: "Select ink that belongs to a chunk." };
   if (touched.length > 1) return { kind: "merge", chunkIds: touched.map((c) => c.id) };
   const [c] = touched;
-  const part = c.element_ids.filter((id) => picked.has(id)).sort();
-  if (part.length === c.element_ids.length) {
+  const part = ink(c).filter((id) => picked.has(id)).sort();
+  if (part.length === ink(c).length) {
     return { kind: "none", reason: "The selection already is a whole chunk." };
   }
   return { kind: "split", chunkId: c.id, elementIds: part };
+}
+
+/** Arrows, lines and the text bound to them: they follow their ends and are never split or merged. */
+export function connectorIds(
+  scene: readonly { id: string; type?: string; containerId?: string | null }[],
+): Set<string> {
+  const lines = new Set(scene.filter((e) => e.type === "arrow" || e.type === "line").map((e) => e.id));
+  for (const e of scene) if (e.containerId && lines.has(e.containerId)) lines.add(e.id);
+  return lines;
 }
 
 /** POST the override; the result names the new chunk ids or says why it was refused. */

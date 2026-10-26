@@ -21,8 +21,12 @@ Code: `chunker.pin_groups` / `chunk_scene(pins=)`, `db.merge_chunks` / `db.split
 - **Merge** (`POST /documents/{id}/chunks/merge {chunk_ids}`, at least 2 active chunks): one new
   pinned chunk holds their union. **Split** (`POST .../chunks/split {chunk_id, element_ids}`): two new
   pinned chunks, the selection (plus bound text) and the rest of the chunk. Both parts are pinned, so
-  the result is exactly two chunks and stays that way. A selection with no ink of its own (only
-  connectors), or one that leaves nothing behind, is refused (422).
+  the result is exactly two chunks and stays that way. Only ink decides a split. Arrows and lines in
+  the selection follow the chunk their start lands in, and the response gives the real membership.
+  Picking a bound label also picks its container (they are one unit). A split selection with no ink
+  of its own, or one that leaves nothing behind, is refused (422). So is a merge that includes a
+  chunk of nothing but connectors (a dangling arrow's own chunk), because it has no ink to pin. The web
+  client ignores connectors when it decides what to offer, so it never proposes either.
 - **Ids and successors.** The new rows are inserted, the originals are unpinned, and the chunker
   re-runs on the stored scene in the same `BEGIN IMMEDIATE` transaction. The new rows match their
   clusters with Jaccard 1, so they keep their ids. The originals are left unmatched and are orphaned
@@ -31,7 +35,8 @@ Code: `chunker.pin_groups` / `chunk_scene(pins=)`, `db.merge_chunks` / `db.split
   or merge. The transaction rolls back if the new ids are not active or an original is not orphaned
   afterwards.
 - **Errors.** 404 for an unknown canvas, an unknown id, a manual region or another canvas's chunk.
-  409 for an orphaned chunk (the caller's list is stale). 422 for a bad request shape.
+  409 for an orphaned chunk (the caller's list is stale). 422 for a bad request shape or a selection
+  as above. A refused override changes no row (tested).
 - **Ink is never touched.** Overrides read the scene and write only `regions` and `links`. The scene
   version and JSON stay byte-identical (`test_overrides_never_modify_or_delete_elements`), so the
   browser's next save on the same `base_version` still succeeds.

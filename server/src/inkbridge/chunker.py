@@ -228,26 +228,25 @@ def pin_groups(elements: list[dict[str, Any]], pins: Sequence[Collection[str]]) 
     """The pins reduced to ink that clusters, made disjoint (an earlier pin keeps a shared id).
 
     Ids that are deleted, drafts, connectors or unknown are dropped (connectors attach by the arrow
-    rules instead); bound text and its container always go together; empty pins vanish.
+    rules instead); bound text and its container always go together (picking either picks both);
+    empty pins vanish.
     """
     live = {str(e["id"]): e for e in clustering_elements(elements)}
-    texts: dict[str, list[str]] = {}
+    # A container and its bound text are one unit, keyed by the container id.
+    unit: dict[str, str] = {}
     for eid, e in live.items():
-        if e.get("containerId") is not None and str(e["containerId"]) in live:
-            texts.setdefault(str(e["containerId"]), []).append(eid)
-    taken: set[str] = set()
+        container = str(e.get("containerId")) if e.get("containerId") is not None else None
+        unit[eid] = container if container in live else eid
+    members: dict[str, list[str]] = {}
+    for eid, key in unit.items():
+        members.setdefault(key, []).append(eid)
+    taken: set[str] = set()  # unit keys already in an earlier pin
     out = []
     for pin in pins:
-        group = {str(i) for i in pin if str(i) in live}
-        containers = {
-            str(live[i]["containerId"]) for i in group if str(live[i].get("containerId")) in live
-        }
-        group |= containers
-        group |= {t for c in group for t in texts.get(c, ())}
-        group -= taken
-        if group:
-            out.append(sorted(group))
-            taken |= group
+        keys = {unit[str(i)] for i in pin if str(i) in live} - taken
+        if keys:
+            out.append(sorted(i for k in keys for i in members[k]))
+            taken |= keys
     return out
 
 
