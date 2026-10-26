@@ -40,22 +40,26 @@ const TIMEOUT_MS = 8000;
 
 class NotFound extends Error {}
 
-/** fetch with a timeout (AbortController works in insecure contexts), so a stalled API ends as "error". */
-async function fetchWithTimeout(fetchFn: typeof fetch, url: string): Promise<Response> {
+/**
+ * fetch plus body read under one timeout (AbortController works in insecure contexts), so an API
+ * that stalls before or after the headers ends as an error instead of hanging.
+ */
+async function fetchWithTimeout<T>(fetchFn: typeof fetch, url: string, read: (res: Response) => Promise<T>): Promise<T> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
-    return await fetchFn(url, { signal: ctl.signal });
+    return await read(await fetchFn(url, { signal: ctl.signal }));
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function getChunk(id: string, fetchFn: typeof fetch): Promise<Chunk> {
-  const res = await fetchWithTimeout(fetchFn, `/regions/${encodeURIComponent(id)}`);
-  if (res.status === 404) throw new NotFound(id);
-  if (!res.ok) throw new Error(`GET /regions/${id}: ${res.status}`);
-  return (await res.json()) as Chunk;
+function getChunk(id: string, fetchFn: typeof fetch): Promise<Chunk> {
+  return fetchWithTimeout(fetchFn, `/regions/${encodeURIComponent(id)}`, async (res) => {
+    if (res.status === 404) throw new NotFound(id);
+    if (!res.ok) throw new Error(`GET /regions/${id}: ${res.status}`);
+    return (await res.json()) as Chunk;
+  });
 }
 
 /**
@@ -86,8 +90,11 @@ export async function resolveChunk(
       const succ = await getChunk(next, fetchFn);
       if (succ.document_id !== canvas) break;
       current = succ;
-    } catch {
-      break; // the chain is broken: open at the last orphan we have
+    } catch (e) {
+      // A successor that is gone ends the chain at the last orphan; a network failure is not
+      // evidence that the chunk is gone, so it reports "error" like a failed first lookup.
+      if (e instanceof NotFound) break;
+      return { outcome: "error", requested: id, chunk: null };
     }
   }
   if (current.status === "active") {
@@ -104,7 +111,10 @@ export function jumpNotice(r: JumpResult): string | null {
     case "successor":
       return `Source changed: chunk ${r.requested} was replaced, showing ${r.chunk?.id}.`;
     case "orphaned":
-      return `Source changed: chunk ${r.requested} no longer exists, showing where it was.`;
+      // The chain can end at a later orphan than the one linked: name it, its box is what is shown.
+      return r.chunk && r.chunk.id !== r.requested
+        ? `Source changed: chunk ${r.requested} no longer exists, showing where chunk ${r.chunk.id} was.`
+        : `Source changed: chunk ${r.requested} no longer exists, showing where it was.`;
     case "missing":
       return `Chunk ${r.requested} not found on this canvas.`;
     case "error":
@@ -123,13 +133,26 @@ export async function listChunks(
   fetchFn: typeof fetch = (...a) => fetch(...a),
 ): Promise<Chunk[]> {
   try {
-    const res = await fetchWithTimeout(fetchFn, `/documents/${encodeURIComponent(canvas)}/regions?chunks=true&limit=500`);
-    if (!res.ok) return [];
-    const rows = (await res.json()) as Chunk[];
+    const url = `/documents/${encodeURIComponent(canvas)}/regions?chunks=true&limit=500`;
+    const rows = await fetchWithTimeout(fetchFn, url, async (res) => (res.ok ? ((await res.json()) as Chunk[]) : []));
     return rows.filter((c) => c.status === "active");
   } catch {
     return [];
   }
+}
+
+export type JumpPlan = { kind: "select"; ids: string[] } | { kind: "bounds"; bounds: Bounds } | null;
+
+/**
+ * What a jump does to the view: select and fit the chunk's live strokes, or (orphan, or none of its
+ * strokes are live locally) open at its bounding box; null when there is no chunk to show.
+ * Only view state changes either way, never elements, so a jump cannot trigger a save.
+ */
+export function jumpPlan(jump: JumpResult, scene: readonly { id: string; isDeleted?: boolean }[]): JumpPlan {
+  const chunk = jump.chunk;
+  if (!chunk) return null;
+  const ids = jump.outcome === "orphaned" ? [] : liveIds(chunk, scene);
+  return ids.length > 0 ? { kind: "select", ids } : { kind: "bounds", bounds: chunk.bounds };
 }
 
 /** The chunk's element ids that are in the scene and not deleted (the server may be ahead or behind). */

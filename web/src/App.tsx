@@ -3,7 +3,7 @@ import { CaptureUpdateAction, Excalidraw, restoreElements } from "@excalidraw/ex
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "./ChunkOverlay";
-import { jumpNotice, liveIds, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
+import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
 import { readRoute } from "./route";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
@@ -25,14 +25,13 @@ type Api = ExcalidrawImperativeAPI;
 
 /** Deep link: select the chunk's live strokes and fit them, or open at the old bounds of an orphan. */
 function applyJump(api: Api, jump: JumpResult) {
-  const chunk = jump.chunk;
-  if (!chunk) return;
   const scene = api.getSceneElements();
-  const ids = jump.outcome === "orphaned" ? [] : liveIds(chunk, scene);
-  if (ids.length > 0) {
-    const want = new Set(ids);
+  const plan = jumpPlan(jump, scene);
+  if (!plan) return;
+  if (plan.kind === "select") {
+    const want = new Set(plan.ids);
     api.updateScene({
-      appState: { selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) as never },
+      appState: { selectedElementIds: Object.fromEntries(plan.ids.map((id) => [id, true])) as never },
       captureUpdate: CaptureUpdateAction.NEVER,
     });
     api.scrollToContent(
@@ -42,7 +41,7 @@ function applyJump(api: Api, jump: JumpResult) {
     return;
   }
   const { width, height } = api.getAppState();
-  const v = viewForBounds(chunk.bounds, { width, height });
+  const v = viewForBounds(plan.bounds, { width, height });
   api.updateScene({
     appState: { scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom as never } },
     captureUpdate: CaptureUpdateAction.NEVER,

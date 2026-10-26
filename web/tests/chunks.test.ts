@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it, mock } from "node:test";
 import {
   jumpNotice,
+  jumpPlan,
   listChunks,
   liveIds,
   resolveChunk,
@@ -104,6 +105,22 @@ describe("resolveChunk", () => {
     assert.equal((await resolveChunk("c1", "doc", fetchFn)).outcome, "error");
   });
 
+  it("does not walk past an active chunk even if it still names a successor", async () => {
+    const { fetchFn, calls } = api({ c1: chunk("c1", { successor_of: "c2" }), c2: chunk("c2") });
+    const r = await resolveChunk("c1", "doc", fetchFn);
+    assert.equal(r.outcome, "found");
+    assert.deepEqual(calls, ["/regions/c1"]);
+  });
+
+  it("reports a failed successor lookup as error, not as a gone chunk", async () => {
+    const rows = { a: chunk("a", { status: "orphaned", successor_of: "b" }) };
+    const fetchFn = (async (url: string) =>
+      url === "/regions/a" ? new Response(JSON.stringify(rows.a)) : new Response("oops", { status: 503 })) as unknown as typeof fetch;
+    const r = await resolveChunk("a", "doc", fetchFn);
+    assert.equal(r.outcome, "error");
+    assert.equal(r.chunk, null);
+  });
+
   it("encodes the id into the path", async () => {
     const { fetchFn, calls } = api({});
     await resolveChunk("a/b?c", "doc", fetchFn);
@@ -142,11 +159,86 @@ describe("resolveChunk limits", () => {
   });
 });
 
+describe("request timeout", () => {
+  // A fetch that resolves headers at once and then never finishes the body unless aborted,
+  // as a real fetch does when its signal fires.
+  const stalledBody = (async (_u: string, init?: RequestInit) => ({
+    ok: true,
+    status: 200,
+    json: () =>
+      new Promise((_r, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+  })) as unknown as typeof fetch;
+
+  // Settled value of `p` a few event-loop turns after the tick, or "pending" (fail fast, never hang).
+  const settled = <T,>(p: Promise<T>) =>
+    Promise.race([p, new Promise<"pending">((r) => setImmediate(() => setImmediate(() => r("pending"))))]);
+
+  it("ends a lookup whose body stalls as error after the timeout", async () => {
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const p = resolveChunk("c1", "doc", stalledBody);
+      await new Promise((r) => setImmediate(r));
+      mock.timers.tick(8000);
+      const r = await settled(p);
+      assert.notEqual(r, "pending", "the lookup is still hanging after the timeout");
+      assert.equal(r !== "pending" && r.outcome, "error");
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it("ends a stalled chunk list as an empty list", async () => {
+    mock.timers.enable({ apis: ["setTimeout"] });
+    try {
+      const p = listChunks("doc", stalledBody);
+      await new Promise((r) => setImmediate(r));
+      mock.timers.tick(8000);
+      assert.deepEqual(await settled(p), []);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+});
+
+describe("jumpPlan", () => {
+  const scene = [{ id: "c1-a" }, { id: "c1-b", isDeleted: true }];
+
+  it("selects the live strokes of a found or successor chunk", () => {
+    assert.deepEqual(jumpPlan({ outcome: "found", requested: "c1", chunk: chunk("c1") }, scene), {
+      kind: "select",
+      ids: ["c1-a"],
+    });
+    assert.deepEqual(jumpPlan({ outcome: "successor", requested: "old", chunk: chunk("c1") }, scene), {
+      kind: "select",
+      ids: ["c1-a"],
+    });
+  });
+
+  it("opens an orphan at its old bounds even if some of its strokes are still live", () => {
+    const c = chunk("c1", { status: "orphaned", bounds: { x: 1, y: 2, width: 3, height: 4 } });
+    assert.deepEqual(jumpPlan({ outcome: "orphaned", requested: "c1", chunk: c }, scene), {
+      kind: "bounds",
+      bounds: { x: 1, y: 2, width: 3, height: 4 },
+    });
+  });
+
+  it("falls back to the bounds when none of the strokes are live locally", () => {
+    const plan = jumpPlan({ outcome: "found", requested: "c1", chunk: chunk("c1") }, [{ id: "other" }]);
+    assert.equal(plan?.kind, "bounds");
+  });
+
+  it("does nothing without a chunk", () => {
+    assert.equal(jumpPlan({ outcome: "missing", requested: "z", chunk: null }, scene), null);
+  });
+});
+
 describe("jumpNotice", () => {
   it("is silent for a found chunk and explains every other outcome", () => {
     assert.equal(jumpNotice({ outcome: "found", requested: "c1", chunk: chunk("c1") }), null);
     assert.match(jumpNotice({ outcome: "successor", requested: "old", chunk: chunk("new") })!, /source changed.*old.*new/i);
     assert.match(jumpNotice({ outcome: "orphaned", requested: "g", chunk: chunk("g") })!, /source changed.*where it was/i);
+    // A chain that ends at a later orphan names the chunk whose box is shown.
+    assert.match(jumpNotice({ outcome: "orphaned", requested: "g", chunk: chunk("h") })!, /no longer exists.*where chunk h was/i);
     assert.match(jumpNotice({ outcome: "missing", requested: "z", chunk: null })!, /not found/i);
     assert.match(jumpNotice({ outcome: "error", requested: "z", chunk: null })!, /could not load/i);
   });
@@ -192,6 +284,8 @@ describe("viewport maths", () => {
   it("zooms out for large bounds and clamps a degenerate box", () => {
     const v = viewForBounds({ x: 0, y: 0, width: 4000, height: 100 }, viewport);
     assert.ok(v.zoom < 0.25 && v.zoom > 0.2);
+    // Never below Excalidraw's minimum zoom of 10%.
+    assert.equal(viewForBounds({ x: 0, y: 0, width: 1e6, height: 10 }, viewport).zoom, 0.1);
     const z = viewForBounds({ x: 5, y: 5, width: 0, height: 0 }, viewport);
     assert.equal(z.zoom, 1);
     assert.ok(Number.isFinite(z.scrollX) && Number.isFinite(z.scrollY));
