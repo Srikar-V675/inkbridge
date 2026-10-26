@@ -145,7 +145,8 @@ def _replace_image(conn, region_id: str, png: bytes, scene_version: int | None) 
             raise
     finally:
         tmp.unlink(missing_ok=True)
-    assert region is not None  # the row and version were checked under the same lock
+    if region is None:  # unreachable: the row and version were checked under the same lock
+        raise HTTPException(409, "crop was not installed; retry")
     return region
 
 

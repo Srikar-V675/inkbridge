@@ -59,6 +59,7 @@ def test_upload_rendered_from_an_older_scene_is_rejected_and_nothing_is_written(
     assert r.json()["detail"]["current_version"] == canvas.version
     assert canvas.chunk_of("a0")["png_stale"] is True
     assert not Path(config.crops_dir() / f"{rid}.png").exists()  # no file was written
+    assert not list(config.crops_dir().glob("*.tmp"))  # and the refused upload's temp file is gone
 
 
 def test_bad_scene_version_is_422(client):

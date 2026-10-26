@@ -116,9 +116,12 @@ export class CropSync {
     if (this.disposed || this.running || !this.wanted) return;
     const wait = this.idleLeft();
     if (wait > 0) return this.schedule(wait);
-    // Unsaved edits: the canvas is not any stored scene. The save's "saved" state requests again.
     const version = this.o.settledVersion();
-    if (version === null || version === this.refusedAt) return;
+    // Unsaved edits or a save in flight: the canvas is not any stored scene yet. Check again after
+    // the idle delay (no request is made), so a "saved" state emitted mid-save (a conflict reload)
+    // is not lost until the next poll.
+    if (version === null) return this.schedule(this.idleMs);
+    if (version === this.refusedAt) return;
     this.running = true;
     this.wanted = false;
     const since = this.lastActivity;
