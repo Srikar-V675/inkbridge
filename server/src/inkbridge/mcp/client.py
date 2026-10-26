@@ -17,6 +17,10 @@ class NotFound(ApiError):
     """The API answered 404: the resource does not exist (as opposed to any other failure)."""
 
 
+NO_REGION = "Call list_regions or read_canvas to see valid ids."
+NO_CANVAS = "Check document_id (omit it for the default canvas; GET /documents lists the canvases)."
+
+
 class ApiClient:
     def __init__(self, http: httpx.Client | None = None):
         self._owns_http = http is None  # a client passed in (tests) belongs to the caller
@@ -42,17 +46,23 @@ class ApiClient:
             return cls._status_error(exc.response.status_code)
         return ApiError(f"Unexpected response from the Inkbridge API ({exc.__class__.__name__}).")
 
-    def _get(self, path: str, **params: Any) -> httpx.Response:
-        params = {k: v for k, v in params.items() if v is not None}
+    def _get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        not_found: str = NO_REGION,
+    ) -> httpx.Response:
+        query = {k: v for k, v in (params or {}).items() if v is not None}
         try:
-            r = self.http.get(path, params=params)
+            r = self.http.get(path, params=query)
         except httpx.HTTPError as e:
             raise ApiError(
                 f"Cannot reach the Inkbridge API ({e.__class__.__name__}). "
                 "Is `make dev-server` running, and is INKBRIDGE_API_URL correct?"
             ) from e
         if r.status_code == 404:
-            raise NotFound(f"Not found: {path}. Call list_regions to see valid region ids.")
+            raise NotFound(f"Not found: {path}. {not_found}")
         # By status code, not raise_for_status(): the error class differs between httpx builds
         # (Starlette's TestClient ships its own). Anything but 2xx is an ApiError, including an
         # unfollowed 3xx, which would otherwise pass as an empty image or a JSON decode error.
@@ -85,11 +95,12 @@ class ApiClient:
         except ValueError as e:
             raise self._wrap(e) from e
 
+    def _document(self, document_id: str | None) -> str:
+        return quote(document_id or self.default_document, safe="")
+
     def list_regions(self, document_id: str | None, kind: str | None, limit: int) -> list[dict]:
-        doc = document_id or self.default_document
-        return self._json(
-            self._get(f"/documents/{quote(doc, safe='')}/regions", kind=kind, limit=limit)
-        )
+        path = f"/documents/{self._document(document_id)}/regions"
+        return self._json(self._get(path, {"kind": kind, "limit": limit}, not_found=NO_CANVAS))
 
     def get_region(self, region_id: str) -> dict:
         return self._json(self._get(f"/regions/{quote(region_id, safe='')}"))
@@ -100,17 +111,24 @@ class ApiClient:
     def get_ink(self, region_id: str) -> dict:
         return self._json(self._get(f"/regions/{quote(region_id, safe='')}/ink"))
 
-    def search(self, query: str, limit: int) -> list[dict]:
-        return self._json(
-            self._get("/search", q=query, limit=limit, document_id=self.default_document)
-        )
+    def search(self, query: str, limit: int, document_id: str | None = None) -> list[dict]:
+        params = {"q": query, "limit": limit, "document_id": document_id or self.default_document}
+        return self._json(self._get("/search", params))
+
+    def get_chunks(self, document_id: str | None) -> dict:
+        path = f"/documents/{self._document(document_id)}/chunks"
+        return self._json(self._get(path, not_found=NO_CANVAS))
+
+    def get_overview(self, document_id: str | None, max_width: int | None = None) -> bytes:
+        """The overview PNG; the API's default width is the 0003 cap (1024 px)."""
+        path = f"/documents/{self._document(document_id)}/overview"
+        return self._get(path, {"max_width": max_width}, not_found=NO_CANVAS).content
 
     def check_sync(self, document_id: str | None, chunks: list[dict], wait_s: float) -> dict:
-        doc = document_id or self.default_document
         # The API may wait up to wait_s for readings: give the HTTP call room beyond that.
         return self._json(
             self._post(
-                f"/documents/{quote(doc, safe='')}/check_sync",
+                f"/documents/{self._document(document_id)}/check_sync",
                 {"chunks": chunks, "wait_s": wait_s},
                 timeout=wait_s + 30,
             )
