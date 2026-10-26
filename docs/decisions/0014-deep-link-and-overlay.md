@@ -1,6 +1,6 @@
-# 0013: Chunk deep link and chunk overlay
+# 0014: Chunk deep link and chunk overlay
 
-Status: accepted (INK-035). Implements F7 and tech ref 5.8 on the web side. (0012 is taken by INK-042.)
+Status: accepted (INK-035). Implements F7 and tech ref 5.8 on the web side. (0012 is INK-042, 0013 is INK-032 arrow links.)
 
 - **Lookup.** `?canvas=<id>&chunk=<chunk_id>` resolves through `GET /regions/{id}`, which already
   serves chunks with `status`, `successor_of`, `element_ids` and `bounds` (INK-031). It runs beside

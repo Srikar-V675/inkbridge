@@ -1,5 +1,5 @@
 // Framework-free chunk lookups and viewport maths for the deep link and the chunk overlay.
-// Deep link contract: /?canvas=<document id>&chunk=<chunk id> (docs/decisions/0013).
+// Deep link contract: /?canvas=<document id>&chunk=<chunk id> (docs/decisions/0014).
 // Only plain fetch and DOM-free maths: works over LAN HTTP, no secure-context APIs.
 
 export interface Bounds {

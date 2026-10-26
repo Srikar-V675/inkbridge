@@ -1,5 +1,5 @@
 // Chunk boxes and ids drawn as plain DOM over the canvas. UI state only: nothing here touches the
-// Excalidraw scene, so the overlay can never be autosaved (docs/decisions/0013).
+// Excalidraw scene, so the overlay can never be autosaved (docs/decisions/0014).
 import { useEffect, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
