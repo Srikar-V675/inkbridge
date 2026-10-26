@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from inkbridge import db
 from inkbridge.api.deps import Conn
+from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
 
 router = APIRouter()
@@ -84,6 +85,8 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     except ops_db.OpConflict:
         raise HTTPException(409, {"code": "op_id_conflict", "op_id": body.op_id}) from None
     response.status_code = 201 if created else 200
+    if created:
+        hub.publish(document_id, op=op)  # draw it now in any open browser
     return op
 
 
@@ -128,7 +131,7 @@ def patch_op(op_id: str, body: OpPatch, conn: Conn) -> dict:
     ids = list(dict.fromkeys(body.element_ids or []))
     error = body.error or ("unknown error" if body.status == "failed" else None)
     try:
-        return ops_db.update_status(conn, op_id, body.status, ids or None, error)
+        op = ops_db.update_status(conn, op_id, body.status, ids or None, error)
     except ops_db.OpNotFound:
         raise HTTPException(404, "op not found") from None
     except ops_db.ExistingElementIds as e:
@@ -137,3 +140,5 @@ def patch_op(op_id: str, body: OpPatch, conn: Conn) -> dict:
         raise HTTPException(
             409, {"code": "invalid_transition", "status": e.current, "wanted": body.status}
         ) from None
+    hub.publish(op["document_id"], updated_message(op))
+    return op

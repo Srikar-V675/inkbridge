@@ -1,7 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
+import { ChunkOverlay } from "./ChunkOverlay";
+import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
+import { rejectOp, type DraftElement } from "./drafts";
+import { drawOp } from "./drawOp";
+import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
@@ -19,6 +24,74 @@ const LABEL: Record<SaveState, string> = {
 
 type Restored = ReturnType<typeof restoreElements>;
 type Initial = { elements: Restored; view: View | null } | "failed" | null;
+type Api = ExcalidrawImperativeAPI;
+
+/** Deep link: select the chunk's live strokes and fit them, or open at the old bounds of an orphan. */
+function applyJump(api: Api, jump: JumpResult) {
+  const scene = api.getSceneElements();
+  const plan = jumpPlan(jump, scene);
+  if (!plan) return;
+  if (plan.kind === "select") {
+    const want = new Set(plan.ids);
+    api.updateScene({
+      appState: { selectedElementIds: Object.fromEntries(plan.ids.map((id) => [id, true])) as never },
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+    api.scrollToContent(
+      scene.filter((e) => want.has(e.id)),
+      { fitToViewport: true, viewportZoomFactor: 0.7, maxZoom: 1, animate: false },
+    );
+    return;
+  }
+  const { width, height } = api.getAppState();
+  const v = viewForBounds(plan.bounds, { width, height });
+  api.updateScene({
+    appState: { scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom as never } },
+    captureUpdate: CaptureUpdateAction.NEVER,
+  });
+}
+
+function Notice({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        position: "absolute",
+        top: 64,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 10,
+        display: "flex",
+        gap: 8,
+        alignItems: "center",
+        maxWidth: "calc(100% - 32px)",
+        padding: "6px 8px 6px 12px",
+        borderRadius: 6,
+        font: "13px system-ui, sans-serif",
+        background: "#fff3cd",
+        color: "#202124",
+        boxShadow: "0 1px 4px rgba(0,0,0,.15)",
+      }}
+    >
+      <span>{text}</span>
+      <button type="button" aria-label="Dismiss" onClick={onClose} style={{ border: 0, background: "none", fontSize: 16 }}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+// How long an op waits for its drafts to be saved before it is reported as failed (about 30 s).
+const SAVE_ATTEMPTS = 15;
+const SAVE_RETRY_MS = 2000;
+// Op statuses whose drafts must not stay on the canvas.
+const DEAD = ["failed", "expired", "rejected"];
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
 
 function SaveBadge({ store }: { store: ReturnType<typeof createStatusStore> }) {
   const status = useSyncExternalStore(store.subscribe, store.get);
@@ -77,6 +150,11 @@ export default function App() {
   const syncRef = useRef<SceneSync | null>(null);
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
+  const pendingJump = useRef<JumpResult | null>(null);
+  const sceneReady = useRef(false);
+  const [api, setApi] = useState<Api | null>(null);
+  const [jump, setJump] = useState<JumpResult | null>(null);
+  const [noticeOpen, setNoticeOpen] = useState(true);
 
   // Load the saved scene before Excalidraw mounts so restoreElements runs ahead of initialData
   // (it keeps freedraw pressures and simulatePressure=false).
@@ -100,10 +178,22 @@ export default function App() {
     });
     syncRef.current = sync;
     let cancelled = false;
+    // The deep-linked chunk resolves beside the scene load and never holds the canvas back: it is
+    // applied on the first change event, or as soon as it arrives if the scene is already up.
+    if (route.chunk) {
+      void resolveChunk(route.chunk, route.canvas).then((resolved) => {
+        if (cancelled) return;
+        setJump(resolved);
+        if (!resolved.chunk) return;
+        if (sceneReady.current && apiRef.current) applyJump(apiRef.current, resolved);
+        else pendingJump.current = resolved;
+      });
+    }
     void sync.load().then((elements) => {
       if (cancelled) return;
       if (!elements) return setInitial("failed");
-      const view = loadView(window.localStorage, route.canvas);
+      // A link wins over the remembered view (it is fitted to all ink until the chunk arrives).
+      const view = route.chunk ? null : loadView(window.localStorage, route.canvas);
       const restored = restoreElements(elements as never, null);
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
       fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
@@ -121,11 +211,70 @@ export default function App() {
       window.removeEventListener("pagehide", onPageHide);
       sync.dispose();
     };
-  }, [route.canvas, status]);
+  }, [route.canvas, route.chunk, status]);
 
-  const onApi = useCallback((api: ExcalidrawImperativeAPI) => {
-    apiRef.current = api;
-  }, []);
+  // Resolves once Excalidraw hands over its API, so an op that arrives first waits instead of failing.
+  const apiReady = useMemo(() => deferred<ExcalidrawImperativeAPI>(), []);
+  const onApi = useCallback(
+    (api: ExcalidrawImperativeAPI) => {
+      apiRef.current = api;
+      setApi(api);
+      apiReady.resolve(api);
+    },
+    [apiReady],
+  );
+
+  // Agent ops arrive over the WebSocket once the canvas exists; they are drawn as dashed drafts.
+  const canvasReady = initial !== null && initial !== "failed";
+  useEffect(() => {
+    if (!canvasReady) return;
+    const sweep = (opId: string) => {
+      const api = apiRef.current;
+      if (!api) return;
+      const prefix = `${opId}:`;
+      const scene = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
+      if (!scene.some((e) => e.id.startsWith(prefix) && !e.isDeleted)) return;
+      api.updateScene({ elements: rejectOp(scene, prefix) as never });
+    };
+    const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    const socket = new OpsSocket({
+      url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}`,
+      onOp: async (op) => {
+        // Saving now also makes the server's next placement see the newest ink. flushNow does not
+        // throw when a save fails (offline, 409 merge, 4xx), so check that the server really holds
+        // the drafts: an acked op is never replayed, so an unsaved draft lost to a reload would be
+        // gone for good. Give up after a while; op.failed then sweeps the drafts.
+        const persist = async (elements: readonly unknown[]) => {
+          const sync = syncRef.current;
+          if (!sync) throw new Error("the canvas is not loaded");
+          const scene = elements as SceneElement[];
+          const ids = scene
+            .filter((e) => e.id.startsWith(op.payload.id_prefix) && !e.isDeleted)
+            .map((e) => e.id);
+          sync.notify(scene);
+          for (let attempt = 0; ; attempt++) {
+            await sync.flushNow();
+            if (sync.hasSaved(ids)) return;
+            if (attempt >= SAVE_ATTEMPTS) throw new Error("the drafts could not be saved");
+            await new Promise((r) => setTimeout(r, SAVE_RETRY_MS));
+          }
+        };
+        return drawOp(apiRef.current ?? (await apiReady.promise), op, persist);
+      },
+      // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
+      onOpUpdated: (m) => {
+        if (DEAD.includes(m.status)) sweep(m.op_id);
+      },
+      onOpError: (m) => {
+        // The op ended while it was being drawn (op.updated came before the drafts existed), so
+        // the ack was refused: the drafts just drawn have no live op and must go too.
+        if (m.code === "invalid_transition" && DEAD.includes(String(m.detail))) sweep(m.op_id);
+        else console.warn("op refused by the server", m);
+      },
+    });
+    socket.start();
+    return () => socket.dispose();
+  }, [canvasReady, route.canvas, apiReady]);
 
   const onChange = useCallback(
     (
@@ -133,6 +282,15 @@ export default function App() {
       appState: { scrollX: number; scrollY: number; zoom: { value: number } },
     ) => {
       syncRef.current?.notify(elements as unknown as SceneElement[]);
+      // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
+      sceneReady.current = true;
+      if (pendingJump.current && apiRef.current) {
+        const target = pendingJump.current;
+        pendingJump.current = null;
+        fitOnOpen.current = false;
+        applyJump(apiRef.current, target);
+        return;
+      }
       // First open of this canvas on this device: show all the ink instead of its centre at 100%.
       // Done on the first change event that carries the loaded scene (the API handle arrives earlier).
       if (fitOnOpen.current && elements.length > 0 && apiRef.current) {
@@ -162,6 +320,15 @@ export default function App() {
   return (
     <div style={{ height: "100dvh", position: "relative" }}>
       {initial && initial !== "failed" && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
+      {api && initial && initial !== "failed" && (
+        <ChunkOverlay
+          api={api}
+          canvas={route.canvas}
+          status={status}
+          ghost={noticeOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
+        />
+      )}
+      {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
       <SaveBadge store={status} />
     </div>
   );
