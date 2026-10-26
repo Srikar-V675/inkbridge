@@ -58,6 +58,21 @@ describe("SceneSync", () => {
     assert.equal(h.states.at(-1), "saved");
   });
 
+  it("hasSaved is true only once the server confirmed the elements", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [el("a")] }),
+      new Error("offline"),
+      json(200, { version: 2 }),
+    ]);
+    await h.sync.load();
+    assert.equal(h.sync.hasSaved(["a"]), true);
+    h.sync.notify([el("a"), el("op:1")]);
+    await h.sync.flushNow(); // the save fails: flushNow resolves anyway
+    assert.equal(h.sync.hasSaved(["op:1"]), false);
+    await h.sync.flushNow();
+    assert.equal(h.sync.hasSaved(["a", "op:1"]), true);
+  });
+
   it("reports an unknown canvas as an error", async () => {
     const h = harness([json(404, { detail: "no" })]);
     assert.equal(await h.sync.load(), null);
