@@ -469,3 +469,33 @@ def test_backoff_entries_of_superseded_ink_are_dropped(client):
     canvas.put()
     w.run_once()
     assert w._failures == {}
+
+
+def test_a_locked_database_while_checking_a_crop_skips_only_that_chunk(client, monkeypatch):
+    fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    real = db.read_fresh_crop
+    failures = [sqlite3.OperationalError("database is locked")]
+
+    def flaky(*a, **kw):
+        if failures:
+            raise failures.pop()
+        return real(*a, **kw)
+
+    monkeypatch.setattr(db, "read_fresh_crop", flaky)
+    w = worker(FakeModel())
+    assert w.run_once() == 1  # the other chunk is still read
+    assert w.run_once() == 1
+
+
+def test_kept_readings_of_gone_ink_are_dropped(client, monkeypatch):
+    canvas = fresh_canvas(client)
+    monkeypatch.setattr(
+        db, "save_model_reading", lambda *a: (_ for _ in ()).throw(sqlite3.OperationalError("x"))
+    )
+    w = worker(FakeModel())
+    w.run_once()
+    (old,) = w._unsaved
+    canvas.el("a0")["points"] = [[0, 0], [8, 3]]
+    canvas.put()  # old hash is gone; the new crop is stale, so nothing new is read either
+    w.run_once()
+    assert old not in w._unsaved and w._unsaved == {}

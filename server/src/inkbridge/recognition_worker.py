@@ -142,8 +142,9 @@ class RecognitionWorker:
         calls, recognized = 0, []
         candidates = db.recognition_candidates(conn, document_id)
         keys = {(c["id"], c["content_hash"]) for c in candidates}
-        for key in [k for k in self._failures if k not in keys]:
-            del self._failures[key]  # superseded ink or a gone chunk: forget its backoff
+        for store in (self._failures, self._unsaved):
+            for key in [k for k in store if k not in keys]:
+                del store[key]  # superseded ink or a gone chunk: forget it
         try:
             for region in candidates:
                 if not self._may_go_on(conn, document_id):
@@ -156,7 +157,11 @@ class RecognitionWorker:
                 if reading is None:
                     # Re-checked under the lock crop uploads take: the ink may have changed
                     # since the candidates were listed (earlier calls take seconds).
-                    png = db.read_fresh_crop(conn, region["id"], region["content_hash"])
+                    try:
+                        png = db.read_fresh_crop(conn, region["id"], region["content_hash"])
+                    except sqlite3.OperationalError as e:  # locked: try it on the next pass
+                        log.warning("checking %s failed (%s); will retry", key[0], e)
+                        continue
                     if png is None:
                         continue
                     calls += 1

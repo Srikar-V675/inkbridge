@@ -29,7 +29,7 @@ Status: accepted (INK-014). Implements tech ref 6 and 9.5.
   capped at 10 min. A 429 or timeout also pauses the whole worker for that delay, because the next
   chunk would hit the same quota. Failures are logged to stderr and never reach the editor. A
   `PermanentError` (missing or invalid key) stops the worker and logs once. Backoff state is in
-  memory, so a restart retries; entries for ink that no longer exists are dropped each pass. A save
+  memory, so a restart retries; backoff entries and kept readings for ink that no longer exists are dropped each pass. A locked database while checking a crop skips that chunk until the next pass. A save
   that hits a locked database keeps the reading in memory and saves it on the next pass, with no
   second call.
 - **One process.** Each API process runs its own worker, so run one (`make dev-server` does).
