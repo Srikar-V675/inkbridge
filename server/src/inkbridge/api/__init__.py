@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from inkbridge import db
-from inkbridge.api import ops, regions, search
+from inkbridge.api import ops, regions, search, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 
@@ -34,6 +34,7 @@ async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResp
 app.include_router(ops.router)
 app.include_router(regions.router)
 app.include_router(search.router)
+app.include_router(ws.router)
 
 
 MAX_ELEMENTS = 50_000
@@ -118,4 +119,12 @@ def put_scene(document_id: str, body: SceneIn, conn: Conn) -> dict[str, int]:
         raise HTTPException(404, "document not found") from None
     except db.VersionConflict as e:
         raise HTTPException(409, {"current_version": e.current_version}) from None
+    ws.hub.publish(
+        document_id,
+        {
+            "type": "chunks.updated",
+            "version": version,
+            "stale_crops": db.stale_crop_ids(conn, document_id),
+        },
+    )
     return {"version": version}

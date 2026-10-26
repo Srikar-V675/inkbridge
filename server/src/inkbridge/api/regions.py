@@ -109,7 +109,7 @@ async def replace_region_image(
     """Store a fresh crop (after the client re-exports the region) and clear png_stale.
 
     scene_version is the scene the browser rendered the crop from. If the scene has moved on, the
-    crop may show older ink: 409 with current_version and nothing is written (decision 0012).
+    crop may show older ink: 409 with current_version and nothing is written (decision 0017).
     """
     png = await _read_png(image)
     return await run_in_threadpool(_replace_image, conn, region_id, png, scene_version)
@@ -130,7 +130,7 @@ def _replace_image(conn, region_id: str, png: bytes, scene_version: int | None) 
     try:
         tmp.write_bytes(png)
         # The scene write lock (saves take it too) spans the version check, the rename and the
-        # clear, so no save or other upload can land between them (decision 0012).
+        # clear, so no save or other upload can land between them (decision 0017).
         conn.execute("BEGIN IMMEDIATE")
         try:
             current = db.scene_version_of_region(conn, region_id)

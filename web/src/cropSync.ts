@@ -1,4 +1,4 @@
-// Framework-free crop sync for server-made chunks (tech ref 9.4, docs/decisions/0012).
+// Framework-free crop sync for server-made chunks (tech ref 9.4, docs/decisions/0017).
 // The server flags a chunk png_stale when its ink changes; only the browser can render Excalidraw,
 // so this exports the chunk's elements and uploads the PNG. Rules: never while drawing (pointer
 // down or a change in the last ~2 s), only when the canvas equals a saved scene version, and the

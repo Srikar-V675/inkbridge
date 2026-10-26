@@ -1,11 +1,12 @@
 """Pure chunker: group scene elements into chunks by proximity. No I/O, no SQLite.
 
-Steps 1-3 and 6 of the pipeline in the technical reference (section 5). Step 5, stable ids,
-is `match_chunks` (INK-031); arrow merge/link rules live in INK-032. Their constants sit in
-ChunkerConfig so one object tunes the whole pipeline.
+Steps 1-6 of the pipeline in the technical reference (section 5): `cluster` is proximity,
+`chunk_scene` adds arrows (merge or link, INK-032), `match_chunks` keeps ids stable (INK-031).
+Their constants sit in ChunkerConfig so one object tunes the whole pipeline.
 """
 
 import bisect
+import itertools
 import math
 import statistics
 from collections.abc import Collection, Mapping, Sequence
@@ -32,6 +33,13 @@ class ChunkerConfig:
     # chunks are fragile (2 elements gaining 3 is J = 0.4); INK-038 may switch to a 60%
     # containment test instead (docs/decisions/0011-chunk-identity.md).
     match_threshold: float = 0.5
+
+    def __post_init__(self) -> None:
+        for name in ("k", "arrow_merge", "link_reach", "min_median"):
+            if not getattr(self, name) > 0:
+                raise ValueError(f"ChunkerConfig.{name} must be positive")
+        if not 0 <= self.match_threshold < 1:
+            raise ValueError("ChunkerConfig.match_threshold must be in [0, 1)")
 
 
 def is_draft(element: dict[str, Any]) -> bool:
@@ -90,11 +98,17 @@ def _gap(a: tuple[float, float, float, float], b: tuple[float, float, float, flo
 
 
 def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None) -> list[list[str]]:
-    """Return chunks as sorted lists of element ids, ordered by their smallest id."""
-    config = config or ChunkerConfig()
+    """Proximity step only: chunks as sorted lists of element ids, ordered by their smallest id."""
+    return _proximity(elements, config or ChunkerConfig())[0]
+
+
+def _proximity(
+    elements: list[dict[str, Any]], config: ChunkerConfig
+) -> tuple[list[list[str]], float]:
+    """Proximity clusters and the median element size they were measured with."""
     live = sorted(clustering_elements(elements), key=lambda e: str(e["id"]))
     if not live:
-        return []
+        return [], config.min_median
     boxes = []
     for e in live:
         b = bbox_of([e])
@@ -191,7 +205,145 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
     groups: dict[int, list[str]] = {}
     for i, e in enumerate(live):
         groups.setdefault(uf.find(i), []).append(str(e["id"]))
-    return sorted((sorted(g) for g in groups.values()), key=lambda g: g[0])
+    return sorted((sorted(g) for g in groups.values()), key=lambda g: g[0]), median
+
+
+@dataclass(frozen=True)
+class Chunking:
+    chunks: list[list[str]]  # sorted element ids per chunk, ordered by their smallest id
+    links: list[tuple[int, int]]  # arrow links (from, to) as indices into chunks, sorted, unique
+
+
+def _live(element: dict[str, Any]) -> bool:
+    return not element.get("isDeleted") and not is_draft(element)
+
+
+def _box_distance(point: tuple[float, float], box: dict[str, float]) -> float:
+    dx = max(box["x"] - point[0], point[0] - (box["x"] + box["width"]), 0.0)
+    dy = max(box["y"] - point[1], point[1] - (box["y"] + box["height"]), 0.0)
+    return math.hypot(dx, dy)
+
+
+def _path_length(points: list[list[float]]) -> float:
+    return sum(math.dist(a[:2], b[:2]) for a, b in itertools.pairwise(points))
+
+
+def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = None) -> Chunking:
+    """Proximity clusters plus the arrow rules of tech ref 5.5.
+
+    Each arrow end maps to a chunk: the chunk of its bound element (startBinding/endBinding; a
+    binding to an element in no chunk, such as a draft, dangles), else for a free end the nearest
+    chunk whose box is within link_reach * median of the end point (x + points[0], x + points[-1]
+    in canvas coordinates; inside nested boxes the smallest wins); with neither, it dangles. An arrow whose path is at
+    most arrow_merge * median long merges its two chunks; a longer one becomes a link. A dangling
+    arrow creates neither. Lines never merge or link. Every live arrow or line joins the chunk of
+    its start (else of its end, else forms a chunk of its own), and its bound label goes with it,
+    so connectors are part of some chunk's hash and crop.
+    """
+    config = config or ChunkerConfig()
+    groups, median = _proximity(elements, config)
+    by_id = {str(e.get("id")): e for e in elements}
+    owner = {eid: gi for gi, members in enumerate(groups) for eid in members}
+    boxes = [bbox_of([by_id[i] for i in members]) for members in groups]
+    reach = config.link_reach * median
+
+    connectors = sorted(
+        (e for e in elements if e.get("type") in _CONNECTORS and _live(e)),
+        key=lambda e: str(e["id"]),
+    )
+    labels: dict[str, list[str]] = {}
+    for e in elements:
+        container_id = e.get("containerId")
+        if container_id is not None and _live(e) and str(container_id) in by_id:
+            labels.setdefault(str(container_id), []).append(str(e["id"]))
+
+    # Free ends search only the boxes within reach: a uniform grid of reach-wide cells, so a point
+    # needs the 3 x 3 cells around it. Boxes too large for the grid are always candidates.
+    cells: dict[tuple[int, int], list[int]] = {}
+    large: list[int] = []
+    for gi, b in enumerate(boxes):
+        xs = range(math.floor(b["x"] / reach), math.floor((b["x"] + b["width"]) / reach) + 1)
+        ys = range(math.floor(b["y"] / reach), math.floor((b["y"] + b["height"]) / reach) + 1)
+        if len(xs) * len(ys) > _MAX_CELLS:
+            large.append(gi)
+            continue
+        for cx in xs:
+            for cy in ys:
+                cells.setdefault((cx, cy), []).append(gi)
+
+    def end_chunk(c: dict[str, Any], binding: str, point_index: int) -> int | None:
+        bound = (c.get(binding) or {}).get("elementId")
+        if bound is not None:  # bound to something in no chunk (deleted, a draft): dangling
+            return owner.get(str(bound))
+        points = c.get("points") or [[0, 0]]
+        p = points[point_index]
+        point = (c.get("x", 0) + p[0], c.get("y", 0) + p[1])
+        if not all(map(math.isfinite, point)):
+            return None
+        px, py = math.floor(point[0] / reach), math.floor(point[1] / reach)
+        candidates = set(large)
+        for cx in range(px - 1, px + 2):
+            for cy in range(py - 1, py + 2):
+                candidates.update(cells.get((cx, cy), ()))
+        # Nearest box; an end inside nested boxes picks the smallest, then the first in id order.
+        scored = [
+            (_box_distance(point, boxes[gi]), boxes[gi]["width"] * boxes[gi]["height"], gi)
+            for gi in candidates
+        ]
+        best = min(scored, default=None)
+        if best is None or best[0] > reach:
+            return None
+        return best[2]
+
+    uf = _UnionFind(len(groups))
+    ends = []
+    for c in connectors:
+        start, end = end_chunk(c, "startBinding", 0), end_chunk(c, "endBinding", -1)
+        points = c.get("points") or []
+        # A connector needs a drawn path to join or connect anything.
+        is_arrow = c.get("type") == "arrow" and len(points) >= 2
+        short = _path_length(points) <= config.arrow_merge * median
+        if is_arrow and short and start is not None and end is not None:
+            uf.union(start, end)
+            ends.append((c, start, end, False))
+        else:
+            ends.append((c, start, end, is_arrow))
+
+    merged: dict[int, list[str]] = {}
+    for gi, members in enumerate(groups):
+        merged.setdefault(uf.find(gi), []).extend(members)
+    raw_links: set[tuple[int, int]] = set()
+    extra: list[list[str]] = []
+    for c, start, end, links in ends:
+        cid = str(c["id"])
+        joined = [cid, *labels.get(cid, [])]
+        home = start if start is not None else end
+        if home is None:
+            extra.append(joined)
+        else:
+            merged[uf.find(home)].extend(joined)
+        if links and start is not None and end is not None and uf.find(start) != uf.find(end):
+            raw_links.add((uf.find(start), uf.find(end)))
+
+    # (members, root) per chunk; a dangling connector's own chunk has no root and no links.
+    final = sorted(
+        [(sorted(m), r) for r, m in merged.items()] + [(sorted(m), None) for m in extra],
+        key=lambda item: item[0][0],
+    )
+    index = {r: i for i, (_, r) in enumerate(final) if r is not None}
+    links = sorted({(index[a], index[b]) for a, b in raw_links})
+    return Chunking([m for m, _ in final], links)
+
+
+def connector_ids(elements: list[dict[str, Any]]) -> set[str]:
+    """Ids of arrows, lines and their bound labels, live or not (attached ink, not identity)."""
+    connectors = {str(e.get("id")) for e in elements if e.get("type") in _CONNECTORS}
+    labels = {
+        str(e.get("id"))
+        for e in elements
+        if e.get("containerId") is not None and str(e["containerId"]) in connectors
+    }
+    return connectors | labels
 
 
 def reading_order(boxes: dict[str, dict[str, float]]) -> list[str]:
@@ -241,6 +393,7 @@ def match_chunks(
     tops: Sequence[float],
     active: Collection[str] | None = None,
     threshold: float = ChunkerConfig.match_threshold,
+    ignore: Collection[str] = (),
 ) -> Matching:
     """Give new clusters the ids of old chunks by element-id Jaccard (tech ref 5.6).
 
@@ -250,9 +403,21 @@ def match_chunks(
     `threshold`, highest J first (ties: larger overlap, active before orphaned, then ids).
     An active chunk left unmatched becomes orphaned; its successor is the cluster sharing the most
     elements with it (tie: higher on the page, by `tops`), or None when it shares none.
+
+    Ids in `ignore` (connectors and their labels, see `connector_ids`) do not count, so drawing
+    or deleting an arrow from a small chunk keeps its id; a chunk of nothing but ignored ids is
+    matched on all of them.
     """
     active_ids = set(old) if active is None else set(active)
-    # Chunk member lists come from cluster(): sorted and free of duplicates.
+    skip = set(ignore)
+
+    def core(members: Sequence[str]) -> Sequence[str]:
+        kept = [e for e in members if e not in skip]
+        return kept or members
+
+    old = {oid: core(members) for oid, members in old.items()}
+    clusters = [core(members) for members in clusters]
+    # Chunk member lists come from chunk_scene(): sorted and free of duplicates.
     owner: dict[str, list[str]] = {}
     for oid, members in old.items():
         for e in members:
