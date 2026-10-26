@@ -724,6 +724,29 @@ def recognition_candidates(conn: sqlite3.Connection, document_id: str) -> list[d
     return [dict(r) for r in rows]
 
 
+def read_fresh_crop(conn: sqlite3.Connection, region_id: str, content_hash_: str) -> bytes | None:
+    """The crop's bytes if the region is still active with this content_hash and a fresh crop.
+
+    Read under BEGIN IMMEDIATE, the lock crop uploads take while they rename and clear png_stale,
+    so the bytes always show the ink of content_hash_ (INK-014). None otherwise or if no file.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT png_path FROM regions WHERE id = ? AND status = 'active' AND png_stale = 0"
+            " AND content_hash = ?",
+            (region_id, content_hash_),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return Path(row["png_path"]).read_bytes()
+        except OSError:
+            return None  # no crop file yet: nothing to read until the browser saves one
+    finally:
+        conn.rollback()  # read-only: release the lock
+
+
 def save_model_reading(
     conn: sqlite3.Connection, region_id: str, content_hash_: str, reading
 ) -> None:

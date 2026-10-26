@@ -1,10 +1,12 @@
 """INK-014: background recognition per chunk, cached by (region, content_hash). No network: fake model."""
 
+import sqlite3
 import threading
 import time
 
 import pytest
 
+from inkbridge import db
 from inkbridge.recognition_worker import RecognitionWorker
 from inkbridge.recognizer import (
     BadResponse,
@@ -307,3 +309,163 @@ def test_worker_never_imports_the_api():
         for a in n.names
     }
     assert not any(m.startswith("inkbridge.api") for m in imported)
+
+
+def other_png():
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 3), "white").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_ink_edited_during_another_call_is_not_read_under_its_old_hash(client):
+    """The candidate list is seconds old by the time a chunk's turn comes: re-check it."""
+    canvas = fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    before = {c["id"]: c["content_hash"] for c in canvas.chunks("active")}
+    edited = other_png()
+
+    class EditsBoth(FakeModel):
+        def __call__(self, png, hint):
+            if not self.calls:  # during the first call both chunks are edited and re-cropped
+                for i in ("a0", "b0"):
+                    canvas.el(i)["points"] = [[0, 0], [8, 3]]
+                canvas.put()
+                for rid in before:
+                    r = client.put(
+                        f"/regions/{rid}/image",
+                        data={"scene_version": str(canvas.version)},
+                        files={"image": ("c.png", edited, "image/png")},
+                    )
+                    assert r.status_code == 200
+            return super().__call__(png, hint)
+
+    model = EditsBoth()
+    w = worker(model)
+    assert w.run_once() == 1, "the second chunk is skipped: its listed hash is gone"
+    conn = db.connect()
+    try:
+        read_old = [
+            rid
+            for rid, h in before.items()
+            if conn.execute(
+                "SELECT 1 FROM recognitions WHERE region_id = ? AND content_hash = ?", (rid, h)
+            ).fetchone()
+        ]
+    finally:
+        conn.close()
+    # Only the chunk read before the edit has a reading for its old hash (its bytes were old).
+    assert len(read_old) == 1
+    assert w.run_once() == 2 and model.calls[1:] == [edited, edited]
+
+
+def test_a_locked_database_keeps_the_reading_and_does_not_call_again(client, monkeypatch):
+    canvas = fresh_canvas(client)
+    real = db.save_model_reading
+    failures = [sqlite3.OperationalError("database is locked")]
+
+    def flaky(*a, **kw):
+        if failures:
+            raise failures.pop()
+        return real(*a, **kw)
+
+    monkeypatch.setattr(db, "save_model_reading", flaky)
+    model = FakeModel()
+    w = worker(model)
+    assert w.run_once() == 1 and canvas.chunk_of("a0")["text"] is None
+    assert w.run_once() == 0, "the kept reading is saved without a new call"
+    assert canvas.chunk_of("a0")["text"] == "x squared" and len(model.calls) == 1
+
+
+def test_a_rate_limit_pauses_every_chunk_not_just_the_one(client):
+    fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    t = [float(LATER)]
+    model = FakeModel(errors=[RateLimited("429")])
+    w = worker(model, clock=lambda: t[0], backoff_s=30)
+    assert w.run_once() == 1, "the second chunk is not tried against an exhausted quota"
+    t[0] += 10
+    assert w.run_once() == 0
+    t[0] += 25
+    assert w.run_once() == 2
+
+
+def test_a_bad_reply_does_not_pause_the_other_chunks(client):
+    fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    model = FakeModel(errors=[BadResponse("junk")])
+    assert worker(model).run_once() == 2
+
+
+def test_stop_is_honoured_between_chunks(client):
+    fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+
+    class StopsAfterOne(FakeModel):
+        def __call__(self, png, hint):
+            w.stop(timeout=0)
+            return super().__call__(png, hint)
+
+    model = StopsAfterOne()
+    w = worker(model)
+    assert w.run_once() == 1
+
+
+def test_a_manual_region_keeps_its_creators_kind(client):
+    canvas = fresh_canvas(client)
+    r = client.post(
+        "/documents/default/regions",
+        data={"element_ids": '["a0"]', "kind": "diagram"},
+        files={"image": ("c.png", PNG, "image/png")},
+    ).json()
+    worker(FakeModel(kind="equation")).run_once()
+    assert client.get(f"/regions/{r['id']}").json()["kind"] == "diagram"
+    assert client.get(f"/regions/{r['id']}").json()["source"] == "gemini"
+    assert canvas.chunk_of("a0")["kind"] == "equation"
+
+
+def test_kind_is_not_applied_when_the_ink_changed_meanwhile(client):
+    canvas = fresh_canvas(client)
+    chunk = canvas.chunk_of("a0")
+    canvas.el("a0")["points"] = [[0, 0], [8, 3]]
+    canvas.put()
+    hinted = canvas.chunk_of("a0")["kind"]
+    conn = db.connect()
+    try:
+        reading = Recognition(text="t", latex=None, kind="diagram", model="m")
+        db.save_model_reading(conn, chunk["id"], chunk["content_hash"], reading)
+    finally:
+        conn.close()
+    assert canvas.chunk_of("a0")["kind"] == hinted
+
+
+def test_chunks_api_shows_the_reading(client):
+    canvas = fresh_canvas(client)
+    worker(FakeModel()).run_once()
+    body = client.get("/documents/default/chunks").json()
+    (c,) = [c for c in body["chunks"] if c["id"] == canvas.chunk_of("a0")["id"]]
+    assert (c["text"], c["latex"], c["kind"]) == ("x squared", "x^2", "equation")
+
+
+def test_from_env_never_raises(monkeypatch):
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZE_DOCUMENTS", "eval-1")
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZE_IDLE_S", "soon")
+    w = RecognitionWorker.from_env(recognizer=FakeModel())
+    assert w is not None and w.idle_s == 5.0
+    from inkbridge.recognizer import gemini
+
+    def broken():
+        raise ImportError("no SDK")
+
+    monkeypatch.setattr(gemini, "default_recognizer", broken)
+    assert RecognitionWorker.from_env() is None
+
+
+def test_backoff_entries_of_superseded_ink_are_dropped(client):
+    canvas = fresh_canvas(client)
+    w = worker(FakeModel(errors=[BadResponse("junk")]))
+    w.run_once()
+    assert len(w._failures) == 1
+    canvas.el("a0")["points"] = [[0, 0], [8, 3]]
+    canvas.put()
+    w.run_once()
+    assert w._failures == {}

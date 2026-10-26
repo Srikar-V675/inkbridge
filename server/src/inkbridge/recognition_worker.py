@@ -3,8 +3,9 @@
 A daemon thread with its own SQLite connection wakes every `poll_s`, and for each opted-in canvas
 that has been idle for `idle_s` reads the active regions whose crop is fresh (png_stale = 0) and
 whose content_hash has no reading yet. Readings are a cache keyed by (region, content_hash), so
-unchanged or merely moved ink never calls the model. Model failures back off per (region, hash)
-and are only logged; drawing never waits on this thread.
+unchanged or merely moved ink never calls the model. Model failures back off per (region, hash),
+a 429 or timeout pauses the whole worker, and both are only logged; drawing never waits on this
+thread. Run one API process: each process would run its own worker (decision 0017).
 
 Privacy: the Gemini free tier may train on what it receives, so nothing is read unless its canvas
 id is listed in INKBRIDGE_RECOGNIZE_DOCUMENTS (test and eval pages only).
@@ -12,14 +13,20 @@ id is listed in INKBRIDGE_RECOGNIZE_DOCUMENTS (test and eval pages only).
 
 import logging
 import os
+import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterable
 from datetime import datetime
-from pathlib import Path
 
 from inkbridge import db
-from inkbridge.recognizer import PermanentError, Recognizer
+from inkbridge.recognizer import (
+    PermanentError,
+    RateLimited,
+    Recognition,
+    Recognizer,
+    RecognizerTimeout,
+)
 
 log = logging.getLogger(__name__)
 
@@ -45,27 +52,37 @@ class RecognitionWorker:
         self._backoff_s, self._backoff_max_s = backoff_s, backoff_max_s
         self._clock = clock
         self._publish = publish
-        self._failures: dict[tuple[str, str], tuple[int, float]] = {}  # -> (count, retry_at)
+        Key = tuple[str, str]  # (region id, content hash)
+        self._failures: dict[Key, tuple[int, float]] = {}  # -> (count, retry at)
+        self._unsaved: dict[Key, Recognition] = {}  # readings whose save hit a locked database
+        self._paused_until = 0.0  # after a 429 or timeout no chunk is read, not just that one
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.stopped = False  # a PermanentError (missing or rejected key) ends the worker
 
     @classmethod
     def from_env(cls, recognizer: Recognizer | None = None, **kw) -> "RecognitionWorker | None":
-        """The configured worker, or None when no canvas is opted in or the model cannot start."""
+        """The configured worker, or None when no canvas is opted in or the model cannot start.
+
+        Never raises: a bad setting logs a warning and the API starts without the worker.
+        """
         raw = os.environ.get("INKBRIDGE_RECOGNIZE_DOCUMENTS", "")
         documents = tuple(d.strip() for d in raw.split(",") if d.strip())
         if not documents:
             return None
+        try:
+            idle = float(os.environ.get("INKBRIDGE_RECOGNIZE_IDLE_S") or 5)
+        except ValueError:
+            log.warning("INKBRIDGE_RECOGNIZE_IDLE_S is not a number; using 5 s")
+            idle = 5.0
         if recognizer is None:
             from inkbridge.recognizer.gemini import default_recognizer
 
             try:
                 recognizer = default_recognizer()
-            except PermanentError as e:
+            except Exception as e:  # noqa: BLE001 - e.g. missing key or SDK: start without it
                 log.warning("recognition worker not started: %s", e)
                 return None
-        idle = float(os.environ.get("INKBRIDGE_RECOGNIZE_IDLE_S", "5"))
         return cls(recognizer, documents, idle_s=idle, **kw)
 
     # -- thread ---------------------------------------------------------------------------------
@@ -77,6 +94,8 @@ class RecognitionWorker:
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Ask the thread to stop. A model call already in flight is not interrupted; the thread
+        is a daemon, so it never holds up process exit."""
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout)
@@ -110,49 +129,75 @@ class RecognitionWorker:
             return False
         return self._clock() - datetime.fromisoformat(updated).timestamp() >= self.idle_s
 
+    def _may_go_on(self, conn, document_id: str) -> bool:
+        """Checked before every chunk: stop, a fatal error, a global pause or new drawing."""
+        return (
+            not self._stop.is_set()
+            and not self.stopped
+            and self._clock() >= self._paused_until
+            and self._idle(conn, document_id)
+        )
+
     def _read_document(self, conn, document_id: str) -> int:
         calls, recognized = 0, []
-        for region in db.recognition_candidates(conn, document_id):
-            # Checked before every call: a canvas being drawn on again is left alone.
-            if self._stop.is_set() or self.stopped or not self._idle(conn, document_id):
-                break
-            key = (region["id"], region["content_hash"])
-            failed = self._failures.get(key)
-            if failed and self._clock() < failed[1]:
-                continue
-            try:
-                png = Path(region["png_path"]).read_bytes()
-            except OSError:
-                continue  # the crop file is missing: nothing to read until the browser saves one
-            calls += 1
-            try:
-                reading = self.recognizer(png, None)
-            except PermanentError as e:
-                self.stopped = True
-                log.error("recognition worker stopped: %s", e)
-                break
-            except Exception as e:  # noqa: BLE001 - never let a model failure reach the editor
-                self._back_off(key, e)
-                continue
-            self._failures.pop(key, None)
-            db.save_model_reading(conn, region["id"], region["content_hash"], reading)
-            recognized.append(region["id"])
-        if recognized and self._publish is not None:
-            self._publish(
-                document_id,
-                {
-                    "type": "chunks.updated",
-                    "version": db.get_scene(conn, document_id)[0],
-                    "stale_crops": db.stale_crop_ids(conn, document_id),
-                    "recognized": recognized,
-                },
-            )
+        candidates = db.recognition_candidates(conn, document_id)
+        keys = {(c["id"], c["content_hash"]) for c in candidates}
+        for key in [k for k in self._failures if k not in keys]:
+            del self._failures[key]  # superseded ink or a gone chunk: forget its backoff
+        try:
+            for region in candidates:
+                if not self._may_go_on(conn, document_id):
+                    break
+                key = (region["id"], region["content_hash"])
+                failed = self._failures.get(key)
+                if failed and self._clock() < failed[1]:
+                    continue
+                reading = self._unsaved.pop(key, None)
+                if reading is None:
+                    # Re-checked under the lock crop uploads take: the ink may have changed
+                    # since the candidates were listed (earlier calls take seconds).
+                    png = db.read_fresh_crop(conn, region["id"], region["content_hash"])
+                    if png is None:
+                        continue
+                    calls += 1
+                    try:
+                        reading = self.recognizer(png, None)
+                    except PermanentError as e:
+                        self.stopped = True
+                        log.error("recognition worker stopped: %s", e)
+                        break
+                    except Exception as e:  # noqa: BLE001 - a model failure never reaches the editor
+                        self._back_off(key, e)
+                        continue
+                    self._failures.pop(key, None)
+                try:
+                    db.save_model_reading(conn, region["id"], region["content_hash"], reading)
+                except sqlite3.OperationalError as e:  # locked: keep the reading, no new call
+                    conn.rollback()
+                    self._unsaved[key] = reading
+                    log.warning("saving the reading of %s failed (%s); will retry", key[0], e)
+                    continue
+                recognized.append(region["id"])
+        finally:
+            if recognized and self._publish is not None:
+                self._publish(
+                    document_id,
+                    {
+                        "type": "chunks.updated",
+                        "version": db.get_scene(conn, document_id)[0],
+                        "stale_crops": db.stale_crop_ids(conn, document_id),
+                        "recognized": recognized,
+                    },
+                )
         return calls
 
     def _back_off(self, key: tuple[str, str], error: Exception) -> None:
         count = self._failures.get(key, (0, 0.0))[0] + 1
         delay = min(self._backoff_s * 2 ** (count - 1), self._backoff_max_s)
         self._failures[key] = (count, self._clock() + delay)
+        if isinstance(error, RateLimited | RecognizerTimeout):
+            # The provider is the problem, not this chunk: trying the next one would hit it too.
+            self._paused_until = self._clock() + delay
         log.warning(
             "recognition of %s failed (%s: %s); retry in %.0f s",
             key[0],
