@@ -15,5 +15,14 @@ Status: accepted (INK-043)
   tool takes only a title, so it has no way to name or change an existing canvas.
 - **A new canvas shows its first drafts.** A canvas opened empty with no remembered view used to
   leave drafts at the origin, under the toolbar. The web app now fits the view to the first
-  drafts that arrive on such a canvas, once. It stops as soon as the user draws, so drafts never
-  move a view the user is working in.
+  drafts that arrive on such a canvas, once. It stops as soon as the user draws, pans or zooms
+  (`keepFittingFirstDrafts` in `web/src/view.ts`), so drafts never move a view the user is
+  working in.
+- **Caps on what an agent can pile up.** The LAN API has no auth, so an agent caught in a loop
+  could otherwise grow the database without limit:
+  - at most 500 canvases in all (`409 too_many_canvases`);
+  - at most 200 ops per canvas still waiting for a browser, pending or delivered
+    (`409 too_many_open_ops`). Drawn, resolved and expired ops do not count.
+
+  Both error messages say what to do instead.
+- **Anchor errors name the fix.** `anchor_not_found` carries a `msg` pointing to `read_canvas`.

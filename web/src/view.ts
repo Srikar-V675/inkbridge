@@ -39,3 +39,20 @@ export function saveView(storage: Store, canvas: string, view: View) {
     // blocked storage: the view simply is not remembered
   }
 }
+
+/**
+ * A canvas opened empty with no remembered view is fitted to the first agent drafts that arrive
+ * (decision 0019), unless the user has taken over first: panned or zoomed away from `armed` (the
+ * view when the canvas opened), or drawn anything that is not a draft.
+ */
+export function keepFittingFirstDrafts(
+  armed: View,
+  now: View,
+  elements: readonly { isDeleted?: boolean; customData?: unknown }[],
+): boolean {
+  if (armed.scrollX !== now.scrollX || armed.scrollY !== now.scrollY || armed.zoom !== now.zoom)
+    return false;
+  return !elements.some(
+    (e) => !e.isDeleted && !(e.customData as { draft?: boolean } | undefined)?.draft,
+  );
+}

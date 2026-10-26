@@ -92,7 +92,24 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     except ops_db.ExistingElementIds as e:
         raise _existing(e.ids) from None
     except ops_db.AnchorNotFound:
-        raise HTTPException(422, {"code": "anchor_not_found", "anchor": payload.anchor}) from None
+        raise HTTPException(
+            422,
+            {
+                "code": "anchor_not_found",
+                "anchor": payload.anchor,
+                "msg": f"anchor chunk {payload.anchor!r} is not on this canvas; "
+                "get chunk ids from read_canvas, or omit anchor",
+            },
+        ) from None
+    except ops_db.TooManyOpen:
+        raise HTTPException(
+            409,
+            {
+                "code": "too_many_open_ops",
+                "msg": f"this canvas already has {ops_db.MAX_OPEN_OPS} drafts waiting for a "
+                "browser; open the canvas, or wait for the user to accept or reject them",
+            },
+        ) from None
     except ops_db.OpConflict:
         raise HTTPException(409, {"code": "op_id_conflict", "op_id": body.op_id}) from None
     response.status_code = 201 if created else 200

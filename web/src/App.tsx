@@ -10,7 +10,7 @@ import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
-import { loadView, saveView, type View } from "./view";
+import { keepFittingFirstDrafts, loadView, saveView, type View } from "./view";
 
 const LABEL: Record<SaveState, string> = {
   loading: "Loading…",
@@ -153,6 +153,7 @@ export default function App() {
   // A canvas opened empty with no remembered view (one an agent just created): show the first
   // drafts that arrive instead of leaving them under the toolbar at the origin.
   const fitFirstDrafts = useRef(false);
+  const armedView = useRef<View | null>(null);
   const pendingJump = useRef<JumpResult | null>(null);
   const sceneReady = useRef(false);
   const [api, setApi] = useState<Api | null>(null);
@@ -292,14 +293,13 @@ export default function App() {
       appState: { scrollX: number; scrollY: number; zoom: { value: number } },
     ) => {
       syncRef.current?.notify(elements as unknown as SceneElement[]);
-      // The user started drawing: from now on their view is theirs, drafts never move it.
-      if (
-        fitFirstDrafts.current &&
-        (elements as SceneElement[]).some(
-          (e) => !e.isDeleted && !(e.customData as { draft?: boolean } | undefined)?.draft,
-        )
-      )
-        fitFirstDrafts.current = false;
+      // The user took over (panned, zoomed or drew): drafts never move their view from now on.
+      if (fitFirstDrafts.current) {
+        const now = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
+        armedView.current ??= now;
+        if (!keepFittingFirstDrafts(armedView.current, now, elements as never))
+          fitFirstDrafts.current = false;
+      }
       // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
       sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {

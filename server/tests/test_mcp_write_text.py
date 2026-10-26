@@ -85,7 +85,7 @@ def test_write_text_cannot_name_existing_ink(mcp_client):
 def test_write_text_errors_say_what_to_do(mcp_client):
     with pytest.raises(ToolError, match="Not found.*document_id"):
         call("write_text", text="x", document_id="nope")
-    with pytest.raises(ToolError, match="anchor"):
+    with pytest.raises(ToolError, match="not on this canvas; get chunk ids from read_canvas"):
         call("write_text", text="x", anchor="no-such-chunk")
     with pytest.raises(ToolError, match="title"):
         call("create_canvas", title="   ")
@@ -94,3 +94,30 @@ def test_write_text_errors_say_what_to_do(mcp_client):
 def test_tools_are_registered():
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert {"write_text", "create_canvas", "draw_diagram"} <= names
+
+
+def test_open_drafts_per_canvas_are_capped(mcp_client, monkeypatch):
+    from inkbridge.db import ops as ops_db
+
+    monkeypatch.setattr(ops_db, "MAX_OPEN_OPS", 3)
+    for i in range(3):
+        call("write_text", text=f"t{i}")
+    with pytest.raises(ToolError, match="already has 3 drafts waiting"):
+        call("write_text", text="one too many")
+    # Once a browser drew one (applied), there is room again.
+    op = mcp_client.get("/documents/default/ops").json()["ops"][0]
+    mcp_client.patch(
+        f"/ops/{op['id']}",
+        json={"status": "applied", "element_ids": [op["payload"]["id_prefix"] + "1"]},
+    )
+    call("write_text", text="fits now")
+
+
+def test_canvases_are_capped(mcp_client, monkeypatch):
+    from inkbridge.db import outline
+
+    total = len(mcp_client.get("/documents").json())
+    monkeypatch.setattr(outline, "MAX_DOCUMENTS", total + 1)
+    call("create_canvas", title="last one")
+    with pytest.raises(ToolError, match="already .* canvases; write into an existing one"):
+        call("create_canvas", title="too many")

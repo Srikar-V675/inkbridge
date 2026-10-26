@@ -34,7 +34,17 @@ class DocumentIn(BaseModel):
 
 @router.post("/documents", status_code=201)
 def create_document(body: DocumentIn, conn: Conn) -> dict:
-    doc = outline.create_document(conn, body.title)
+    try:
+        doc = outline.create_document(conn, body.title)
+    except outline.TooManyDocuments:
+        raise HTTPException(
+            409,
+            {
+                "code": "too_many_canvases",
+                "msg": f"there are already {outline.MAX_DOCUMENTS} canvases; "
+                "write into an existing one (pass its document_id)",
+            },
+        ) from None
     return {**doc, "url": deep_link(doc["id"])}
 
 
