@@ -1,8 +1,10 @@
 // Chunk boxes and ids drawn as plain DOM over the canvas. UI state only: nothing here touches the
-// Excalidraw scene, so the overlay can never be autosaved (docs/decisions/0014).
-import { useEffect, useState } from "react";
+// Excalidraw scene, so the overlay can never be autosaved (docs/decisions/0014). The merge and
+// split actions only call the API (docs/decisions/0017); they never change elements either.
+import { useCallback, useEffect, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
+import { planOverride, sendOverride } from "./overrides";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
 
@@ -21,9 +23,26 @@ function useView(api: ExcalidrawImperativeAPI): View {
   return view;
 }
 
+/** Selected element ids, updated only when the selection itself changes (not on every stroke point). */
+function useSelection(api: ExcalidrawImperativeAPI): string[] {
+  const [selected, setSelected] = useState<string[]>([]);
+  useEffect(
+    () =>
+      api.onChange((_elements, appState) => {
+        const ids = Object.keys(appState.selectedElementIds).filter((id) => appState.selectedElementIds[id]);
+        ids.sort();
+        setSelected((prev) => (prev.length === ids.length && prev.every((id, i) => id === ids[i]) ? prev : ids));
+      }),
+    [api],
+  );
+  return selected;
+}
+
 /** Active chunks while `on`, refetched after every save (the server re-derives chunks on save). */
-function useChunks(canvas: string, on: boolean, status: StatusStore): Chunk[] {
+function useChunks(canvas: string, on: boolean, status: StatusStore): [Chunk[], () => void] {
   const [chunks, setChunks] = useState<Chunk[]>([]);
+  const [generation, setGeneration] = useState(0);
+  const reload = useCallback(() => setGeneration((g) => g + 1), []);
   useEffect(() => {
     if (!on) return;
     // Saves can overlap the fetch: only the latest request may set the list.
@@ -44,8 +63,75 @@ function useChunks(canvas: string, on: boolean, status: StatusStore): Chunk[] {
       unsubscribe();
       setChunks([]);
     };
-  }, [canvas, on, status]);
-  return on ? chunks : [];
+  }, [canvas, on, status, generation]);
+  return [on ? chunks : [], reload];
+}
+
+const actionButton = (enabled: boolean): React.CSSProperties => ({
+  padding: "4px 10px",
+  borderRadius: 6,
+  border: "1px solid #ced4da",
+  font: "12px system-ui, sans-serif",
+  background: "#fff",
+  color: enabled ? "#202124" : "#adb5bd",
+});
+
+/** "Merge chunks" and "Split selection" for the current selection, next to the overlay toggle. */
+function OverrideActions(props: { canvas: string; selected: string[]; chunks: Chunk[]; onDone: () => void }) {
+  const { canvas, selected, chunks, onDone } = props;
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const plan = planOverride(selected, chunks);
+  const run = async () => {
+    setBusy(true);
+    const r = await sendOverride(canvas, plan);
+    setBusy(false);
+    setMessage(r.ok ? (plan.kind === "merge" ? `Merged into ${r.ids[0]}` : `Split into ${r.ids.join(" and ")}`) : r.message);
+    onDone(); // refresh either way: a refusal usually means the list was stale
+  };
+  const merge = plan.kind === "merge" && !busy;
+  const split = plan.kind === "split" && !busy;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        right: 12,
+        bottom: 96,
+        zIndex: 10,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        gap: 6,
+        maxWidth: "calc(100% - 24px)",
+      }}
+    >
+      {message && (
+        <div role="status" style={{ font: "12px system-ui, sans-serif", background: "#fff", padding: "2px 8px", borderRadius: 4 }}>
+          {message}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          type="button"
+          disabled={!merge}
+          title={plan.kind === "none" ? plan.reason : undefined}
+          onClick={() => void run()}
+          style={actionButton(merge)}
+        >
+          Merge chunks
+        </button>
+        <button
+          type="button"
+          disabled={!split}
+          title={plan.kind === "none" ? plan.reason : undefined}
+          onClick={() => void run()}
+          style={actionButton(split)}
+        >
+          Split selection
+        </button>
+      </div>
+    </div>
+  );
 }
 
 const box = (b: Bounds, v: View): React.CSSProperties => {
@@ -75,7 +161,8 @@ export function ChunkOverlay(props: {
   const { api, canvas, status, ghost } = props;
   const [on, setOn] = useState(false);
   const view = useView(api);
-  const chunks = useChunks(canvas, on, status);
+  const selected = useSelection(api);
+  const [chunks, reload] = useChunks(canvas, on, status);
 
   return (
     <>
@@ -87,9 +174,17 @@ export function ChunkOverlay(props: {
         >
           {on &&
             chunks.map((c) => (
-              <div key={c.id} data-chunk-id={c.id} style={{ ...box(c.bounds, view), border: "1.5px solid #1971c2" }}>
+              <div
+                key={c.id}
+                data-chunk-id={c.id}
+                data-pinned={c.pinned ? "true" : undefined}
+                style={{ ...box(c.bounds, view), border: `${c.pinned ? 2.5 : 1.5}px solid #1971c2` }}
+              >
                 {/* Above the box, or inside it when the box touches the top edge. */}
-                <span style={{ ...label, top: toScreen(c.bounds, view).top < 16 ? 0 : -16 }}>{c.id}</span>
+                <span style={{ ...label, top: toScreen(c.bounds, view).top < 16 ? 0 : -16 }}>
+                  {c.id}
+                  {c.pinned ? " · manual" : ""}
+                </span>
               </div>
             ))}
           {ghost && (
@@ -97,6 +192,7 @@ export function ChunkOverlay(props: {
           )}
         </div>
       )}
+      {on && <OverrideActions canvas={canvas} selected={selected} chunks={chunks} onDone={reload} />}
       <button
         type="button"
         aria-pressed={on}

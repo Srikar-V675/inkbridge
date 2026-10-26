@@ -18,6 +18,7 @@ EXPECTED = {
         "content_hash",
         "successor_of",
         "png_stale",
+        "pinned",
         "png_path",
         "status",
         "updated_at",

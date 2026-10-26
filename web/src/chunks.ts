@@ -17,6 +17,8 @@ export interface Chunk {
   status: "active" | "orphaned" | string;
   successor_of: string | null;
   created_by?: string;
+  /** A manual merge or split (INK-059): later automatic runs keep it as it is. */
+  pinned?: boolean;
 }
 
 export type JumpOutcome = "found" | "successor" | "orphaned" | "missing" | "error";

@@ -102,20 +102,29 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
     return _proximity(elements, config or ChunkerConfig())[0]
 
 
+def _box(e: dict[str, Any]) -> tuple[float, float, float, float]:
+    b = bbox_of([e])
+    return (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"])
+
+
 def _proximity(
-    elements: list[dict[str, Any]], config: ChunkerConfig
+    elements: list[dict[str, Any]], config: ChunkerConfig, exclude: Collection[str] = ()
 ) -> tuple[list[list[str]], float]:
-    """Proximity clusters and the median element size they were measured with."""
-    live = sorted(clustering_elements(elements), key=lambda e: str(e["id"]))
-    if not live:
+    """Proximity clusters and the median element size they were measured with.
+
+    Ids in `exclude` (pinned ink, INK-059) take no part in the clusters but still count in the
+    median, so pinning a group does not change how the rest of the page clusters.
+    """
+    every = sorted(clustering_elements(elements), key=lambda e: str(e["id"]))
+    if not every:
         return [], config.min_median
-    boxes = []
-    for e in live:
-        b = bbox_of([e])
-        boxes.append((b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]))
-    sizes = [max(b[2] - b[0], b[3] - b[1]) for b in boxes]
+    sizes = [max(b[2] - b[0], b[3] - b[1]) for b in map(_box, every)]
     median = max(statistics.median(sizes), config.min_median)
     threshold = config.k * median
+    live = [e for e in every if str(e["id"]) not in exclude] if exclude else every
+    if not live:
+        return [], median
+    boxes = [_box(e) for e in live]
 
     index = {str(e["id"]): i for i, e in enumerate(live)}
     uf = _UnionFind(len(live))
@@ -212,6 +221,34 @@ def _proximity(
 class Chunking:
     chunks: list[list[str]]  # sorted element ids per chunk, ordered by their smallest id
     links: list[tuple[int, int]]  # arrow links (from, to) as indices into chunks, sorted, unique
+    pinned: list[bool]  # per chunk: built from a pin (a manual merge or split, INK-059)
+
+
+def pin_groups(elements: list[dict[str, Any]], pins: Sequence[Collection[str]]) -> list[list[str]]:
+    """The pins reduced to ink that clusters, made disjoint (an earlier pin keeps a shared id).
+
+    Ids that are deleted, drafts, connectors or unknown are dropped (connectors attach by the arrow
+    rules instead); bound text and its container always go together; empty pins vanish.
+    """
+    live = {str(e["id"]): e for e in clustering_elements(elements)}
+    texts: dict[str, list[str]] = {}
+    for eid, e in live.items():
+        if e.get("containerId") is not None and str(e["containerId"]) in live:
+            texts.setdefault(str(e["containerId"]), []).append(eid)
+    taken: set[str] = set()
+    out = []
+    for pin in pins:
+        group = {str(i) for i in pin if str(i) in live}
+        containers = {
+            str(live[i]["containerId"]) for i in group if str(live[i].get("containerId")) in live
+        }
+        group |= containers
+        group |= {t for c in group for t in texts.get(c, ())}
+        group -= taken
+        if group:
+            out.append(sorted(group))
+            taken |= group
+    return out
 
 
 def _live(element: dict[str, Any]) -> bool:
@@ -228,7 +265,11 @@ def _path_length(points: list[list[float]]) -> float:
     return sum(math.dist(a[:2], b[:2]) for a, b in itertools.pairwise(points))
 
 
-def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = None) -> Chunking:
+def chunk_scene(
+    elements: list[dict[str, Any]],
+    config: ChunkerConfig | None = None,
+    pins: Sequence[Collection[str]] = (),
+) -> Chunking:
     """Proximity clusters plus the arrow rules of tech ref 5.5.
 
     Each arrow end maps to a chunk: the chunk of its bound element (startBinding/endBinding; a
@@ -239,9 +280,16 @@ def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = N
     arrow creates neither. Lines never merge or link. Every live arrow or line joins the chunk of
     its start (else of its end, else forms a chunk of its own), and its bound label goes with it,
     so connectors are part of some chunk's hash and crop.
+
+    `pins` (INK-059, docs/decisions/0017) are manual chunks: each becomes exactly one chunk of its
+    ink (see `pin_groups`), nothing joins it by proximity or by an arrow merge (such an arrow
+    links instead), and connectors still attach to it.
     """
     config = config or ChunkerConfig()
-    groups, median = _proximity(elements, config)
+    pinned_groups = pin_groups(elements, pins)
+    groups, median = _proximity(elements, config, exclude={i for g in pinned_groups for i in g})
+    first_pinned = len(groups)
+    groups = groups + pinned_groups
     by_id = {str(e.get("id")): e for e in elements}
     owner = {eid: gi for gi, members in enumerate(groups) for eid in members}
     boxes = [bbox_of([by_id[i] for i in members]) for members in groups]
@@ -303,7 +351,8 @@ def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = N
         # A connector needs a drawn path to join or connect anything.
         is_arrow = c.get("type") == "arrow" and len(points) >= 2
         short = _path_length(points) <= config.arrow_merge * median
-        if is_arrow and short and start is not None and end is not None:
+        free = start is not None and end is not None and max(start, end) < first_pinned
+        if is_arrow and short and free:
             uf.union(start, end)
             ends.append((c, start, end, False))
         else:
@@ -332,7 +381,9 @@ def chunk_scene(elements: list[dict[str, Any]], config: ChunkerConfig | None = N
     )
     index = {r: i for i, (_, r) in enumerate(final) if r is not None}
     links = sorted({(index[a], index[b]) for a, b in raw_links})
-    return Chunking([m for m, _ in final], links)
+    # Pinned groups never union, so each is its own root.
+    pinned = [r is not None and r >= first_pinned for _, r in final]
+    return Chunking([m for m, _ in final], links, pinned)
 
 
 def connector_ids(elements: list[dict[str, Any]]) -> set[str]:
