@@ -87,9 +87,33 @@ def _tip(pts: list[Point]) -> tuple[int, bool]:
     return far, _length(pts[far:]) > HOOK * total
 
 
+def _finite(v: Any) -> bool:
+    return isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def usable(e: Any) -> bool:
+    """Skip malformed elements instead of failing the whole read (the scene is stored as sent)."""
+    if not isinstance(e, dict) or not isinstance(e.get("id"), str):
+        return False
+    if not all(_finite(e.get(k, 0)) for k in ("x", "y", "width", "height")):
+        return False
+    if e.get("type") in SHAPES and not (e.get("width", 0) > 0 and e.get("height", 0) > 0):
+        return False
+    if "text" in e and not isinstance(e["text"], str | None):
+        return False
+    pts = e.get("points")
+    return pts is None or (
+        isinstance(pts, list)
+        and all(
+            isinstance(p, list | tuple) and len(p) >= 2 and _finite(p[0]) and _finite(p[1])
+            for p in pts
+        )
+    )
+
+
 def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
     """Nodes, arrows and unattached strokes of a sketch, with confidences and element ids."""
-    live = [e for e in elements if not e.get("isDeleted")]
+    live = [e for e in elements if not e.get("isDeleted") and usable(e)]
     nodes: list[dict[str, Any]] = []
     rest: list[dict[str, Any]] = []
     for e in live:
@@ -131,23 +155,22 @@ def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
 
     sizes = sorted(_diag(n["box"]) for n in nodes)
     tol = max(15.0, 0.15 * sizes[len(sizes) // 2]) if sizes else 15.0
-    shafts = sorted(candidates, key=lambda e: -_length(_points(e)))
-    used: set[str] = set()
     arrows: list[dict[str, Any]] = []
-    unattached: list[str] = []
 
     def nearest(p: Point) -> tuple[dict | None, float]:
         best = min(nodes, key=lambda n: _distance(p, n["box"]), default=None)
         return best, (_distance(p, best["box"]) if best else math.inf)
 
-    for e in shafts:
-        if e["id"] in used:
-            continue
+    # First classify every stroke: one whose two ends touch two different nodes is a shaft.
+    # Only the others can be arrowheads, so a short arrow is never taken as a longer one's head.
+    shafts: list[dict[str, Any]] = []
+    pool: list[dict[str, Any]] = []
+    for e in candidates:
         pts = _points(e)
         if len(pts) < 2:
+            pool.append(e)
             continue
         start, end, head, evidence = pts[0], pts[-1], None, 0.0
-        ids = [e["id"]]
         if e.get("type") in ("arrow", "line"):
             if e.get("endArrowhead") and e.get("startArrowhead"):
                 head, evidence = "both", 1.0
@@ -171,14 +194,33 @@ def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
                 else:
                     b, db = node, 0.0
         if a is None or b is None or a is b or da > tol or db > tol:
-            used.add(e["id"])
-            unattached.append(e["id"])
+            pool.append(e)
             continue
-        shaft = _length(pts)
+        shafts.append(
+            {
+                "e": e,
+                "pts": pts,
+                "start": start,
+                "end": end,
+                "head": head,
+                "evidence": evidence,
+                "a": a,
+                "da": da,
+                "b": b,
+                "db": db,
+            }
+        )
+
+    used: set[str] = set()
+    for sh in sorted(shafts, key=lambda sh: -_length(sh["pts"])):
+        e, start, end, head, evidence = sh["e"], sh["start"], sh["end"], sh["head"], sh["evidence"]
+        a, da, b, db = sh["a"], sh["da"], sh["b"], sh["db"]
+        ids = [e["id"]]
         if head is None:
             # A separate small stroke near one end is the arrowhead.
-            for h in shafts:
-                if h["id"] in used or h is e:
+            shaft = _length(sh["pts"])
+            for h in pool:
+                if h["id"] in used or not _points(h):
                     continue
                 hb = bbox_of([h])
                 if _diag(hb) > HEAD_SIZE * shaft:
@@ -190,9 +232,8 @@ def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
                     ids.append(h["id"])
                     used.add(h["id"])
                     break
-        used.add(e["id"])
         if head == "start":
-            a, b, start, end = b, a, end, start
+            a, b, da, db, start, end = b, a, db, da, end, start
             head = "end"
         # Ends within a third of the tolerance count as touching (pens and arrows leave a gap).
         slack = tol / 3
@@ -209,10 +250,10 @@ def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
                 "confidence": round(confidence, 3),
             }
         )
+    unattached = [e["id"] for e in pool if e["id"] not in used]
     arrows.sort(key=lambda r: (int(r["from"][1:]), int(r["to"][1:])))
     for i, r in enumerate(arrows, 1):
         r["id"] = f"A{i}"
-    unattached += [e["id"] for e in candidates if e["id"] not in used]
     return {
         "nodes": [
             {

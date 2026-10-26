@@ -65,3 +65,13 @@ def test_drafts_are_not_part_of_the_sketch(client):
 def test_unknown_region_is_404(client):
     assert client.get("/regions/nope/sketch").status_code == 404
     assert client.get("/regions/nope/sketch.png").status_code == 404
+
+
+def test_too_many_elements_is_a_422(client, monkeypatch):
+    from inkbridge.api import regions as regions_api
+
+    seed(client)
+    rid = post(client, ["box1", "box2", "shaft", "head"]).json()["id"]
+    monkeypatch.setattr(regions_api, "MAX_SKETCH_ELEMENTS", 3)
+    assert client.get(f"/regions/{rid}/sketch").status_code == 422
+    assert client.get(f"/regions/{rid}/sketch.png").status_code == 422

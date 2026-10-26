@@ -143,12 +143,19 @@ def get_region_ink(
     }
 
 
+MAX_SKETCH_ELEMENTS = 2000  # a flowchart sketch, not a page of notes; keeps pass 1 cheap
+
+
 def _sketch(conn, region_id: str) -> tuple[list[dict], dict]:
     elements = db.get_sketch_elements(conn, region_id)
     if elements is None:
         raise HTTPException(404, "region not found")
     if not elements:
         raise HTTPException(422, "the region has no live ink")
+    if len(elements) > MAX_SKETCH_ELEMENTS:
+        raise HTTPException(
+            422, f"too many elements for a sketch ({len(elements)}, max {MAX_SKETCH_ELEMENTS})"
+        )
     return elements, sketch.read_sketch(elements)
 
 
@@ -157,8 +164,7 @@ def get_region_sketch(region_id: str, conn: Conn) -> dict:
     """Pass 1 of the two-pass sketch reading: guessed nodes and arrows with confidences, and
     where their N/A markers sit on `GET /regions/{id}/sketch.png`."""
     elements, structure = _sketch(conn, region_id)
-    _, markers = sketch_image.render_markers(elements, structure)
-    return {**structure, "markers": markers}
+    return {**structure, "markers": sketch_image.marker_positions(elements, structure)}
 
 
 @router.get("/regions/{region_id}/sketch.png")

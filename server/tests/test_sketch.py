@@ -245,3 +245,50 @@ def test_unattached_strokes_get_grey_markers():
     _, markers = render_markers(els, read_sketch(els))
     (u,) = [m for m in markers if m["id"].startswith("U")]
     assert u["id"] == "U1" and u["element_id"] == "dangling"
+
+
+def test_a_short_arrow_is_not_taken_as_a_longer_arrows_head():
+    # A headless long arrow N1 -> N2 ends right where a short arrow from D also ends: the short
+    # arrow touches two nodes, so it is an arrow of its own, never the long one's head.
+    els = [
+        loop("a", 0, 0, 100, 60),
+        loop("b", 300, 0, 100, 60),
+        loop("d", 230, 100, 60, 40),
+        line("long", (105, 30), (295, 30)),
+        line("short", (275, 98), (296, 36), n=4),
+    ]
+    out = read_sketch(els)
+    assert sorted(a["element_ids"] for a in out["arrows"]) == [["long"], ["short"]]
+
+
+def test_malformed_elements_are_skipped_not_fatal():
+    els = [
+        loop("box1", 0, 0, 100, 60),
+        loop("box2", 300, 0, 100, 60),
+        {"type": "freedraw", "x": 0, "y": 0, "points": [[0, 0], [5, 5]]},  # no id
+        {"id": "t", "type": "text", "x": 10, "y": 10, "width": 5, "height": 5, "text": 5},
+        {"id": "inf", "type": "rectangle", "x": 0, "y": 0, "width": float("inf"), "height": 9},
+        {"id": "flat", "type": "rectangle", "x": 500, "y": 0, "width": 0, "height": 0},
+        {"id": "nanpt", "type": "freedraw", "x": 0, "y": 0, "points": [[0, float("nan")]]},
+        {"id": "one", "type": "arrow", "x": 0, "y": 0, "points": [[0, 0]]},
+    ]
+    out = read_sketch(els)
+    assert [n["element_ids"] for n in out["nodes"]] == [["box1"], ["box2"]]
+    from inkbridge.sketch_image import render_markers
+
+    render_markers(els, out)  # draws without raising
+
+
+def test_marker_image_is_capped_in_height_for_tall_thin_ink():
+    import io
+
+    from PIL import Image
+
+    from inkbridge.sketch_image import MAX_HEIGHT, marker_positions, render_markers
+
+    els = [line("pole", (0, 0), (1, 10_000_000), n=2)]
+    structure = read_sketch(els)
+    png, markers = render_markers(els, structure)
+    w, h = Image.open(io.BytesIO(png)).size
+    assert h <= MAX_HEIGHT and w <= 1024
+    assert marker_positions(els, structure) == markers

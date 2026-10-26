@@ -586,7 +586,8 @@ def get_sketch_elements(conn: sqlite3.Connection, region_id: str) -> list[dict] 
         return None
     ids = list(region["element_ids"])
     for row in conn.execute(
-        "SELECT from_region, to_region FROM links WHERE from_region = ? OR to_region = ?",
+        "SELECT from_region, to_region FROM links WHERE from_region = ? OR to_region = ?"
+        " LIMIT 50",  # a hub chunk must not pull in the whole canvas
         (region_id, region_id),
     ):
         other = row["to_region"] if row["from_region"] == region_id else row["from_region"]

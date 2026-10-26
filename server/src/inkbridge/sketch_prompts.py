@@ -18,6 +18,7 @@ TWO_PASS = f"""Sketch to diagram, two passes.
    server's guess (`sketch`: nodes N1.., arrows A1.. with from/to/head and a confidence, and
    `unattached` strokes) and a second image with red node markers (N1..) on node centres and blue
    arrow markers (A1..) on arrow tips; grey markers (U1..) sit on the `unattached` strokes.
+   The marker image may include nodes from chunks linked by arrows, which the crop does not show.
 2. Check the guess against both images: read each node's label, confirm each arrow's source,
    target and direction, and look at every `unattached` stroke (an arrow whose source or target
    was missed, or not an arrow at all).
