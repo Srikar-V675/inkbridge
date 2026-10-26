@@ -56,7 +56,7 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 | `write_text` | INK-043 | Draft text near an anchor chunk, or in free space; arrives as a draft. | Adds a draft op |
 | `draw_diagram` | INK-044 | Draft a Mermaid flowchart (browser converts and acknowledges; the browser must be open). | Adds a draft op |
 
-Outside MCP: `GET /regions/{id}/png` will serve a chunk's stored crop at full size (INK-033; the built `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
+Outside MCP: `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
 
 ## Limits
 

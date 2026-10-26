@@ -13,3 +13,12 @@ def db_path() -> Path:
 def crops_dir() -> Path:
     # Crop PNGs sit beside the database, one per region (data/crops/<region_id>.png).
     return db_path().parent / "crops"
+
+
+DEFAULT_PUBLIC_URL = "http://localhost:5173"
+
+
+def public_url() -> str:
+    """Base of chunk deep links: the web app as the vault's reader reaches it (a .local name
+    survives an IP change). INKBRIDGE_PUBLIC_URL, default the Vite dev server on this machine."""
+    return os.environ.get("INKBRIDGE_PUBLIC_URL", DEFAULT_PUBLIC_URL).rstrip("/")
