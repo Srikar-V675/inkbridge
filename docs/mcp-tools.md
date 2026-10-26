@@ -36,12 +36,23 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 |---|---|---|---|
 | `list_regions` | `document_id?`, `kind?`, `limit=50` | JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
 | `draw_diagram` | `mermaid` (flowchart only), `anchor?` (chunk id), `document_id?`, `wait_seconds=20` (1 to 60) | JSON `{op_id, status: "applied", element_count}` once the browser has drawn the dashed drafts | Adds a draft op (never edits ink) |
-| `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
+| `get_region` | `region_id`, `include_image=true`, `include_ink=false`, `include_sketch=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?, sketch?}` plus the region PNG as image content; with `include_sketch`, also the marker image | No |
 | `search` | `query`, `limit=10` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
 Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
+
+**Sketch to diagram** (two-pass reading, INK-058, decision [0018](decisions/0018-sketch-two-pass.md)):
+- `get_region(include_sketch=true)` adds a `sketch` field, the server's pass-1 guess from the ink alone with no model call:
+  - `nodes`: `[{id: N1.., box, element_ids, label_element_ids, label_text, confidence}]`
+  - `arrows`: `[{id: A1.., from, to, head: "end"|"both"|null, tip, tail, element_ids, confidence}]`
+  - `unattached`: strokes that touch fewer than two nodes
+  - `markers`: pixel positions on the marker image
+
+  It also adds a second image: the ink redrawn with red node markers on node centres, blue arrow markers on arrow tips, and grey markers (U1..) on unattached strokes.
+- The read follows arrow `links` one hop, so a flowchart split into one chunk per node still resolves its arrows. Drafts are left out.
+- The MCP prompt `sketch_to_diagram(region_id, mode)` gives the instructions. With `mode=two_pass` (default), the agent checks the guess, writes Mermaid that uses the marker ids, flags uncertain arrows, then calls `draw_diagram` anchored beside the sketch. With `mode=one_shot`, it uses the crop alone. INK-053's E2 experiment compares the two.
 
 `draw_diagram` needs the canvas open in a browser, because Mermaid is converted there (decision [0017](decisions/0017-draw-diagram-wait.md)). The API refuses anything that is not a flowchart (`flowchart` / `graph`): sequence, class and other diagram types would come back as one uneditable image. The tool polls the op until the browser acks it, for up to `wait_seconds`. Its errors are:
 - `Mermaid could not be parsed: <message>`, reported by the browser. No elements are drawn.
@@ -61,7 +72,7 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 | `create_canvas` | INK-043 | New empty canvas, returns `{document_id, url}`. | Adds a document |
 | `write_text` | INK-043 | Draft text near an anchor chunk, or in free space; arrives as a draft. | Adds a draft op |
 
-Outside MCP: `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
+Outside MCP: `GET /regions/{id}/sketch` (pass-1 JSON) and `GET /regions/{id}/sketch.png` (marker image) back `include_sketch`. `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
 
 ## Limits
 

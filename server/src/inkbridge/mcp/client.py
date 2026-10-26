@@ -130,3 +130,9 @@ class ApiClient:
 
     def set_op_status(self, op_id: str, status: str) -> dict:
         return self._send("PATCH", f"/ops/{quote(op_id, safe='')}", {"status": status})
+
+    def get_sketch(self, region_id: str) -> dict:
+        return self._json(self._get(f"/regions/{quote(region_id, safe='')}/sketch"))
+
+    def get_sketch_image(self, region_id: str) -> bytes:
+        return self._get(f"/regions/{quote(region_id, safe='')}/sketch.png").content
