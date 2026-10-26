@@ -38,10 +38,11 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 unknown canvas. It prints one PASS/FAIL line per check and exits 1 on any failure; it only reads.
 `server/tests/test_mcp_smoke.py` runs it against a live API process in CI.
 
-Checked by the script (INK-039): every reply is standard MCP content; `read_canvas` returns
-`[text, image]` with an `image/png` block, `get_region` returns text plus the crop or a text note when
-no crop exists yet, errors arrive as tool errors (`is_error`) with a next step, and stdout carries
-protocol frames only (the server's HTTP log goes to stderr).
+Checked by the script (INK-039): every reply is standard MCP content; `read_canvas` returns text
+then an `image/png` block (a real PNG), `get_region` returns text plus the crop or a text note when no
+crop exists yet, and an unknown canvas is a tool error (`is_error`). Checked by the test suite on top:
+error texts carry a next step, and the raw stdout stream holds protocol frames only during real tool
+calls (the server's HTTP log goes to stderr).
 
 Not yet checked: how the real GUI clients render this (decision 0003 still says "?"). Manual steps
 for whoever is at the keyboard:

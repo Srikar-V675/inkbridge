@@ -9,6 +9,7 @@ The API must be running. Exit status 0 means every check passed.
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -17,6 +18,8 @@ from dataclasses import dataclass, field
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+TIMEOUT_S = 60
 EXPECTED_TOOLS = {"list_regions", "get_region", "search", "read_canvas"}
 
 
@@ -54,17 +57,28 @@ async def run(api_url: str, document: str = "default") -> Report:
 
         canvas = await session.call_tool("read_canvas", {})
         types = _types(canvas)
-        if not report.check("read_canvas content", types == ["text", "image"], str(types)):
+        detail = canvas.content[0].text[:200] if canvas.content else ""
+        if not report.check(
+            "read_canvas content", types[:1] == ["text"] and not canvas.is_error, detail
+        ):
             return report
         outline = json.loads(canvas.content[0].text)
         report.check("read_canvas outline", {"chunk_count", "chunks"} <= outline.keys())
-        image = canvas.content[1]
-        report.check("read_canvas image", image.mime_type == "image/png" and bool(image.data))
+        image = canvas.content[1] if len(canvas.content) > 1 else None
+        report.check(
+            "read_canvas image",
+            image is not None
+            and image.type == "image"
+            and image.mime_type == "image/png"
+            and base64.b64decode(image.data).startswith(PNG_SIGNATURE),
+            str(types),
+        )
 
         if outline["chunks"]:
             first = outline["chunks"][0]
             region = await session.call_tool("get_region", {"region_id": first["id"]})
-            report.check("get_region content", _types(region)[0] == "text", str(_types(region)))
+            # text, then the crop or a text note when no crop has been uploaded yet
+            report.check("get_region content", len(region.content) == 2, str(_types(region)))
             report.check("get_region id", json.loads(region.content[0].text)["id"] == first["id"])
         else:
             report.check("get_region", True, "skipped: the canvas has no chunks")
@@ -84,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--document", default=os.environ.get("INKBRIDGE_DOCUMENT", "default"))
     args = parser.parse_args(argv)
     try:
-        report = asyncio.run(run(args.api, args.document))
+        report = asyncio.run(asyncio.wait_for(run(args.api, args.document), TIMEOUT_S))
     except Exception as e:  # noqa: BLE001 - any failure to talk MCP is a failed check
         report = Report()
         report.check("mcp session", False, f"{e.__class__.__name__}: {e}")
