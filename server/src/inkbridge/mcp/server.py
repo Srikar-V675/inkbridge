@@ -153,6 +153,7 @@ _OUTLINE_FIELDS = (
     "status",
     "png_stale",
     "content_hash",
+    "text_hash",
     "links",
     "deep_link",
 )
@@ -220,6 +221,7 @@ def read_canvas(
     """Read the whole canvas: its chunks in reading order, then an overview image.
 
     Each chunk has order, kind, bounds, its reading (text, latex), status, png_stale, content_hash,
+    text_hash (the reading's hash, what a vault note stores as `reading`),
     arrow links to other chunks (at most 20 each, the rest counted in links_omitted) and a deep_link that opens it in the web app. text is null when the
     chunk has not been read yet: call get_region with its id to look at its image instead. A very
     large canvas is cut at a size cap; the reply then says how many chunks were omitted and which
