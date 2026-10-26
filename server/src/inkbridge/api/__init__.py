@@ -12,12 +12,21 @@ from inkbridge import db
 from inkbridge.api import ops, regions, search, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
+from inkbridge.recognition_worker import RecognitionWorker
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    yield
+    # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0018).
+    worker = RecognitionWorker.from_env(publish=ws.hub.publish)
+    if worker is not None:
+        worker.start()
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.stop()
 
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
