@@ -37,6 +37,10 @@ export function mergeScenes(
   return [...byId.values()];
 }
 
+function liveIds(elements: readonly SceneElement[]): Set<string> {
+  return new Set(elements.filter((e) => !e.isDeleted).map((e) => e.id));
+}
+
 export class SceneSync {
   private readonly o: SyncOptions;
   private fetchFn: typeof fetch;
@@ -52,6 +56,8 @@ export class SceneSync {
   private inflight: Promise<void> | null = null;
   // The most recent scene Excalidraw reported, so a conflict merge never misses newer strokes.
   private latest: readonly SceneElement[] | null = null;
+  // Ids of the live elements in the last scene the server confirmed (loaded or saved).
+  private savedIds = new Set<string>();
 
   constructor(options: SyncOptions) {
     this.o = options;
@@ -79,6 +85,7 @@ export class SceneSync {
       const body = (await r.json()) as { version: number; elements: SceneElement[] };
       this.version = body.version;
       this.lastSig = signature(body.elements);
+      this.savedIds = liveIds(body.elements);
       this.pending = null;
       this.loaded = true;
       this.emit("saved");
@@ -118,6 +125,11 @@ export class SceneSync {
     this.timer = null;
     if (this.inflight) await this.inflight; // an in-flight save may leave newer edits pending
     await this.save(true);
+  }
+
+  /** True once the server holds every listed element (an op is acked only after its drafts are). */
+  hasSaved(ids: readonly string[]): boolean {
+    return ids.every((id) => this.savedIds.has(id));
   }
 
   dispose() {
@@ -160,6 +172,7 @@ export class SceneSync {
         this.version = ((await r.json()) as { version: number }).version;
         this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
         this.lastSig = sentSig;
+        this.savedIds = liveIds(sent);
         this.failures = 0;
         if (this.pendingSig === sentSig) this.pending = null;
         if (this.pending) {

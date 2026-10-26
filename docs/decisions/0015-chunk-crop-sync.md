@@ -15,8 +15,8 @@ Status: accepted (INK-057). Implements tech ref 9.4.
   happened is discarded, not uploaded. A pass runs only when the canvas equals a stored scene
   (`SceneSync.settledVersion()`: loaded, nothing pending, no save in flight); a pass that finds the
   canvas unsaved checks again after the idle delay without a request. Triggers: the first
-  canvas change event after load (a reopened tab catches up), every `saved` state, and a 30 s poll
-  until INK-042's WebSocket can call `request()` on `chunks.updated`. The pass yields to the event
+  canvas change event after load (a reopened tab catches up), every `saved` state, INK-042's
+  `chunks.updated` WebSocket message, and a 30 s poll as a fallback while the socket is down. The pass yields to the event
   loop before each export, so a pen-down queued meanwhile is handled (and stops the pass) before the
   next `exportToBlob` blocks the main thread. A lost `pointerup` (window blur, tab hidden) clears the
   pointer state.

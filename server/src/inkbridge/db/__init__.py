@@ -688,3 +688,13 @@ def mark_png_fresh(
     cur = conn.execute(sql, args)
     conn.commit()
     return get_region(conn, region_id) if cur.rowcount else None
+
+
+def stale_crop_ids(conn: sqlite3.Connection, document_id: str) -> list[str]:
+    """Active regions whose crop no longer matches their ink (the browser re-exports them)."""
+    rows = conn.execute(
+        "SELECT id FROM regions WHERE document_id = ? AND status = 'active' AND png_stale = 1"
+        " ORDER BY id",
+        (document_id,),
+    )
+    return [r["id"] for r in rows]
