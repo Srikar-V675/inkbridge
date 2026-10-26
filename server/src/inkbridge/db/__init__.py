@@ -497,13 +497,9 @@ def _sync_chunks(
         ids, matching.assigned, clusters, boxes, chunking.pinned, strict=True
     ):
         row = rows.get(kept) if kept else None
-        # Kept, still active, same pin state and holding exactly the same elements as before.
-        same = (
-            row is not None
-            and row["status"] == "active"
-            and bool(row["pinned"]) == pinned
-            and old[rid] == members
-        )
+        # Kept, still active and holding exactly the same elements as before. (Its pin state cannot
+        # differ then: pins come from the active pinned rows themselves.)
+        same = row is not None and row["status"] == "active" and old[rid] == members
         if same and changed.isdisjoint(members):
             continue  # same elements, none edited: nothing to recompute
         chunk = [by_id[i] for i in members]
