@@ -150,6 +150,9 @@ export default function App() {
   const syncRef = useRef<SceneSync | null>(null);
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
+  // A canvas opened empty with no remembered view (one an agent just created): show the first
+  // drafts that arrive instead of leaving them under the toolbar at the origin.
+  const fitFirstDrafts = useRef(false);
   const pendingJump = useRef<JumpResult | null>(null);
   const sceneReady = useRef(false);
   const [api, setApi] = useState<Api | null>(null);
@@ -197,6 +200,7 @@ export default function App() {
       const restored = restoreElements(elements as never, null);
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
       fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
+      fitFirstDrafts.current = !view && !restored.some((e) => !e.isDeleted);
       setInitial({ elements: restored, view });
     });
     const onHide = () => {
@@ -259,7 +263,13 @@ export default function App() {
             await new Promise((r) => setTimeout(r, SAVE_RETRY_MS));
           }
         };
-        return drawOp(apiRef.current ?? (await apiReady.promise), op, persist);
+        const api = apiRef.current ?? (await apiReady.promise);
+        const ids = await drawOp(api, op, persist);
+        if (fitFirstDrafts.current) {
+          fitFirstDrafts.current = false;
+          api.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.9, maxZoom: 1, animate: false });
+        }
+        return ids;
       },
       // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
       onOpUpdated: (m) => {
@@ -282,6 +292,14 @@ export default function App() {
       appState: { scrollX: number; scrollY: number; zoom: { value: number } },
     ) => {
       syncRef.current?.notify(elements as unknown as SceneElement[]);
+      // The user started drawing: from now on their view is theirs, drafts never move it.
+      if (
+        fitFirstDrafts.current &&
+        (elements as SceneElement[]).some(
+          (e) => !e.isDeleted && !(e.customData as { draft?: boolean } | undefined)?.draft,
+        )
+      )
+        fitFirstDrafts.current = false;
       // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
       sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {

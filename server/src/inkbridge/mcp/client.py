@@ -136,3 +136,6 @@ class ApiClient:
 
     def get_sketch_image(self, region_id: str) -> bytes:
         return self._get(f"/regions/{quote(region_id, safe='')}/sketch.png").content
+
+    def create_document(self, title: str) -> dict:
+        return self._send("POST", "/documents", {"title": title})

@@ -35,8 +35,10 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
 | `list_regions` | `document_id?`, `kind?`, `limit=50` | JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
+| `create_canvas` | `title` (1 to 200 chars) | JSON `{document_id, url}`; `url` opens the new, empty canvas | Adds a document (never changes an existing one) |
 | `draw_diagram` | `mermaid` (flowchart only), `anchor?` (chunk id), `document_id?`, `wait_seconds=20` (1 to 60) | JSON `{op_id, status: "applied", element_count}` once the browser has drawn the dashed drafts | Adds a draft op (never edits ink) |
 | `get_region` | `region_id`, `include_image=true`, `include_ink=false`, `include_sketch=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?, sketch?}` plus the region PNG as image content; with `include_sketch`, also the marker image | No |
+| `write_text` | `text` (1 to 10,000 chars), `anchor?` (chunk id), `document_id?` | JSON `{op_id, status: "pending", placement: {x, y}}`; the text appears as a dashed draft in any open browser, now or when the canvas is next opened | Adds a draft op (never edits ink) |
 | `search` | `query`, `limit=10` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
 Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
@@ -69,8 +71,6 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 | `check_sync` | INK-036 | Given `[{id, hash, reading}]` from a note's frontmatter, returns `fresh`, `fresh_after_reread`, `changed`, `replaced` (with successor), `removed`, `new`. May fill the recognition cache. | Cache only |
 | `list_questions` | INK-047 | Pending Ask AI questions with focus chunks and history (the vendor-neutral pull path). | No |
 | `answer_question` | INK-047 | Store a markdown answer and sources for a question. | Questions table |
-| `create_canvas` | INK-043 | New empty canvas, returns `{document_id, url}`. | Adds a document |
-| `write_text` | INK-043 | Draft text near an anchor chunk, or in free space; arrives as a draft. | Adds a draft op |
 
 Outside MCP: `GET /regions/{id}/sketch` (pass-1 JSON) and `GET /regions/{id}/sketch.png` (marker image) back `include_sketch`. `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
 
