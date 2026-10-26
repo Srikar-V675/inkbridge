@@ -12,6 +12,8 @@ from inkbridge.mermaid import diagram_type, is_flowchart
         "%%{init: {'theme': 'dark'}}%%\nflowchart TD\nA-->B",
         "---\ntitle: Backprop\n---\nflowchart LR\nA-->B",
         "graph",
+        "\ufeffflowchart TD\nA-->B",
+        "---\r\ntitle: x\r\n---\r\nflowchart TD\r\nA-->B",
     ],
 )
 def test_flowcharts_are_accepted(src):
@@ -37,3 +39,11 @@ def test_other_diagrams_are_refused(src, kind):
 
 def test_empty_source_has_no_type():
     assert diagram_type("\n  \n%% only a comment") is None
+
+
+def test_a_huge_unclosed_directive_is_checked_quickly():
+    import time
+
+    t0 = time.monotonic()
+    assert not is_flowchart("%%{" * 6_000)
+    assert time.monotonic() - t0 < 0.2

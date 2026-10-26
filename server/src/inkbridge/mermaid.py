@@ -5,13 +5,14 @@ them up front with a clear message instead of drawing a picture the user cannot 
 import re
 
 _FRONTMATTER = re.compile(r"\A\s*---\n.*?\n---[ \t]*(\n|\Z)", re.DOTALL)
-_DIRECTIVE = re.compile(r"%%\{.*?\}%%", re.DOTALL)
+_DIRECTIVE = re.compile(r"%%\{[^}]{0,2000}\}%%")  # bounded, so no slow backtracking
 _KEYWORD = re.compile(r"[A-Za-z]\w*(?:-[A-Za-z0-9]+)*")
 FLOWCHART_KEYWORDS = ("flowchart", "graph")
 
 
 def diagram_type(source: str) -> str | None:
     """The diagram keyword (e.g. "flowchart", "sequenceDiagram"), or None if there is none."""
+    source = source.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
     text = _DIRECTIVE.sub("", _FRONTMATTER.sub("", source, count=1))
     for line in text.splitlines():
         line = line.strip()
