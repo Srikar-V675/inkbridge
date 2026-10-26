@@ -263,10 +263,17 @@ def _check_new_ids(op: dict, ids: list[str]) -> None:
         raise ExistingElementIds(taken)
 
 
-def mark_delivered(conn: sqlite3.Connection, op_id: str) -> dict:
-    """Called when the op is pushed to a browser (INK-042). Only a pending op moves."""
-    conn.execute(
-        "UPDATE agent_ops SET status = 'delivered' WHERE id = ? AND status = 'pending'", (op_id,)
-    )
-    conn.commit()
-    return get_op(conn, op_id)
+def mark_delivered(conn: sqlite3.Connection, op_id: str) -> bool:
+    """Called when the op was pushed to a browser. Only a pending op moves; True if this call
+    moved it (False if it was already delivered, applied or resolved)."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cur = conn.execute(
+            "UPDATE agent_ops SET status = 'delivered' WHERE id = ? AND status = 'pending'",
+            (op_id,),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return cur.rowcount == 1
