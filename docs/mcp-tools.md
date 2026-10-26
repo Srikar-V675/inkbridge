@@ -35,12 +35,18 @@ Never run a script from inside `server/src/inkbridge/mcp/` (the directory name s
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
 | `list_regions` | `document_id?`, `kind?`, `limit=50` | JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
+| `draw_diagram` | `mermaid` (flowchart only), `anchor?` (chunk id), `document_id?`, `wait_seconds=20` (1 to 60) | JSON `{op_id, status: "applied", element_count}` once the browser has drawn the dashed drafts | Adds a draft op (never edits ink) |
 | `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
 | `search` | `query`, `limit=10` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
 Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
+
+`draw_diagram` needs the canvas open in a browser, because Mermaid is converted there (decision [0017](decisions/0017-draw-diagram-wait.md)). The API refuses anything that is not a flowchart (`flowchart` / `graph`): sequence, class and other diagram types would come back as one uneditable image. The tool polls the op until the browser acks it, for up to `wait_seconds`. Its errors are:
+- `Mermaid could not be parsed: <message>`, reported by the browser. No elements are drawn.
+- `No browser drew the diagram within N s … Open the canvas at <url>`. The op is set to `expired`, so a browser that connects later never draws it.
+- The API's own refusals: `not_flowchart`, `anchor_not_found`, `existing_element_id`.
 
 ## Planned tools (spec v3)
 
@@ -54,7 +60,6 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 | `answer_question` | INK-047 | Store a markdown answer and sources for a question. | Questions table |
 | `create_canvas` | INK-043 | New empty canvas, returns `{document_id, url}`. | Adds a document |
 | `write_text` | INK-043 | Draft text near an anchor chunk, or in free space; arrives as a draft. | Adds a draft op |
-| `draw_diagram` | INK-044 | Draft a Mermaid flowchart (browser converts and acknowledges; the browser must be open). | Adds a draft op |
 
 Outside MCP: `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
 
