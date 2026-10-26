@@ -58,7 +58,7 @@ These describe the target design. Items marked *(planned)* are not built yet, an
 - **No Obsidian plugin, no drawing inside the vault, no cross-canvas links** (decision of 22 Oct): Obsidian instances synced by Syncthing would conflict; the backend is the single owner of canvas state.
 - **Dev-only helpers stay dev-only**: the Vite `/__log` endpoint writes `web/dev.log` and must not exist in a production build.
 - LAN HTTP is not a secure context; features requiring one need a different approach, not a workaround.
-- Config. Built: `INKBRIDGE_DATA_DIR`, `INKBRIDGE_DB`, `INKBRIDGE_API_URL` (MCP client and web dev proxy), `INKBRIDGE_DOCUMENT`, `GEMINI_API_KEY`, `GEMINI_MODEL` (see `.env.example`). `INKBRIDGE_PUBLIC_URL` (deep-link base, default `http://localhost:5173`, INK-033). Planned:, `INKBRIDGE_RUNNER` (optional Ask runner, INK-048).
+- Config. Built: `INKBRIDGE_DATA_DIR`, `INKBRIDGE_DB`, `INKBRIDGE_API_URL` (MCP client and web dev proxy), `INKBRIDGE_DOCUMENT`, `GEMINI_API_KEY`, `GEMINI_MODEL` (see `.env.example`). `INKBRIDGE_PUBLIC_URL` (deep-link base, default `http://localhost:5173`, INK-033). Planned: `INKBRIDGE_RUNNER` (optional Ask runner, INK-048).
 
 ## Workflow
 

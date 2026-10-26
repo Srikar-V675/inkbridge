@@ -1,6 +1,7 @@
 """Limits applied to what agents receive: image width and ink point count. Pure, no I/O."""
 
 import io
+from collections.abc import Callable
 from typing import Any
 
 from PIL import Image, ImageDraw
@@ -75,17 +76,23 @@ def decimate_strokes(strokes: list[dict[str, Any]], max_points: int = MAX_INK_PO
 
 
 OVERVIEW_PAD = 16  # canvas px around the chunks
+OVERVIEW_MAX_PIXELS = 16_000_000  # about 48 MB as RGB, whatever the canvas's shape
 _STALE = (230, 140, 0)
 _BOX = (120, 120, 120)
 
 
-def overview(chunks: list[dict[str, Any]], max_width: int = MAX_IMAGE_WIDTH) -> bytes:
+def overview(
+    chunks: list[dict[str, Any]],
+    load: Callable[[str], bytes | None],
+    max_width: int = MAX_IMAGE_WIDTH,
+) -> bytes:
     """Composite PNG of chunk crops placed at their canvas bounds, each labelled with its id.
 
-    `chunks` items carry `id`, `bounds` and `png` (bytes, or None when no crop exists yet). A chunk
-    without a decodable crop is drawn as a grey box; a stale crop (`png_stale`) gets an orange
-    frame because it may not match the ink. The image is at most max_width wide and, so a tall
-    canvas cannot produce a huge image, at most 4 * max_width high; it is never scaled up.
+    `chunks` items carry `id`, `bounds` and `png_stale`; `load(id)` returns a chunk's crop bytes or
+    None, and is called one chunk at a time so only one crop is in memory. A chunk without a
+    decodable crop is drawn as a grey box; a stale crop gets an orange frame because it may not
+    match the ink. Transparent crops are flattened onto white. The image is never scaled up, at
+    most max_width wide and at most OVERVIEW_MAX_PIXELS in area, so a tall canvas stays small.
     """
     if not chunks:
         return _png(Image.new("RGB", (min(max_width, 64), 64), "white"))
@@ -93,17 +100,18 @@ def overview(chunks: list[dict[str, Any]], max_width: int = MAX_IMAGE_WIDTH) -> 
     y0 = min(c["bounds"]["y"] for c in chunks) - OVERVIEW_PAD
     x1 = max(c["bounds"]["x"] + c["bounds"]["width"] for c in chunks) + OVERVIEW_PAD
     y1 = max(c["bounds"]["y"] + c["bounds"]["height"] for c in chunks) + OVERVIEW_PAD
-    scale = min(1.0, max_width / (x1 - x0), 4 * max_width / (y1 - y0))
-    size = (max(1, min(max_width, round((x1 - x0) * scale))), max(1, round((y1 - y0) * scale)))
+    width, height = x1 - x0, y1 - y0
+    scale = min(1.0, max_width / width, (OVERVIEW_MAX_PIXELS / (width * height)) ** 0.5)
+    size = (max(1, min(max_width, round(width * scale))), max(1, round(height * scale)))
     canvas = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(canvas)
     for c in chunks:
         b = c["bounds"]
         left, top = round((b["x"] - x0) * scale), round((b["y"] - y0) * scale)
         w, h = max(1, round(b["width"] * scale)), max(1, round(b["height"] * scale))
-        crop = _decode(c.get("png"))
+        crop = _decode(load(c["id"]), (w, h))
         if crop is not None:
-            canvas.paste(crop.resize((w, h), Image.Resampling.LANCZOS), (left, top))
+            canvas.paste(crop, (left, top))
         if crop is None or c.get("png_stale"):
             draw.rectangle(
                 (left, top, left + w, top + h), outline=_STALE if crop else _BOX, width=1
@@ -112,14 +120,19 @@ def overview(chunks: list[dict[str, Any]], max_width: int = MAX_IMAGE_WIDTH) -> 
     return _png(canvas)
 
 
-def _decode(png: bytes | None) -> Image.Image | None:
+def _decode(png: bytes | None, size: tuple[int, int]) -> Image.Image | None:
+    """The crop resized to `size` on white, or None if it is missing or unreadable."""
     if not png:
         return None
     try:
         with Image.open(io.BytesIO(png)) as img:
-            return img.convert("RGB")
+            img.thumbnail((size[0] * 2, size[1] * 2))  # shrink early: cheap, bounded memory
+            rgba = img.convert("RGBA")
     except Exception:  # noqa: BLE001 - an unreadable crop is drawn as a box instead
         return None
+    flat = Image.new("RGB", rgba.size, "white")
+    flat.paste(rgba, mask=rgba.getchannel("A"))
+    return flat.resize(size, Image.Resampling.LANCZOS)
 
 
 def _png(img: Image.Image) -> bytes:

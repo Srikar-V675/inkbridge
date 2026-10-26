@@ -4,7 +4,7 @@ import io
 
 from PIL import Image
 
-from inkbridge import config
+from inkbridge import config, imaging
 from tests.test_chunk_persistence import Canvas, row
 from tests.test_chunker import arrow, rect
 
@@ -182,3 +182,42 @@ def test_unknown_document_is_404_with_a_next_step(client):
         r = client.get(path)
         assert r.status_code == 404
         assert "GET /documents" in r.json()["detail"]
+
+
+def test_interim_regions_chunks_route_still_lists_chunks(client):
+    canvas = page(client)
+    r = client.get("/documents/default/regions", params={"chunks": True, "limit": 500})
+    assert r.status_code == 200
+    assert {c["id"] for c in r.json()} == {c["id"] for c in canvas.chunks()}
+    assert len(r.json()) == 5
+
+
+def test_empty_public_url_falls_back_to_the_default(client, monkeypatch):
+    monkeypatch.setenv("INKBRIDGE_PUBLIC_URL", "")
+    page(client)
+    assert outline(client)["chunks"][0]["deep_link"].startswith("http://localhost:5173/?canvas=")
+
+
+def _tile(i, x, y, w=100, h=100, stale=False):
+    return {"id": f"c{i}", "bounds": {"x": x, "y": y, "width": w, "height": h}, "png_stale": stale}
+
+
+def _img(data):
+    with Image.open(io.BytesIO(data)) as img:
+        return img.convert("RGB")
+
+
+def test_overview_area_is_capped_for_a_tall_canvas():
+    tiles = [_tile(i, 0, i * 5000) for i in range(40)]  # 100 px wide, 200,000 px tall
+    img = _img(imaging.overview(tiles, lambda _: None, max_width=4096))
+    assert img.width * img.height <= imaging.OVERVIEW_MAX_PIXELS
+
+
+def test_overview_frames_stale_crops_and_flattens_transparency():
+    clear = io.BytesIO()
+    Image.new("RGBA", (50, 50), (0, 0, 0, 0)).save(clear, "PNG")
+    tiles = [_tile(0, 0, 0, stale=True), _tile(1, 400, 0)]
+    img = _img(imaging.overview(tiles, lambda _: clear.getvalue(), max_width=1024))
+    colours_ = {c for _, c in img.getcolors(1 << 22)}
+    assert imaging._STALE in colours_
+    assert (0, 0, 0) not in colours_  # the transparent crop shows white, not black

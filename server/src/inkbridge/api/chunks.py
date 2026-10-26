@@ -64,17 +64,20 @@ def list_chunks(
 def get_overview(
     document_id: str,
     conn: Conn,
-    max_width: Annotated[int, Query(ge=64, le=8192)] = imaging.MAX_IMAGE_WIDTH,
+    max_width: Annotated[int, Query(ge=64, le=4096)] = imaging.MAX_IMAGE_WIDTH,
 ) -> Response:
     """All active chunk crops placed at their bounds with ids; boxes where a crop is missing."""
     try:
         chunks = outline.chunk_crops(conn, document_id)
     except db.DocumentNotFound:
         raise HTTPException(404, NOT_FOUND) from None
-    for c in chunks:
-        path = Path(c.pop("png_path") or "")
-        c["png"] = path.read_bytes() if path.is_file() else None
-    return Response(imaging.overview(chunks, max_width), media_type="image/png")
+    paths = {c["id"]: Path(c.pop("png_path") or "") for c in chunks}
+
+    def load(chunk_id: str) -> bytes | None:
+        path = paths[chunk_id]
+        return path.read_bytes() if path.is_file() else None
+
+    return Response(imaging.overview(chunks, load, max_width), media_type="image/png")
 
 
 @router.get("/regions/{region_id}/png")

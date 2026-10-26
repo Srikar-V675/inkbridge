@@ -5,7 +5,7 @@ import sqlite3
 import uuid
 
 from inkbridge.chunker import reading_order
-from inkbridge.db import AUTO, DocumentNotFound, _now, _region_dict, get_scene
+from inkbridge.db import AUTO, DocumentNotFound, _now, _region_dict
 
 STATUSES = ("active", "orphaned", "all")
 
@@ -30,7 +30,7 @@ def list_documents(conn: sqlite3.Connection) -> list[dict]:
         {"id": r["id"], "title": r["title"], "updated_at": r["updated_at"], "version": r["version"]}
         for r in conn.execute(
             "SELECT d.id, d.title, d.updated_at, s.version FROM documents d"
-            " JOIN scenes s ON s.document_id = d.id ORDER BY d.updated_at DESC, d.id"
+            " LEFT JOIN scenes s ON s.document_id = d.id ORDER BY d.updated_at DESC, d.id"
         )
     ]
 
@@ -49,7 +49,12 @@ def chunk_outline(
     """
     if status not in STATUSES:
         raise ValueError(f"status must be one of {STATUSES}, got {status!r}")
-    version, _ = get_scene(conn, document_id)
+    row = conn.execute(
+        "SELECT version FROM scenes WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    if row is None:
+        raise DocumentNotFound(document_id)
+    version = row["version"]
     chunks = {
         r["id"]: _region_dict(conn, r)
         for r in conn.execute(
