@@ -104,7 +104,9 @@ def test_ack_naming_user_ink_is_refused_over_the_socket(client):
 
 
 def test_failed_over_the_socket_records_the_error(client):
-    op = client.post(OPS, json={"type": "draw_diagram", "payload": {"mermaid": "x"}}).json()
+    op = client.post(
+        OPS, json={"type": "draw_diagram", "payload": {"mermaid": "flowchart TD\n  A[("}}
+    ).json()
     with client.websocket_connect(WS) as ws:
         recv(ws)
         ws.send_json({"type": "op.failed", "op_id": op["id"], "error": "parse error"})

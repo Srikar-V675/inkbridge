@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from inkbridge import db
+from inkbridge import db, mermaid
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
@@ -72,6 +72,17 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     except ValidationError as e:
         errors = [{"loc": ["payload", *e_["loc"]], "msg": e_["msg"]} for e_ in e.errors()]
         raise HTTPException(422, errors) from None
+    if isinstance(payload, DrawDiagramPayload) and not mermaid.is_flowchart(payload.mermaid):
+        kind = mermaid.diagram_type(payload.mermaid)
+        raise HTTPException(
+            422,
+            {
+                "code": "not_flowchart",
+                "diagram_type": kind,
+                "msg": f"only Mermaid flowcharts are supported (got {kind or 'no diagram type'}); "
+                "start the source with `flowchart TD` or `graph LR`",
+            },
+        )
     try:
         op, created = ops_db.create_op(
             conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id
