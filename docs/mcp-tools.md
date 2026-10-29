@@ -30,20 +30,53 @@ Claude Desktop (`claude_desktop_config.json`):
 
 Never run a script from inside `server/src/inkbridge/mcp/` (the directory name shadows the SDK); use the entry point or `python -m inkbridge.mcp`.
 
+## Verifying a client setup
+
+`uv run --directory server inkbridge-mcp-smoke --api http://127.0.0.1:8000` (API running) drives
+`inkbridge-mcp` over stdio with the MCP SDK's own client, the way Claude Desktop and Claude Code do:
+`initialize`, `tools/list`, then `read_canvas`, `get_region` on the first chunk, `search` and an
+unknown canvas. It prints one PASS/FAIL line per check and exits 1 on any failure; it only reads.
+`server/tests/test_mcp_smoke.py` runs it against a live API process in CI.
+
+Checked by the script (INK-039): every reply is standard MCP content; `read_canvas` returns text
+then an `image/png` block (a real PNG), `get_region` returns text plus the crop or a text note when no
+crop exists yet, and an unknown canvas is a tool error (`is_error`). Checked by the test suite on top:
+error texts carry a next step, and the raw stdout stream holds protocol frames only during real tool
+calls (the server's HTTP log goes to stderr).
+
+Not yet checked: how the real GUI clients render this (decision 0003 still says "?"). Manual steps
+for whoever is at the keyboard:
+1. Start the API (`make dev-server`) and open a canvas with a few chunks.
+2. Claude Code: `claude mcp add inkbridge -- uv run --directory /path/to/inkbridge/server inkbridge-mcp`,
+   then ask it to call `read_canvas`. Expect the outline JSON and the overview image.
+3. Claude Desktop: add the config above, restart, ask for `read_canvas` and `get_region <id>`.
+4. Record per client: text shown, image shown inline (yes/no), anything odd. Write the result into
+   decision 0003 and the quirks list below.
+
+Known quirks: the SDK 2.x client exposes `mime_type` / `is_error` (snake case), not the wire names
+`mimeType` / `isError`; scripts written against 1.x need the change. `check_sync`, `list_questions` and
+`create_canvas` are not built yet, so they cannot be checked here. The SDK 2.x stdio server diverts `sys.stdout` to stderr while it runs
+(SDK issue #1933), so a stray `print` in a tool cannot corrupt the protocol stream; the raw-stdout test
+in `test_mcp_smoke.py` still guards the stream end to end.
+
 ## Tools (built)
 
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
-| `list_regions` | `document_id?`, `kind?`, `limit=50` | JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
+| `list_regions` | `document_id?`, `kind?`, `limit=50` | Manual (saved) regions only; chunks come from `read_canvas`. JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
+| `get_region` | `region_id` (a chunk id or a saved region id), `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
+| `read_canvas` | `document_id?`, `include_overview=true`, `offset=0` | Compact JSON `{document, version, chunk_count, chunks: [{id, order, kind, bounds, text, latex, status, png_stale, content_hash, text_hash, links: [{to, kind}], deep_link}], omitted?, note?}` in reading order, then the overview PNG (1024 px wide max) as image content. `text: null` means not read yet: open the chunk with `get_region`. Text over 60,000 chars is cut at a chunk boundary with `omitted` and a note naming the `offset` that continues; a reading over 4,000 chars is shortened and flagged `text_truncated` / `latex_truncated`; at most 20 links per chunk, the rest counted in `links_omitted`. | No |
+| `check_sync` | `chunks: [{id, hash, reading}]` (from a note's frontmatter: content hash and reading hash), `document_id?`, `wait_s=15` (0..30) | JSON `{fresh: [id], fresh_after_reread: [{id, hash, reading}], changed: [{id, hash, reading}], replaced: [{id, successor, hash, reading}], removed: [id], new: [{id, hash, reading, preview}]}`; `changed` with `reading: null` means no reading in time (look with `get_region`) | Recognition cache only |
 | `draw_diagram` | `mermaid` (flowchart only), `anchor?` (chunk id), `document_id?`, `wait_seconds=20` (1 to 60) | JSON `{op_id, status: "applied", element_count}` once the browser has drawn the dashed drafts | Adds a draft op (never edits ink) |
-| `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
-| `search` | `query`, `limit=10` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
+| `search` | `query`, `limit=10`, `document_id?` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
-Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
+Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions of one canvas (`document_id`, default `INKBRIDGE_DOCUMENT`). The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
+
+`check_sync` compares content hashes first (a move is `fresh`), then the reading hash (a cosmetic edit is `fresh_after_reread`; only a different reading is `changed`). Chunks that need a new reading are read by the recognition worker while the call waits (bounded by `wait_s`, only for canvases in `INKBRIDGE_RECOGNIZE_DOCUMENTS`). A reading that the note lacks for unchanged ink (exported before recognition, or corrected later) is reported as `changed`. Several `replaced` entries can share one `successor` after a merge: rewrite that block once. See decision 0020.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
 
-`draw_diagram` needs the canvas open in a browser, because Mermaid is converted there (decision [0017](decisions/0017-draw-diagram-wait.md)). The API refuses anything that is not a flowchart (`flowchart` / `graph`): sequence, class and other diagram types would come back as one uneditable image. The tool polls the op until the browser acks it, for up to `wait_seconds`. Its errors are:
+`draw_diagram` needs the canvas open in a browser, because Mermaid is converted there (decision [0023](decisions/0023-draw-diagram-wait.md)). The API refuses anything that is not a flowchart (`flowchart` / `graph`): sequence, class and other diagram types would come back as one uneditable image. The tool polls the op until the browser acks it, for up to `wait_seconds`. Its errors are:
 - `Mermaid could not be parsed: <message>`, reported by the browser. No elements are drawn.
 - `No browser drew the diagram within N s … Open the canvas at <url>`. The op is set to `expired`, so a browser that connects later never draws it.
 - The API's own refusals: `not_flowchart`, `anchor_not_found`, `existing_element_id`.
@@ -54,8 +87,6 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 
 | Tool | Ticket | Purpose | Mutates |
 |---|---|---|---|
-| `read_canvas` | INK-034 | Whole-canvas outline in reading order: chunks with text, kind, bounds, links, `content_hash`, `deep_link`, plus an overview image. `search` also gains `document_id`. | No |
-| `check_sync` | INK-036 | Given `[{id, hash, reading}]` from a note's frontmatter, returns `fresh`, `fresh_after_reread`, `changed`, `replaced` (with successor), `removed`, `new`. May fill the recognition cache. | Cache only |
 | `list_questions` | INK-047 | Pending Ask AI questions with focus chunks and history (the vendor-neutral pull path). | No |
 | `answer_question` | INK-047 | Store a markdown answer and sources for a question. | Questions table |
 | `create_canvas` | INK-043 | New empty canvas, returns `{document_id, url}`. | Adds a document |

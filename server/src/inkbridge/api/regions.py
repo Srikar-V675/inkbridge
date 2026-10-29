@@ -1,7 +1,7 @@
 import json
 import uuid
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -76,11 +76,19 @@ def list_regions(
     kind: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     chunks: bool = False,
+    png_stale: bool | None = None,
+    status: Literal["active", "orphaned"] | None = None,
 ):
-    """Manual regions; ?chunks=true lists the auto chunks instead (INK-033 adds reading order)."""
+    """Manual regions; ?chunks=true lists the auto chunks instead (INK-033 adds reading order).
+
+    ?png_stale=true lists only regions whose crop must be rendered again (browser crop sync,
+    with ?status=active so orphaned chunks never crowd live ones out of the page).
+    """
     if not db.document_exists(conn, document_id):
         raise HTTPException(404, "document not found")
-    return db.list_regions(conn, document_id, kind=kind, limit=limit, chunks=chunks)
+    return db.list_regions(
+        conn, document_id, kind=kind, limit=limit, chunks=chunks, png_stale=png_stale, status=status
+    )
 
 
 @router.get("/regions/{region_id}")
@@ -93,22 +101,53 @@ def get_region(region_id: str, conn: Conn) -> dict:
 
 @router.put("/regions/{region_id}/image")
 async def replace_region_image(
-    region_id: str, conn: Conn, image: Annotated[UploadFile, File()]
+    region_id: str,
+    conn: Conn,
+    image: Annotated[UploadFile, File()],
+    scene_version: Annotated[int | None, Form()] = None,
 ) -> dict:
-    """Store a fresh crop (after the client re-exports the region) and clear png_stale."""
+    """Store a fresh crop (after the client re-exports the region) and clear png_stale.
+
+    scene_version is the scene the browser rendered the crop from. If the scene has moved on, the
+    crop may show older ink: 409 with current_version and nothing is written (decision 0015).
+    """
     png = await _read_png(image)
-    return await run_in_threadpool(_replace_image, conn, region_id, png)
+    return await run_in_threadpool(_replace_image, conn, region_id, png, scene_version)
 
 
-def _replace_image(conn, region_id: str, png: bytes) -> dict | None:
+def _version_conflict(current: int | None) -> HTTPException:
+    return HTTPException(409, {"current_version": current})
+
+
+def _replace_image(conn, region_id: str, png: bytes, scene_version: int | None) -> dict:
     path = db.get_region_png_path(conn, region_id)
     if path is None:
         raise HTTPException(404, "region not found")
-    tmp = Path(f"{path}.tmp")
+    # A temp name of its own, so two uploads of the same crop never write into one file. The
+    # bytes are written before the lock; only the check, rename and clear happen under it.
+    tmp = Path(f"{path}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.parent.mkdir(parents=True, exist_ok=True)  # a chunk's first crop creates the folder
-    tmp.write_bytes(png)
-    tmp.replace(path)  # atomic: a crash mid-write never leaves a half-written crop
-    return db.mark_png_fresh(conn, region_id)
+    try:
+        tmp.write_bytes(png)
+        # The scene write lock (saves take it too) spans the version check, the rename and the
+        # clear, so no save or other upload can land between them (decision 0015).
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = db.scene_version_of_region(conn, region_id)
+            if current is None:
+                raise HTTPException(404, "region not found")
+            if scene_version is not None and current != scene_version:
+                raise _version_conflict(current)
+            tmp.replace(path)  # atomic: a crash mid-write never leaves a half-written crop
+            region = db.mark_png_fresh(conn, region_id, scene_version)  # commits
+        except BaseException:
+            conn.rollback()
+            raise
+    finally:
+        tmp.unlink(missing_ok=True)
+    if region is None:  # unreachable: the row and version were checked under the same lock
+        raise HTTPException(409, "crop was not installed; retry")
+    return region
 
 
 @router.get("/regions/{region_id}/image")

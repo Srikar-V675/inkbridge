@@ -381,8 +381,13 @@ def list_regions(
     kind: str | None = None,
     limit: int = 100,
     chunks: bool = False,
+    png_stale: bool | None = None,
+    status: str | None = None,
 ) -> list[dict]:
-    """Manual regions, or with chunks=True the auto chunks (both kinds via get_region by id)."""
+    """Manual regions, or with chunks=True the auto chunks (both kinds via get_region by id).
+
+    png_stale filters on the crop flag; the browser's crop sync lists png_stale=True (INK-057).
+    """
     sql = "SELECT * FROM regions WHERE document_id = ? AND created_by IS " + (
         "?" if chunks else "NOT ?"
     )
@@ -390,6 +395,12 @@ def list_regions(
     if kind:
         sql += " AND kind = ?"
         args.append(kind)
+    if png_stale is not None:
+        sql += " AND png_stale = ?"
+        args.append(int(png_stale))
+    if status:
+        sql += " AND status = ?"
+        args.append(status)
     sql += " ORDER BY updated_at DESC, id LIMIT ?"
     args.append(limit)
     return [_region_dict(conn, r) for r in conn.execute(sql, args)]
@@ -650,9 +661,31 @@ def document_exists(conn: sqlite3.Connection, document_id: str) -> bool:
     )
 
 
-def mark_png_fresh(conn: sqlite3.Connection, region_id: str) -> dict | None:
-    """Clear png_stale after the client has saved a new crop; None if the region is unknown."""
-    cur = conn.execute("UPDATE regions SET png_stale = 0 WHERE id = ?", (region_id,))
+def scene_version_of_region(conn: sqlite3.Connection, region_id: str) -> int | None:
+    """Current scene version of the region's document; None if the region is unknown."""
+    row = conn.execute(
+        "SELECT s.version FROM regions r JOIN scenes s ON s.document_id = r.document_id"
+        " WHERE r.id = ?",
+        (region_id,),
+    ).fetchone()
+    return row["version"] if row else None
+
+
+def mark_png_fresh(
+    conn: sqlite3.Connection, region_id: str, scene_version: int | None = None
+) -> dict | None:
+    """Clear png_stale after the client has saved a new crop; None if nothing was cleared.
+
+    With scene_version the clear is a compare-and-set against the document's scene version, in
+    one statement: a save that lands after the crop was rendered (even after its file was
+    written) leaves the flag set, so a crop of older ink is never reported fresh (INK-057).
+    """
+    sql = "UPDATE regions SET png_stale = 0 WHERE id = ?"
+    args: list = [region_id]
+    if scene_version is not None:
+        sql += " AND (SELECT version FROM scenes WHERE document_id = regions.document_id) = ?"
+        args.append(scene_version)
+    cur = conn.execute(sql, args)
     conn.commit()
     return get_region(conn, region_id) if cur.rowcount else None
 
@@ -665,3 +698,67 @@ def stale_crop_ids(conn: sqlite3.Connection, document_id: str) -> list[str]:
         (document_id,),
     )
     return [r["id"] for r in rows]
+
+
+def document_updated_at(conn: sqlite3.Connection, document_id: str) -> str | None:
+    """When the canvas was last saved (ISO-8601 UTC); None if it does not exist."""
+    row = conn.execute("SELECT updated_at FROM documents WHERE id = ?", (document_id,)).fetchone()
+    return row["updated_at"] if row else None
+
+
+def recognition_candidates(conn: sqlite3.Connection, document_id: str) -> list[dict]:
+    """Active regions the recognizer should read now (INK-014).
+
+    Fresh crop (png_stale = 0) and no reading of any source for the current content_hash: moved
+    ink keeps its content_hash and so its reading, and a user or agent reading needs no model call.
+    """
+    rows = conn.execute(
+        "SELECT r.id, r.content_hash, r.png_path FROM regions r"
+        " WHERE r.document_id = ? AND r.status = 'active' AND r.png_stale = 0"
+        " AND r.content_hash IS NOT NULL"
+        " AND NOT EXISTS (SELECT 1 FROM recognitions c"
+        "  WHERE c.region_id = r.id AND c.content_hash = r.content_hash)"
+        " ORDER BY r.updated_at, r.id",
+        (document_id,),
+    )
+    return [dict(r) for r in rows]
+
+
+def read_fresh_crop(conn: sqlite3.Connection, region_id: str, content_hash_: str) -> bytes | None:
+    """The crop's bytes if the region is still active with this content_hash and a fresh crop.
+
+    Read under BEGIN IMMEDIATE, the lock crop uploads take while they rename and clear png_stale,
+    so the bytes always show the ink of content_hash_ (INK-014). None otherwise or if no file.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT png_path FROM regions WHERE id = ? AND status = 'active' AND png_stale = 0"
+            " AND content_hash = ?",
+            (region_id, content_hash_),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return Path(row["png_path"]).read_bytes()
+        except OSError:
+            return None  # no crop file yet: nothing to read until the browser saves one
+    finally:
+        conn.rollback()  # read-only: release the lock
+
+
+def save_model_reading(
+    conn: sqlite3.Connection, region_id: str, content_hash_: str, reading
+) -> None:
+    """Store a model reading (source='gemini') for the hash it was made from, in one commit.
+
+    An auto chunk whose ink is still that hash also takes the model's kind; a manual region keeps
+    the kind its creator gave it.
+    """
+    conn.execute(
+        "UPDATE regions SET kind = ? WHERE id = ? AND created_by = ? AND content_hash = ?",
+        (reading.kind, region_id, AUTO, content_hash_),
+    )
+    save_recognition(
+        conn, region_id, content_hash_, "gemini", reading.text, reading.latex, reading.model
+    )

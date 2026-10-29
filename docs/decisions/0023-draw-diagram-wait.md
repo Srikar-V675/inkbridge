@@ -1,4 +1,4 @@
-# 0017: draw_diagram waits by polling, expires on give-up, and refuses non-flowcharts
+# 0023: draw_diagram waits by polling, expires on give-up, and refuses non-flowcharts
 
 Status: accepted (INK-044)
 
