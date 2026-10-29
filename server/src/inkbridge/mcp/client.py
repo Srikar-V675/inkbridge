@@ -70,6 +70,25 @@ class ApiClient:
             raise self._status_error(r.status_code)
         return r
 
+    def _post(self, path: str, body: dict, timeout: float | None = None) -> httpx.Response:
+        try:
+            r = self.http.post(path, json=body, **({"timeout": timeout} if timeout else {}))
+        except httpx.HTTPError as e:
+            raise ApiError(
+                f"Cannot reach the Inkbridge API ({e.__class__.__name__}). "
+                "Is `make dev-server` running, and is INKBRIDGE_API_URL correct?"
+            ) from e
+        if r.status_code == 404:
+            raise NotFound(f"Not found: {path}. Check the canvas id (document_id).")
+        if r.status_code == 422:
+            raise ApiError(
+                "The Inkbridge API rejected the request (422): each chunk needs an id and a hash, "
+                "as stored in the note's frontmatter."
+            )
+        if not r.is_success:
+            raise self._status_error(r.status_code)
+        return r
+
     def _json(self, r: httpx.Response) -> Any:
         try:
             return r.json()
@@ -104,3 +123,13 @@ class ApiClient:
         """The overview PNG; the API's default width is the 0003 cap (1024 px)."""
         path = f"/documents/{self._document(document_id)}/overview"
         return self._get(path, {"max_width": max_width}, not_found=NO_CANVAS).content
+
+    def check_sync(self, document_id: str | None, chunks: list[dict], wait_s: float) -> dict:
+        # The API may wait up to wait_s for readings: give the HTTP call room beyond that.
+        return self._json(
+            self._post(
+                f"/documents/{self._document(document_id)}/check_sync",
+                {"chunks": chunks, "wait_s": wait_s},
+                timeout=wait_s + 30,
+            )
+        )

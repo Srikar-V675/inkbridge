@@ -57,6 +57,11 @@ class RecognitionWorker:
         self._unsaved: dict[Key, Recognition] = {}  # readings whose save hit a locked database
         self._paused_until = 0.0  # after a 429 or timeout no chunk is read, not just that one
         self._stop = threading.Event()
+        self._wake = threading.Event()  # set by stop() and request(): skip the rest of poll_s
+        self._lock = threading.Lock()
+        # Chunks check_sync is waiting on, per canvas, with an expiry time: read them first and
+        # without the idle delay (INK-036). The canvas list still gates them.
+        self._urgent: dict[str, dict[str, float]] = {}
         self._thread: threading.Thread | None = None
         self.stopped = False  # a PermanentError (missing or rejected key) ends the worker
 
@@ -97,6 +102,7 @@ class RecognitionWorker:
         """Ask the thread to stop. A model call already in flight is not interrupted; the thread
         is a daemon, so it never holds up process exit."""
         self._stop.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout)
 
@@ -109,7 +115,8 @@ class RecognitionWorker:
                 self.run_once()
             except Exception:
                 log.exception("recognition pass failed")
-            self._stop.wait(self.poll_s)
+            self._wake.wait(self.poll_s)
+            self._wake.clear()
 
     # -- one pass -------------------------------------------------------------------------------
 
@@ -129,13 +136,51 @@ class RecognitionWorker:
             return False
         return self._clock() - datetime.fromisoformat(updated).timestamp() >= self.idle_s
 
-    def _may_go_on(self, conn, document_id: str) -> bool:
-        """Checked before every chunk: stop, a fatal error, a global pause or new drawing."""
+    def request(self, document_id: str, region_ids: Iterable[str], ttl_s: float = 60.0) -> set[str]:
+        """Read these regions now, without waiting for the canvas to go idle (check_sync is
+        waiting on them). Returns the ids it will try: none if the canvas is not opted in, the
+        worker is stopped or not running, or calls are paused after a 429; never an id still in
+        its backoff. The caller need only wait for those."""
+        if (
+            document_id not in self.documents
+            or self.stopped
+            or self._stop.is_set()
+            or not self.is_alive()
+        ):
+            return set()
+        now = self._clock()
+        if now < self._paused_until:
+            return set()
+        backing_off = {k[0] for k, (_, at) in list(self._failures.items()) if at > now}
+        accepted = {r for r in region_ids if r not in backing_off}
+        if accepted:
+            with self._lock:
+                pending = self._urgent.setdefault(document_id, {})
+                for rid in accepted:
+                    pending[rid] = now + ttl_s
+            self._wake.set()
+        return accepted
+
+    def _urgent_ids(self, document_id: str) -> set[str]:
+        now = self._clock()
+        with self._lock:
+            pending = self._urgent.get(document_id, {})
+            for rid in [r for r, t in pending.items() if t <= now]:
+                del pending[rid]
+            return set(pending)
+
+    def _done_urgent(self, document_id: str, region_id: str) -> None:
+        with self._lock:
+            self._urgent.get(document_id, {}).pop(region_id, None)
+
+    def _may_go_on(self, conn, document_id: str, urgent: bool = False) -> bool:
+        """Checked before every chunk: stop, a fatal error, a global pause or new drawing (the
+        idle delay does not apply to a chunk check_sync asked for)."""
         return (
             not self._stop.is_set()
             and not self.stopped
             and self._clock() >= self._paused_until
-            and self._idle(conn, document_id)
+            and (urgent or self._idle(conn, document_id))
         )
 
     def _read_document(self, conn, document_id: str) -> int:
@@ -145,10 +190,15 @@ class RecognitionWorker:
         for store in (self._failures, self._unsaved):
             for key in [k for k in store if k not in keys]:
                 del store[key]  # superseded ink or a gone chunk: forget it
+        urgent = self._urgent_ids(document_id)
+        candidates.sort(key=lambda c: c["id"] not in urgent)  # stable: asked-for chunks first
         try:
             for region in candidates:
-                if not self._may_go_on(conn, document_id):
+                asked = region["id"] in urgent
+                if not self._may_go_on(conn, document_id, asked):
                     break
+                if asked:
+                    self._done_urgent(document_id, region["id"])
                 key = (region["id"], region["content_hash"])
                 failed = self._failures.get(key)
                 if failed and self._clock() < failed[1]:
