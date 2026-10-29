@@ -1,4 +1,4 @@
-# 0018: Two-pass sketch reading: heuristics, server-drawn markers, an MCP prompt
+# 0025: Two-pass sketch reading: heuristics, server-drawn markers, an MCP prompt
 
 Status: accepted (INK-058)
 
