@@ -30,15 +30,45 @@ Claude Desktop (`claude_desktop_config.json`):
 
 Never run a script from inside `server/src/inkbridge/mcp/` (the directory name shadows the SDK); use the entry point or `python -m inkbridge.mcp`.
 
+## Verifying a client setup
+
+`uv run --directory server inkbridge-mcp-smoke --api http://127.0.0.1:8000` (API running) drives
+`inkbridge-mcp` over stdio with the MCP SDK's own client, the way Claude Desktop and Claude Code do:
+`initialize`, `tools/list`, then `read_canvas`, `get_region` on the first chunk, `search` and an
+unknown canvas. It prints one PASS/FAIL line per check and exits 1 on any failure; it only reads.
+`server/tests/test_mcp_smoke.py` runs it against a live API process in CI.
+
+Checked by the script (INK-039): every reply is standard MCP content; `read_canvas` returns text
+then an `image/png` block (a real PNG), `get_region` returns text plus the crop or a text note when no
+crop exists yet, and an unknown canvas is a tool error (`is_error`). Checked by the test suite on top:
+error texts carry a next step, and the raw stdout stream holds protocol frames only during real tool
+calls (the server's HTTP log goes to stderr).
+
+Not yet checked: how the real GUI clients render this (decision 0003 still says "?"). Manual steps
+for whoever is at the keyboard:
+1. Start the API (`make dev-server`) and open a canvas with a few chunks.
+2. Claude Code: `claude mcp add inkbridge -- uv run --directory /path/to/inkbridge/server inkbridge-mcp`,
+   then ask it to call `read_canvas`. Expect the outline JSON and the overview image.
+3. Claude Desktop: add the config above, restart, ask for `read_canvas` and `get_region <id>`.
+4. Record per client: text shown, image shown inline (yes/no), anything odd. Write the result into
+   decision 0003 and the quirks list below.
+
+Known quirks: the SDK 2.x client exposes `mime_type` / `is_error` (snake case), not the wire names
+`mimeType` / `isError`; scripts written against 1.x need the change. `check_sync`, `list_questions` and
+`create_canvas` are not built yet, so they cannot be checked here. The SDK 2.x stdio server diverts `sys.stdout` to stderr while it runs
+(SDK issue #1933), so a stray `print` in a tool cannot corrupt the protocol stream; the raw-stdout test
+in `test_mcp_smoke.py` still guards the stream end to end.
+
 ## Tools (built)
 
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
-| `list_regions` | `document_id?`, `kind?`, `limit=50` | JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
-| `get_region` | `region_id`, `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
-| `search` | `query`, `limit=10` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
+| `list_regions` | `document_id?`, `kind?`, `limit=50` | Manual (saved) regions only; chunks come from `read_canvas`. JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
+| `get_region` | `region_id` (a chunk id or a saved region id), `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
+| `read_canvas` | `document_id?`, `include_overview=true`, `offset=0` | Compact JSON `{document, version, chunk_count, chunks: [{id, order, kind, bounds, text, latex, status, png_stale, content_hash, links: [{to, kind}], deep_link}], omitted?, note?}` in reading order, then the overview PNG (1024 px wide max) as image content. `text: null` means not read yet: open the chunk with `get_region`. Text over 60,000 chars is cut at a chunk boundary with `omitted` and a note naming the `offset` that continues; a reading over 4,000 chars is shortened and flagged `text_truncated` / `latex_truncated`; at most 20 links per chunk, the rest counted in `links_omitted`. | No |
+| `search` | `query`, `limit=10`, `document_id?` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
-Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions. The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
+Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions of one canvas (`document_id`, default `INKBRIDGE_DOCUMENT`). The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
 
@@ -48,7 +78,6 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 
 | Tool | Ticket | Purpose | Mutates |
 |---|---|---|---|
-| `read_canvas` | INK-034 | Whole-canvas outline in reading order: chunks with text, kind, bounds, links, `content_hash`, `deep_link`, plus an overview image. `search` also gains `document_id`. | No |
 | `check_sync` | INK-036 | Given `[{id, hash, reading}]` from a note's frontmatter, returns `fresh`, `fresh_after_reread`, `changed`, `replaced` (with successor), `removed`, `new`. May fill the recognition cache. | Cache only |
 | `list_questions` | INK-047 | Pending Ask AI questions with focus chunks and history (the vendor-neutral pull path). | No |
 | `answer_question` | INK-047 | Store a markdown answer and sources for a question. | Questions table |
