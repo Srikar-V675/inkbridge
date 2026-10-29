@@ -10,8 +10,17 @@ from inkbridge.db import AUTO, DocumentNotFound, _now, _region_dict
 STATUSES = ("active", "orphaned", "all")
 
 
+MAX_DOCUMENTS = 500  # canvases in all: an agent loop calling create_canvas cannot fill the disk
+
+
+class TooManyDocuments(Exception):
+    pass
+
+
 def create_document(conn: sqlite3.Connection, title: str) -> dict:
     """A new, empty canvas (scene at version 0) with a fresh 12-hex id."""
+    if conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] >= MAX_DOCUMENTS:
+        raise TooManyDocuments()
     doc_id, now = uuid.uuid4().hex[:12], _now()
     conn.execute(
         "INSERT INTO documents (id, title, updated_at) VALUES (?, ?, ?)", (doc_id, title, now)

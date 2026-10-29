@@ -141,6 +141,53 @@ def get_region(
     return content
 
 
+@mcp.tool()
+def write_text(
+    text: Annotated[str, Field(min_length=1, max_length=10_000, description="Plain text to add")],
+    anchor: Annotated[
+        str | None,
+        Field(description="Chunk id to place the text beside; omit for free space below the ink"),
+    ] = None,
+    document_id: Annotated[
+        str | None, Field(description="Defaults to the configured document")
+    ] = None,
+) -> str:
+    """Add a text box to the canvas as a draft the user can accept or reject.
+
+    The server picks the position: right of the anchor chunk (below it if that is taken), or
+    below all existing ink, never overlapping it. Never edits existing ink. The draft appears when
+    the canvas is open in a browser (now, or the next time it is opened). Returns
+    {op_id, status: "pending", placement}.
+    """
+    client = get_client()
+    payload = {"text": text, **({"anchor": anchor} if anchor else {})}
+    try:
+        op = client.create_op(document_id or client.default_document, "write_text", payload)
+    except NotFound as e:
+        raise ToolError(f"{e} Check document_id, or the anchor chunk id via read_canvas.") from e
+    except ApiError as e:
+        raise ToolError(str(e)) from e
+    return _dump(
+        {"op_id": op["id"], "status": op["status"], "placement": op["payload"]["placement"]}
+    )
+
+
+@mcp.tool()
+def create_canvas(
+    title: Annotated[str, Field(min_length=1, max_length=200, description="Canvas title")],
+) -> str:
+    """Create a new, empty canvas. Returns {document_id, url}; open the url to see it.
+
+    Only ever adds a canvas; it cannot change an existing one. Write into it with write_text and
+    draw_diagram (pass document_id); their content arrives as drafts.
+    """
+    try:
+        doc = get_client().create_document(title)
+    except ApiError as e:
+        raise ToolError(str(e)) from e
+    return _dump({"document_id": doc["id"], "url": doc["url"]})
+
+
 @mcp.prompt()
 def sketch_to_diagram(region_id: str, mode: str = "two_pass") -> str:
     """Turn a hand-drawn sketch region into a Mermaid flowchart drawn beside it as a draft.

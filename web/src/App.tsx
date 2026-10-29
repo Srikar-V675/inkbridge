@@ -11,7 +11,7 @@ import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
-import { loadView, saveView, type View } from "./view";
+import { keepFittingFirstDrafts, loadView, saveView, type View } from "./view";
 
 const LABEL: Record<SaveState, string> = {
   loading: "Loading…",
@@ -152,6 +152,10 @@ export default function App() {
   const cropRef = useRef<CropSync | null>(null);
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
+  // A canvas opened empty with no remembered view (one an agent just created): show the first
+  // drafts that arrive instead of leaving them under the toolbar at the origin.
+  const fitFirstDrafts = useRef(false);
+  const armedView = useRef<View | null>(null);
   const pendingJump = useRef<JumpResult | null>(null);
   const sceneReady = useRef(false);
   const [api, setApi] = useState<Api | null>(null);
@@ -224,6 +228,7 @@ export default function App() {
       const restored = restoreElements(elements as never, null);
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
       fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
+      fitFirstDrafts.current = !view && !restored.some((e) => !e.isDeleted);
       setInitial({ elements: restored, view });
     });
     const onHide = () => {
@@ -306,7 +311,13 @@ export default function App() {
             await new Promise((r) => setTimeout(r, SAVE_RETRY_MS));
           }
         };
-        return drawOp(apiRef.current ?? (await apiReady.promise), op, persist);
+        const api = apiRef.current ?? (await apiReady.promise);
+        const ids = await drawOp(api, op, persist);
+        if (fitFirstDrafts.current) {
+          fitFirstDrafts.current = false;
+          api.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.9, maxZoom: 1, animate: false });
+        }
+        return ids;
       },
       // A save left chunks with stale crops: export them once the canvas is idle (INK-057).
       onChunksUpdated: () => cropRef.current?.request(),
@@ -334,6 +345,13 @@ export default function App() {
       // The first change event means the canvas holds the loaded scene, so crops can be exported;
       // a reopened tab then catches up on crops left stale while it was closed.
       cropRef.current?.start();
+      // The user took over (panned, zoomed or drew): drafts never move their view from now on.
+      if (fitFirstDrafts.current) {
+        const now = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
+        armedView.current ??= now;
+        if (!keepFittingFirstDrafts(armedView.current, now, elements as never))
+          fitFirstDrafts.current = false;
+      }
       // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
       sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {

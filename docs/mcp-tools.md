@@ -68,6 +68,8 @@ in `test_mcp_smoke.py` still guards the stream end to end.
 | `read_canvas` | `document_id?`, `include_overview=true`, `offset=0` | Compact JSON `{document, version, chunk_count, chunks: [{id, order, kind, bounds, text, latex, status, png_stale, content_hash, text_hash, links: [{to, kind}], deep_link}], omitted?, note?}` in reading order, then the overview PNG (1024 px wide max) as image content. `text: null` means not read yet: open the chunk with `get_region`. Text over 60,000 chars is cut at a chunk boundary with `omitted` and a note naming the `offset` that continues; a reading over 4,000 chars is shortened and flagged `text_truncated` / `latex_truncated`; at most 20 links per chunk, the rest counted in `links_omitted`. | No |
 | `check_sync` | `chunks: [{id, hash, reading}]` (from a note's frontmatter: content hash and reading hash), `document_id?`, `wait_s=15` (0..30) | JSON `{fresh: [id], fresh_after_reread: [{id, hash, reading}], changed: [{id, hash, reading}], replaced: [{id, successor, hash, reading}], removed: [id], new: [{id, hash, reading, preview}]}`; `changed` with `reading: null` means no reading in time (look with `get_region`) | Recognition cache only |
 | `draw_diagram` | `mermaid` (flowchart only), `anchor?` (chunk id), `document_id?`, `wait_seconds=20` (1 to 60) | JSON `{op_id, status: "applied", element_count}` once the browser has drawn the dashed drafts | Adds a draft op (never edits ink) |
+| `create_canvas` | `title` (1 to 200 chars) | JSON `{document_id, url}`; `url` opens the new, empty canvas | Adds a document (never changes an existing one) |
+| `write_text` | `text` (1 to 10,000 chars), `anchor?` (chunk id), `document_id?` | JSON `{op_id, status: "pending", placement: {x, y}}`; the text appears as a dashed draft in any open browser, now or when the canvas is next opened | Adds a draft op (never edits ink) |
 | `search` | `query`, `limit=10`, `document_id?` | JSON `{results: [{region_id, snippet, score}]}`; snippet marks matches with `[ ]`; score is higher-is-better (negated BM25) | No |
 
 Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns active regions of one canvas (`document_id`, default `INKBRIDGE_DOCUMENT`). The index holds the best reading (user > agent > gemini) for the region's current ink, keyed by its position-independent content hash: changing the ink drops its old text until it is re-recognised, while moving it keeps the reading and the search hit.
@@ -100,8 +102,6 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 |---|---|---|---|
 | `list_questions` | INK-047 | Pending Ask AI questions with focus chunks and history (the vendor-neutral pull path). | No |
 | `answer_question` | INK-047 | Store a markdown answer and sources for a question. | Questions table |
-| `create_canvas` | INK-043 | New empty canvas, returns `{document_id, url}`. | Adds a document |
-| `write_text` | INK-043 | Draft text near an anchor chunk, or in free space; arrives as a draft. | Adds a draft op |
 
 Outside MCP: `GET /regions/{id}/sketch` (pass-1 JSON) and `GET /regions/{id}/sketch.png` (marker image) back `include_sketch`. `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
 
