@@ -15,5 +15,5 @@ test:
 	cd web && npm test
 
 lint:
-	cd server && uv run ruff check .
+	cd server && uv run ruff check . ../skills ../scripts
 	cd web && npm run lint && npx tsc -b

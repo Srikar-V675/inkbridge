@@ -384,4 +384,21 @@ describe("SceneSync", () => {
     await p;
     assert.equal(h.states.length, before);
   });
+  it("settledVersion is the saved version only when nothing is pending or in flight", async () => {
+    const save = deferred();
+    const h = harness([json(200, { version: 3, elements: [el("a")] }), save.next]);
+    assert.equal(h.sync.settledVersion(), null, "not loaded yet");
+    await h.sync.load();
+    assert.equal(h.sync.settledVersion(), 3);
+    assert.equal(h.sync.notify([el("a")]), false, "unchanged scene");
+    assert.equal(h.sync.notify([el("a", 2)]), true);
+    assert.equal(h.sync.settledVersion(), null, "edit not saved yet");
+    mock.timers.tick(1500);
+    await settle();
+    assert.equal(h.sync.settledVersion(), null, "save in flight");
+    save.release(json(200, { version: 4 }));
+    await settle();
+    await settle();
+    assert.equal(h.sync.settledVersion(), 4);
+  });
 });

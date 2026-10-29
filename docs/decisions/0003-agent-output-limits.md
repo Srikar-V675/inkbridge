@@ -18,3 +18,5 @@ This needs a person at those clients and was not checked during unattended devel
 The server returns standard MCP `image` content (`image/png`). If a client does not render it,
 the planned fallback is a base64 text block; no fallback is implemented yet.
 Record the result here once checked: Claude Desktop: ?  Claude Code: ?
+Protocol level (INK-039, `inkbridge-mcp-smoke` with the SDK's stdio client): image blocks arrive as
+`image/png` content for `read_canvas` and `get_region`; GUI rendering is the remaining manual step.
