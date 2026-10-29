@@ -64,7 +64,7 @@ in `test_mcp_smoke.py` still guards the stream end to end.
 | Tool | Input | Returns | Mutates |
 |---|---|---|---|
 | `list_regions` | `document_id?`, `kind?`, `limit=50` | Manual (saved) regions only; chunks come from `read_canvas`. JSON `{regions: [{id, kind, bounds, stroke_count, preview, updated_at}]}` | No |
-| `get_region` | `region_id` (a chunk id or a saved region id), `include_image=true`, `include_ink=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?}` plus the region PNG as image content | No |
+| `get_region` | `region_id` (a chunk id or a saved region id), `include_image=true`, `include_ink=false`, `include_sketch=false` | JSON text `{id, kind, text, latex, source, bounds, status, png_stale, updated_at, ink?, sketch?}` plus the region PNG as image content | No |
 | `read_canvas` | `document_id?`, `include_overview=true`, `offset=0` | Compact JSON `{document, version, chunk_count, chunks: [{id, order, kind, bounds, text, latex, status, png_stale, content_hash, text_hash, links: [{to, kind}], deep_link}], omitted?, note?}` in reading order, then the overview PNG (1024 px wide max) as image content. `text: null` means not read yet: open the chunk with `get_region`. Text over 60,000 chars is cut at a chunk boundary with `omitted` and a note naming the `offset` that continues; a reading over 4,000 chars is shortened and flagged `text_truncated` / `latex_truncated`; at most 20 links per chunk, the rest counted in `links_omitted`. | No |
 | `check_sync` | `chunks: [{id, hash, reading}]` (from a note's frontmatter: content hash and reading hash), `document_id?`, `wait_s=15` (0..30) | JSON `{fresh: [id], fresh_after_reread: [{id, hash, reading}], changed: [{id, hash, reading}], replaced: [{id, successor, hash, reading}], removed: [id], new: [{id, hash, reading, preview}]}`; `changed` with `reading: null` means no reading in time (look with `get_region`) | Recognition cache only |
 | `draw_diagram` | `mermaid` (flowchart only), `anchor?` (chunk id), `document_id?`, `wait_seconds=20` (1 to 60) | JSON `{op_id, status: "applied", element_count}` once the browser has drawn the dashed drafts | Adds a draft op (never edits ink) |
@@ -75,6 +75,17 @@ Search is prefix-based, ANDs the words, covers text and LaTeX, and only returns 
 `check_sync` compares content hashes first (a move is `fresh`), then the reading hash (a cosmetic edit is `fresh_after_reread`; only a different reading is `changed`). Chunks that need a new reading are read by the recognition worker while the call waits (bounded by `wait_s`, only for canvases in `INKBRIDGE_RECOGNIZE_DOCUMENTS`). A reading that the note lacks for unchanged ink (exported before recognition, or corrected later) is reported as `changed`. Several `replaced` entries can share one `successor` after a merge: rewrite that block once. See decision 0020.
 
 Errors are returned as tool errors with a next step (for example, "call list_regions to see valid region ids").
+
+**Sketch to diagram** (two-pass reading, INK-058, decision [0025](decisions/0025-sketch-two-pass.md)):
+- `get_region(include_sketch=true)` adds a `sketch` field, the server's pass-1 guess from the ink alone with no model call:
+  - `nodes`: `[{id: N1.., box, element_ids, label_element_ids, label_text, confidence}]`
+  - `arrows`: `[{id: A1.., from, to, head: "end"|"both"|null, tip, tail, element_ids, confidence}]`
+  - `unattached`: strokes that touch fewer than two nodes
+  - `markers`: pixel positions on the marker image
+
+  It also adds a second image: the ink redrawn with red node markers on node centres, blue arrow markers on arrow tips, and grey markers (U1..) on unattached strokes.
+- The read follows arrow `links` one hop, so a flowchart split into one chunk per node still resolves its arrows. Drafts are left out.
+- The MCP prompt `sketch_to_diagram(region_id, mode)` gives the instructions. With `mode=two_pass` (default), the agent checks the guess, writes Mermaid that uses the marker ids, flags uncertain arrows, then calls `draw_diagram` anchored beside the sketch. With `mode=one_shot`, it uses the crop alone. INK-053's E2 experiment compares the two.
 
 `draw_diagram` needs the canvas open in a browser, because Mermaid is converted there (decision [0023](decisions/0023-draw-diagram-wait.md)). The API refuses anything that is not a flowchart (`flowchart` / `graph`): sequence, class and other diagram types would come back as one uneditable image. The tool polls the op until the browser acks it, for up to `wait_seconds`. Its errors are:
 - `Mermaid could not be parsed: <message>`, reported by the browser. No elements are drawn.
@@ -92,7 +103,7 @@ Not built yet; each ticket updates this file when it lands. All tools take an op
 | `create_canvas` | INK-043 | New empty canvas, returns `{document_id, url}`. | Adds a document |
 | `write_text` | INK-043 | Draft text near an anchor chunk, or in free space; arrives as a draft. | Adds a draft op |
 
-Outside MCP: `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
+Outside MCP: `GET /regions/{id}/sketch` (pass-1 JSON) and `GET /regions/{id}/sketch.png` (marker image) back `include_sketch`. `GET /regions/{id}/png` serves a chunk's stored crop at full size (built, INK-033; the `GET /regions/{id}/image` is capped at 1024 px wide by default) so the export skill can save it into the vault. `save_transcription` and `get_neighbors` from the v1 plan are dropped.
 
 ## Limits
 

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from inkbridge import config
 from inkbridge.mcp.client import ApiClient, ApiError, Conflict, NotFound
+from inkbridge.sketch_prompts import sketch_prompt
 
 mcp = MCPServer(
     "inkbridge",
@@ -90,6 +91,13 @@ def get_region(
     include_ink: Annotated[
         bool, Field(description="Include raw stroke points and pressures")
     ] = False,
+    include_sketch: Annotated[
+        bool,
+        Field(
+            description="For a hand-drawn diagram: add the server's guessed nodes and arrows "
+            "and an image with numbered markers (two-pass sketch reading)"
+        ),
+    ] = False,
 ) -> list:
     """Get one region: transcription (text, latex), kind, bounds, optionally its PNG crop and ink."""
     client = get_client()
@@ -111,6 +119,8 @@ def get_region(
         }
         if include_ink:
             meta["ink"] = client.get_ink(region_id)
+        if include_sketch:
+            meta["sketch"] = client.get_sketch(region_id)
         content: list = [_dump(meta)]
     except ApiError as e:
         raise ToolError(str(e)) from e
@@ -123,7 +133,21 @@ def get_region(
         except ApiError as e:
             # Any other failure is not a missing crop: keep the transcription, give the real cause.
             content.append(f"(image unavailable for this region: {e})")
+    if include_sketch:
+        try:
+            content.append(Image(data=client.get_sketch_image(region_id), format="png"))
+        except ApiError as e:
+            content.append(f"(marker image unavailable: {e})")
     return content
+
+
+@mcp.prompt()
+def sketch_to_diagram(region_id: str, mode: str = "two_pass") -> str:
+    """Turn a hand-drawn sketch region into a Mermaid flowchart drawn beside it as a draft.
+
+    mode: two_pass (default; uses the server's node/arrow guess and a marker image) or one_shot.
+    """
+    return sketch_prompt(region_id, mode)
 
 
 @mcp.tool()

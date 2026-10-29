@@ -586,6 +586,37 @@ def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
     return {"strokes": strokes, "point_count": sum(len(s["points"]) for s in strokes)}
 
 
+def get_sketch_elements(conn: sqlite3.Connection, region_id: str) -> list[dict] | None:
+    """Live, non-draft elements of a region plus those of regions an arrow links it to (one hop).
+
+    A sketched flowchart with long arrows splits into one chunk per node joined by `links`, so
+    reading one chunk alone would leave every arrow without a target. None if the region is unknown.
+    """
+    region = get_region(conn, region_id)
+    if region is None:
+        return None
+    ids = list(region["element_ids"])
+    for row in conn.execute(
+        "SELECT from_region, to_region FROM links WHERE from_region = ? OR to_region = ?"
+        " LIMIT 50",  # a hub chunk must not pull in the whole canvas
+        (region_id, region_id),
+    ):
+        other = row["to_region"] if row["from_region"] == region_id else row["from_region"]
+        linked = get_region(conn, other)
+        if linked is not None and linked["status"] == "active":
+            ids += linked["element_ids"]
+    _, elements_json = get_scene(conn, region["document_id"])
+    by_id = {e["id"]: e for e in json.loads(elements_json)}
+    out, seen = [], set()
+    for i in ids:
+        e = by_id.get(i)
+        if e is None or i in seen or e.get("isDeleted") or (e.get("customData") or {}).get("draft"):
+            continue
+        seen.add(i)
+        out.append(e)
+    return out
+
+
 def _reindex_region(conn: sqlite3.Connection, region_id: str) -> None:
     """Make region_fts hold the best reading for the region's current content_hash (or nothing)."""
     conn.execute("DELETE FROM region_fts WHERE region_id = ?", (region_id,))
