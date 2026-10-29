@@ -8,7 +8,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from inkbridge import config
-from inkbridge.chunker import ChunkerConfig, chunk_scene, connector_ids, kind_hint, match_chunks
+from inkbridge.chunker import (
+    ChunkerConfig,
+    chunk_scene,
+    connector_ids,
+    kind_hint,
+    match_chunks,
+    pin_groups,
+)
 from inkbridge.regions import (
     bbox_of,
     content_hash,
@@ -308,6 +315,7 @@ def _region_dict(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "status": row["status"],
         "successor_of": row["successor_of"],
         "png_stale": bool(row["png_stale"]),
+        "pinned": bool(row["pinned"]),
         "updated_at": row["updated_at"],
         "text": rec["text"] if rec else None,
         "latex": rec["latex"] if rec else None,
@@ -469,14 +477,21 @@ def _sync_chunks(
     element ids and hashes, and point successor_of at the cluster that took most of their ink.
     """
     cfg = chunker_config or ChunkerConfig()
-    chunking = chunk_scene(elements, cfg)
-    clusters = chunking.chunks
     rows = {
         r["id"]: r
         for r in conn.execute(
-            "SELECT * FROM regions WHERE document_id = ? AND created_by = ?", (document_id, AUTO)
+            "SELECT * FROM regions WHERE document_id = ? AND created_by = ? ORDER BY id",
+            (document_id, AUTO),
         ).fetchall()
     }
+    # Manual merges and splits (INK-059) are active pinned chunks: their ink stays exactly one chunk.
+    pins = [
+        json.loads(r["element_ids_json"])
+        for r in rows.values()
+        if r["pinned"] and r["status"] == "active"
+    ]
+    chunking = chunk_scene(elements, cfg, pins=pins)
+    clusters = chunking.chunks
     old = {rid: json.loads(r["element_ids_json"]) for rid, r in rows.items()}
     boxes = [bbox_of([by_id[i] for i in members]) for members in clusters]
     matching = match_chunks(
@@ -489,32 +504,19 @@ def _sync_chunks(
     )
     ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
 
-    for rid, kept, members, box in zip(ids, matching.assigned, clusters, boxes, strict=True):
+    for rid, kept, members, box, pinned in zip(
+        ids, matching.assigned, clusters, boxes, chunking.pinned, strict=True
+    ):
         row = rows.get(kept) if kept else None
-        # Kept, still active and holding exactly the same elements as before.
+        # Kept, still active and holding exactly the same elements as before. (Its pin state cannot
+        # differ then: pins come from the active pinned rows themselves.)
         same = row is not None and row["status"] == "active" and old[rid] == members
         if same and changed.isdisjoint(members):
             continue  # same elements, none edited: nothing to recompute
         chunk = [by_id[i] for i in members]
         new_stroke, new_content = stroke_hash(chunk), content_hash(chunk)
         if row is None:
-            conn.execute(
-                "INSERT INTO regions (id, document_id, element_ids_json, bbox, kind, created_by,"
-                " stroke_hash, content_hash, png_path, status, png_stale, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,'active',1,?)",
-                (
-                    rid,
-                    document_id,
-                    json.dumps(members),
-                    json.dumps(box),
-                    kind_hint(chunk),
-                    AUTO,
-                    new_stroke,
-                    new_content,
-                    str(config.crops_dir() / f"{rid}.png"),
-                    now,
-                ),
-            )
+            _insert_chunk(conn, document_id, rid, members, by_id, now, pinned)
             continue
         if same and new_stroke == row["stroke_hash"] and new_content == row["content_hash"]:
             continue  # only volatile fields moved
@@ -522,7 +524,7 @@ def _sync_chunks(
         conn.execute(
             "UPDATE regions SET element_ids_json = ?, bbox = ?, stroke_hash = ?,"
             " content_hash = ?, kind = ?, status = 'active', successor_of = NULL,"
-            " updated_at = ?,"
+            " pinned = ?, updated_at = ?,"
             " png_stale = CASE WHEN ? != stroke_hash THEN 1 ELSE png_stale END WHERE id = ?",
             (
                 json.dumps(members),
@@ -530,6 +532,7 @@ def _sync_chunks(
                 new_stroke,
                 new_content,
                 kind_hint(chunk) if content_changed else row["kind"],
+                int(pinned),
                 now,
                 new_stroke,
                 rid,
@@ -540,7 +543,8 @@ def _sync_chunks(
 
     for rid, successor in matching.successors.items():
         conn.execute(
-            "UPDATE regions SET status = 'orphaned', successor_of = ?, updated_at = ? WHERE id = ?",
+            "UPDATE regions SET status = 'orphaned', successor_of = ?, pinned = 0, updated_at = ?"
+            " WHERE id = ?",
             (ids[successor] if successor is not None else None, now, rid),
         )
 
@@ -550,6 +554,153 @@ def _sync_chunks(
         "INSERT INTO links (document_id, from_region, to_region, kind) VALUES (?, ?, ?, 'arrow')",
         [(document_id, ids[a], ids[b]) for a, b in chunking.links],
     )
+
+
+def _insert_chunk(
+    conn: sqlite3.Connection,
+    document_id: str,
+    rid: str,
+    members: list[str],
+    by_id: dict[str, dict],
+    now: str,
+    pinned: bool,
+) -> None:
+    """A new active chunk row: hashes and bbox from the scene, crop still to be rendered."""
+    chunk = [by_id[i] for i in members]
+    conn.execute(
+        "INSERT INTO regions (id, document_id, element_ids_json, bbox, kind, created_by,"
+        " stroke_hash, content_hash, png_path, status, png_stale, pinned, updated_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,'active',1,?,?)",
+        (
+            rid,
+            document_id,
+            json.dumps(members),
+            json.dumps(bbox_of(chunk)),
+            kind_hint(chunk),
+            AUTO,
+            stroke_hash(chunk),
+            content_hash(chunk),
+            str(config.crops_dir() / f"{rid}.png"),
+            int(pinned),
+            now,
+        ),
+    )
+
+
+class ChunkNotFound(Exception):
+    """No chunk with this id on this canvas (unknown, a manual region, or another canvas's)."""
+
+
+class ChunkNotActive(Exception):
+    """The chunk was already replaced (orphaned): the caller's chunk list is stale."""
+
+
+class InvalidOverride(ValueError):
+    pass
+
+
+def merge_chunks(
+    conn: sqlite3.Connection,
+    document_id: str,
+    chunk_ids: list[str],
+    chunker_config: ChunkerConfig | None = None,
+) -> tuple[dict, list[str]]:
+    """Merge active chunks into one new pinned chunk; the originals are orphaned (INK-059).
+
+    Returns the new chunk and the orphaned ids. The scene is only read, never written.
+    """
+    if len(set(chunk_ids)) != len(chunk_ids) or len(chunk_ids) < 2:
+        raise InvalidOverride("merge needs at least two different chunk ids")
+
+    def groups(rows: list[sqlite3.Row], elements: list[dict]) -> list[list[str]]:
+        # A chunk of nothing but arrows or lines cannot be pinned: connectors follow their ends.
+        for r in rows:
+            if not pin_groups(elements, [json.loads(r["element_ids_json"])]):
+                raise InvalidOverride(
+                    f"chunk {r['id']} holds only arrows or lines, which follow the chunks they "
+                    "connect; merge the chunks at their ends instead"
+                )
+        return [[i for r in rows for i in json.loads(r["element_ids_json"])]]
+
+    (new,), orphaned = _override(conn, document_id, chunk_ids, groups, chunker_config)
+    return new, orphaned
+
+
+def split_chunk(
+    conn: sqlite3.Connection,
+    document_id: str,
+    chunk_id: str,
+    element_ids: list[str],
+    chunker_config: ChunkerConfig | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Split the given elements out of a chunk: two new pinned chunks (the selection, then the
+    rest) and the original orphaned with the larger part as successor (INK-059)."""
+    if not element_ids:
+        raise InvalidOverride("element_ids is empty: select the ink to split off")
+
+    def groups(rows: list[sqlite3.Row], _: list[dict]) -> list[list[str]]:
+        members = json.loads(rows[0]["element_ids_json"])
+        outside = sorted(set(element_ids) - set(members))
+        if outside:
+            raise InvalidOverride(f"elements not in chunk {chunk_id}: {outside}")
+        # pin_groups gives a shared id to the first pin, so the second is "the rest".
+        return [list(element_ids), members]
+
+    new, orphaned = _override(conn, document_id, [chunk_id], groups, chunker_config)
+    return new, orphaned
+
+
+def _override(conn, document_id, chunk_ids, make_groups, chunker_config):
+    """Replace active chunks by new pinned chunks, then re-run the chunker in the same transaction.
+
+    The new rows hold exactly the pinned ink, so the matcher keeps their ids (Jaccard 1) and orphans
+    the originals with successor_of like any other split or merge. Nothing writes the scene.
+    """
+    now = _now()
+    conn.execute("BEGIN IMMEDIATE")  # same lock as a scene save: the chunks cannot move meanwhile
+    try:
+        scene = conn.execute(
+            "SELECT elements_json FROM scenes WHERE document_id = ?", (document_id,)
+        ).fetchone()
+        if scene is None:
+            raise DocumentNotFound(document_id)
+        rows = []
+        for cid in chunk_ids:
+            r = conn.execute(
+                "SELECT * FROM regions WHERE id = ? AND document_id = ? AND created_by = ?",
+                (cid, document_id, AUTO),
+            ).fetchone()
+            if r is None:
+                raise ChunkNotFound(cid)
+            if r["status"] != "active":
+                raise ChunkNotActive(cid)
+            rows.append(r)
+        elements = json.loads(scene["elements_json"])
+        wanted = make_groups(rows, elements)
+        groups = pin_groups(elements, wanted)
+        # A group with no ink of its own (only connectors, or nothing left after a split) vanishes.
+        if len(groups) != len(wanted):
+            raise InvalidOverride(
+                "the selection must hold ink (not only arrows or lines) and leave ink behind"
+            )
+        by_id = {e["id"]: e for e in elements}
+        conn.executemany("UPDATE regions SET pinned = 0 WHERE id = ?", [(r["id"],) for r in rows])
+        new_ids = [uuid.uuid4().hex[:12] for _ in groups]
+        for rid, members in zip(new_ids, groups, strict=True):
+            _insert_chunk(conn, document_id, rid, members, by_id, now, pinned=True)
+        _sync_chunks(conn, document_id, elements, by_id, set(), now, chunker_config)
+        new = [get_region(conn, rid) for rid in new_ids]
+        old = [get_region(conn, r["id"]) for r in rows]
+        # The matcher must have kept the new ids and replaced the originals; anything else is a bug.
+        if any(c is None or c["status"] != "active" for c in new) or any(
+            c["status"] != "orphaned" for c in old
+        ):
+            raise RuntimeError("chunk override did not take effect")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return new, [r["id"] for r in rows]
 
 
 def list_links(conn: sqlite3.Connection, document_id: str) -> list[dict]:

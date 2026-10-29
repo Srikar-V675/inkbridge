@@ -116,7 +116,7 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     )
     conn.commit()
     monkeypatch.undo()  # back to the real migrations directory
-    assert db.migrate(conn) == [4]
+    assert db.migrate(conn) == [4, 5]
     region = db.get_region(conn, "r1")
     assert region["content_hash"] == content_hash([A])
     assert region["text"] == "kept reading"

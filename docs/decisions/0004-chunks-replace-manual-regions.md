@@ -3,7 +3,7 @@
 Status: accepted (INK-028). Built: the proximity clustering in `chunker.py` (INK-030: k, floor, bound text,
 exclusion of arrows, lines, drafts and deleted elements); running it on save with stable ids and
 `successor_of` (INK-031, details in [0011](0011-chunk-identity.md)); arrow merge and links (INK-032, details in
-[0013](0013-arrow-links.md)). Planned: manual override precedence (INK-059).
+[0013](0013-arrow-links.md)). Manual override (INK-059): pinned chunks, details in [0024](0024-manual-chunk-override.md).
 
 - You write on one large canvas per topic, so boxing every group by hand does not scale. The server proposes
   **chunks** after every scene save and stores them in the existing `regions` table with `created_by='auto'`;
