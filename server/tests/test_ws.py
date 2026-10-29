@@ -33,6 +33,14 @@ def status(client, op_id):
     return client.get(f"/ops/{op_id}").json()["status"]
 
 
+def wait_status(client, op_id, want, timeout=2.0):
+    """The server marks an op delivered just after the send, so a reader can briefly see pending."""
+    deadline = time.monotonic() + timeout
+    while (got := status(client, op_id)) != want and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return got
+
+
 def test_op_posted_while_connected_is_pushed_within_a_second(client):
     with client.websocket_connect(WS) as ws:
         t0 = time.monotonic()
@@ -46,7 +54,7 @@ def test_op_posted_while_connected_is_pushed_within_a_second(client):
         "payload": op["payload"],
     }
     assert msg["payload"]["id_prefix"] == f"{op['id']}:"
-    assert status(client, op["id"]) == "delivered"
+    assert wait_status(client, op["id"], "delivered") == "delivered"
 
 
 def test_ops_waiting_before_connect_are_replayed_and_marked_delivered(client):
@@ -178,14 +186,17 @@ def test_mark_delivered_reports_whether_it_moved_the_op(client):
 def test_an_op_resolved_before_its_push_is_not_sent(client):
     from inkbridge.api.ws import hub
 
+    # Resolve the op before connecting: the connect-time replay runs concurrently with the test
+    # thread, so an op still pending while it lists ops would be replayed (correctly) and sent.
+    conn = db.connect()
+    try:
+        stale, _ = ops_db.create_op(conn, "default", "write_text", {"text": "late"})
+        ops_db.update_status(conn, stale["id"], "expired")
+    finally:
+        conn.close()
     with client.websocket_connect(WS) as ws:
-        conn = db.connect()
-        try:
-            stale, _ = ops_db.create_op(conn, "default", "write_text", {"text": "late"})
-            ops_db.update_status(conn, stale["id"], "expired")
-        finally:
-            conn.close()
-        hub.publish("default", op=stale)  # the push queued at enqueue runs after the PATCH
+        # The push queued at enqueue runs after the PATCH; wait for it so the order is fixed.
+        hub.publish("default", op=stale).result(timeout=2)
         fresh = write(client, "fresh")
         assert recv(ws)["op_id"] == fresh["id"]
     assert status(client, stale["id"]) == "expired"
