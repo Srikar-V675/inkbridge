@@ -51,7 +51,7 @@ def test_read_canvas_returns_the_outline_then_the_overview_image(api):
     assert second["text"] is None  # not read yet: the description says to open it with get_region
     assert set(first) == {
         "id", "order", "kind", "bounds", "text", "latex", "status", "png_stale",
-        "content_hash", "links", "deep_link",
+        "content_hash", "text_hash", "links", "deep_link",
     }  # fmt: skip
     image = result.content[1]
     assert image.type == "image" and image.mime_type == "image/png"
