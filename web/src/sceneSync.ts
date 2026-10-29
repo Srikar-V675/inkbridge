@@ -52,6 +52,7 @@ export class SceneSync {
   private saving = false;
   private failures = 0;
   private disposed = false;
+  private loaded = false;
   private inflight: Promise<void> | null = null;
   // The most recent scene Excalidraw reported, so a conflict merge never misses newer strokes.
   private latest: readonly SceneElement[] | null = null;
@@ -86,6 +87,7 @@ export class SceneSync {
       this.lastSig = signature(body.elements);
       this.savedIds = liveIds(body.elements);
       this.pending = null;
+      this.loaded = true;
       this.emit("saved");
       return body.elements;
     } catch {
@@ -94,19 +96,27 @@ export class SceneSync {
     }
   }
 
-  /** Call from onChange with every element including deleted ones. Cheap when nothing changed. */
-  notify(elements: readonly SceneElement[]) {
-    if (this.disposed) return;
+  /** Call from onChange with every element including deleted ones. Cheap when nothing changed.
+   *  Returns true if the elements really changed. */
+  notify(elements: readonly SceneElement[]): boolean {
+    if (this.disposed) return false;
     this.latest = elements;
     const sig = signature(elements);
     // Excalidraw re-fires onChange after every re-render: only a real change restarts the debounce.
     // Compare with the newest known state: while a save is pending, going back to the last saved
     // scene (an undo) is itself a change that must be saved.
-    if (sig === (this.pending ? this.pendingSig : this.lastSig)) return;
+    if (sig === (this.pending ? this.pendingSig : this.lastSig)) return false;
     this.pending = elements;
     this.pendingSig = sig;
     this.emit("dirty");
     this.schedule(this.o.debounceMs ?? 1500);
+    return true;
+  }
+
+  /** The stored scene version the canvas matches exactly; null before load or while edits are
+   *  unsaved or being saved (crop sync renders only a saved scene, decision 0015). */
+  settledVersion(): number | null {
+    return this.loaded && !this.disposed && !this.pending && !this.saving ? this.version : null;
   }
 
   /** Save now (page hidden). Resolves when the attempt finishes. */
@@ -160,6 +170,7 @@ export class SceneSync {
       });
       if (r.ok) {
         this.version = ((await r.json()) as { version: number }).version;
+        this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
         this.lastSig = sentSig;
         this.savedIds = liveIds(sent);
         this.failures = 0;
