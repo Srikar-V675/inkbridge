@@ -1,4 +1,4 @@
-// Manual chunk merge and split (INK-059, docs/decisions/0017). Framework-free: what the current
+// Manual chunk merge and split (INK-059, docs/decisions/0024). Framework-free: what the current
 // selection means for the chunks, and the request that applies it. The server owns overrides;
 // nothing here touches the scene.
 import type { Chunk } from "./chunks";

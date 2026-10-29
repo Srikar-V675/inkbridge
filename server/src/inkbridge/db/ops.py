@@ -45,6 +45,13 @@ class OpNotFound(Exception):
     pass
 
 
+MAX_OPEN_OPS = 200  # pending or delivered per canvas: an agent loop cannot queue drafts forever
+
+
+class TooManyOpen(Exception):
+    """The canvas already has MAX_OPEN_OPS ops that no browser has drawn yet."""
+
+
 class OpConflict(Exception):
     """Same op_id posted again with a different body."""
 
@@ -146,6 +153,12 @@ def _create_op(conn, document_id, op_type, payload, op_id):
                 raise OpConflict(op_id)
             conn.rollback()
             return existing, False
+    open_ops = conn.execute(
+        "SELECT COUNT(*) FROM agent_ops WHERE document_id = ? AND status IN ('pending', 'delivered')",
+        (document_id,),
+    ).fetchone()[0]
+    if open_ops >= MAX_OPEN_OPS:
+        raise TooManyOpen(document_id)
     elements = _scene_elements(conn, document_id)
     ids = referenced_existing_ids(payload, elements)
     oid = op_id or uuid.uuid4().hex[:12]

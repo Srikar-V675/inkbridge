@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 inkbridge-mcp = "inkbridge.mcp.server:main"
+inkbridge-mcp-smoke = "inkbridge.mcp_smoke:main"
 
 [dependency-groups]
 dev = [

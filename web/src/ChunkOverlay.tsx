@@ -1,6 +1,6 @@
 // Chunk boxes and ids drawn as plain DOM over the canvas. UI state only: nothing here touches the
 // Excalidraw scene, so the overlay can never be autosaved (docs/decisions/0014). The merge and
-// split actions only call the API (docs/decisions/0017); they never change elements either.
+// split actions only call the API (docs/decisions/0024); they never change elements either.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";

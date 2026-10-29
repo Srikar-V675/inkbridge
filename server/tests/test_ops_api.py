@@ -217,7 +217,9 @@ def test_full_lifecycle_and_invalid_transitions(client):
 
 
 def test_failed_records_the_error(client):
-    op = client.post(OPS, json={"type": "draw_diagram", "payload": {"mermaid": "nope"}}).json()
+    op = client.post(
+        OPS, json={"type": "draw_diagram", "payload": {"mermaid": "flowchart TD\n  A[("}}
+    ).json()
     r = client.patch(f"/ops/{op['id']}", json={"status": "failed", "error": "parse error"})
     assert r.status_code == 200 and r.json()["error"] == "parse error"
     assert ack(client, op["id"], [own(op["id"])]).status_code == 409
@@ -406,3 +408,27 @@ def test_placement_avoids_the_corners_of_rotated_ink(client):
     xs, ys = [p[0] for p in corners], [p[1] for p in corners]
     real = {"x": min(xs), "y": min(ys), "width": max(xs) - min(xs), "height": max(ys) - min(ys)}
     assert not overlaps(box, real), (box, real)
+
+
+@pytest.mark.parametrize(
+    ("source", "kind"),
+    [
+        ("sequenceDiagram\n  Alice->>Bob: hi", "sequenceDiagram"),
+        ("classDiagram\n  A <|-- B", "classDiagram"),
+        ('pie\n  "a": 1', "pie"),
+        ("A-->B", "A"),
+    ],
+)
+def test_draw_diagram_refuses_anything_but_a_flowchart(client, source, kind):
+    r = client.post(OPS, json={"type": "draw_diagram", "payload": {"mermaid": source}})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "not_flowchart" and detail["diagram_type"] == kind
+    assert "flowchart" in detail["msg"]
+    assert client.get(OPS).json()["ops"] == []
+
+
+def test_draw_diagram_accepts_graph_and_flowchart_headers(client):
+    for source in ("graph LR\n  A-->B", "%%{init: {}}%%\nflowchart TD\n  A-->B"):
+        r = client.post(OPS, json={"type": "draw_diagram", "payload": {"mermaid": source}})
+        assert r.status_code == 201, r.json()

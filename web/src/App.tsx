@@ -1,16 +1,17 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { CaptureUpdateAction, Excalidraw, restoreElements } from "@excalidraw/excalidraw";
+import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "./ChunkOverlay";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
+import { CropSync } from "./cropSync";
 import { rejectOp, type DraftElement } from "./drafts";
 import { drawOp } from "./drawOp";
 import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
-import { loadView, saveView, type View } from "./view";
+import { keepFittingFirstDrafts, loadView, saveView, type View } from "./view";
 
 const LABEL: Record<SaveState, string> = {
   loading: "Loading…",
@@ -148,8 +149,13 @@ export default function App() {
   const [initial, setInitial] = useState<Initial>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
+  const cropRef = useRef<CropSync | null>(null);
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
+  // A canvas opened empty with no remembered view (one an agent just created): show the first
+  // drafts that arrive instead of leaving them under the toolbar at the origin.
+  const fitFirstDrafts = useRef(false);
+  const armedView = useRef<View | null>(null);
   const pendingJump = useRef<JumpResult | null>(null);
   const sceneReady = useRef(false);
   const [api, setApi] = useState<Api | null>(null);
@@ -159,10 +165,35 @@ export default function App() {
   // Load the saved scene before Excalidraw mounts so restoreElements runs ahead of initialData
   // (it keeps freedraw pressures and simulatePressure=false).
   useEffect(() => {
+    // Server-made chunks get their crop PNGs from here, only while the canvas is idle and saved.
+    const crops = new CropSync({
+      documentId: route.canvas,
+      settledVersion: () => sync.settledVersion(),
+      exportPng: async (ids) => {
+        const api = apiRef.current;
+        if (!api) return null;
+        const want = new Set(ids);
+        const elements = api.getSceneElements().filter((e) => want.has(e.id));
+        if (elements.length === 0) return null;
+        return exportToBlob({
+          elements,
+          appState: { exportBackground: true, viewBackgroundColor: "#ffffff" },
+          files: api.getFiles(),
+          mimeType: "image/png",
+          maxWidthOrHeight: 2048,
+          exportPadding: 10,
+        });
+      },
+    });
+    cropRef.current = crops;
     const sync = new SceneSync({
       documentId: route.canvas,
       storage: window.localStorage,
-      onState: (state, detail) => status.set(state, detail),
+      onState: (state, detail) => {
+        status.set(state, detail);
+        // Every save may have left chunks with stale crops (chunks.updated also asks, when connected).
+        if (state === "saved") crops.request();
+      },
       onReload: (elements) => {
         const api = apiRef.current;
         if (!api) return;
@@ -197,19 +228,40 @@ export default function App() {
       const restored = restoreElements(elements as never, null);
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
       fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
+      fitFirstDrafts.current = !view && !restored.some((e) => !e.isDeleted);
       setInitial({ elements: restored, view });
     });
     const onHide = () => {
-      if (document.visibilityState === "hidden") void sync.flushNow();
+      if (document.visibilityState !== "hidden") return;
+      onBlur();
+      void sync.flushNow();
     };
     const onPageHide = () => void sync.flushNow();
+    // A pen, finger or mouse held down on the canvas means drawing: no crop export until it lifts.
+    const down = new Set<number>();
+    const onDown = (e: PointerEvent) => (down.add(e.pointerId), crops.setDrawing(true));
+    const onUp = (e: PointerEvent) => {
+      down.delete(e.pointerId);
+      crops.setDrawing(down.size > 0);
+    };
+    // A pointerup that never arrives (window lost focus mid-stroke) must not stall crop sync.
+    const onBlur = () => (down.clear(), crops.setDrawing(false));
     document.addEventListener("visibilitychange", onHide);
     window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    window.addEventListener("blur", onBlur);
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onHide);
       window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      window.removeEventListener("blur", onBlur);
       sync.dispose();
+      crops.dispose();
     };
   }, [route.canvas, route.chunk, status]);
 
@@ -259,8 +311,16 @@ export default function App() {
             await new Promise((r) => setTimeout(r, SAVE_RETRY_MS));
           }
         };
-        return drawOp(apiRef.current ?? (await apiReady.promise), op, persist);
+        const api = apiRef.current ?? (await apiReady.promise);
+        const ids = await drawOp(api, op, persist);
+        if (fitFirstDrafts.current) {
+          fitFirstDrafts.current = false;
+          api.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.9, maxZoom: 1, animate: false });
+        }
+        return ids;
       },
+      // A save left chunks with stale crops: export them once the canvas is idle (INK-057).
+      onChunksUpdated: () => cropRef.current?.request(),
       // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
       onOpUpdated: (m) => {
         if (DEAD.includes(m.status)) sweep(m.op_id);
@@ -281,7 +341,17 @@ export default function App() {
       elements: readonly unknown[],
       appState: { scrollX: number; scrollY: number; zoom: { value: number } },
     ) => {
-      syncRef.current?.notify(elements as unknown as SceneElement[]);
+      if (syncRef.current?.notify(elements as unknown as SceneElement[])) cropRef.current?.activity();
+      // The first change event means the canvas holds the loaded scene, so crops can be exported;
+      // a reopened tab then catches up on crops left stale while it was closed.
+      cropRef.current?.start();
+      // The user took over (panned, zoomed or drew): drafts never move their view from now on.
+      if (fitFirstDrafts.current) {
+        const now = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
+        armedView.current ??= now;
+        if (!keepFittingFirstDrafts(armedView.current, now, elements as never))
+          fitFirstDrafts.current = false;
+      }
       // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
       sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {

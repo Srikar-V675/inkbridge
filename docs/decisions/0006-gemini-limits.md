@@ -2,7 +2,8 @@
 
 Status: accepted (INK-013); live check run on synthetic pages
 
-- `inkbridge.recognizer.recognize(png, hint)` returns `Recognition(text, latex, kind, model)`. `GeminiRecognizer`
+- A recognizer is a callable `(png, hint) -> Recognition(text, latex, kind, model)` (the module-level `recognize()` helper was
+  removed in INK-014, decision 0017: the opt-in worker is the only path to the model). `GeminiRecognizer`
   is the default implementation; the worker (INK-014) and tests accept any callable matching the `Recognizer`
   protocol, so the model is swappable and CI never touches the network.
 - Default model `gemini-3.5-flash-lite` (override with `GEMINI_MODEL`); key from `GEMINI_API_KEY`. The key is

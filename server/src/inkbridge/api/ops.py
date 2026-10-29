@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from inkbridge import db
+from inkbridge import db, mermaid
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
@@ -72,6 +72,17 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     except ValidationError as e:
         errors = [{"loc": ["payload", *e_["loc"]], "msg": e_["msg"]} for e_ in e.errors()]
         raise HTTPException(422, errors) from None
+    if isinstance(payload, DrawDiagramPayload) and not mermaid.is_flowchart(payload.mermaid):
+        kind = mermaid.diagram_type(payload.mermaid)
+        raise HTTPException(
+            422,
+            {
+                "code": "not_flowchart",
+                "diagram_type": kind,
+                "msg": f"only Mermaid flowcharts are supported (got {kind or 'no diagram type'}); "
+                "start the source with `flowchart TD` or `graph LR`",
+            },
+        )
     try:
         op, created = ops_db.create_op(
             conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id
@@ -81,7 +92,24 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     except ops_db.ExistingElementIds as e:
         raise _existing(e.ids) from None
     except ops_db.AnchorNotFound:
-        raise HTTPException(422, {"code": "anchor_not_found", "anchor": payload.anchor}) from None
+        raise HTTPException(
+            422,
+            {
+                "code": "anchor_not_found",
+                "anchor": payload.anchor,
+                "msg": f"anchor chunk {payload.anchor!r} is not on this canvas; "
+                "get chunk ids from read_canvas, or omit anchor",
+            },
+        ) from None
+    except ops_db.TooManyOpen:
+        raise HTTPException(
+            409,
+            {
+                "code": "too_many_open_ops",
+                "msg": f"this canvas already has {ops_db.MAX_OPEN_OPS} drafts waiting for a "
+                "browser; open the canvas, or wait for the user to accept or reject them",
+            },
+        ) from None
     except ops_db.OpConflict:
         raise HTTPException(409, {"code": "op_id_conflict", "op_id": body.op_id}) from None
     response.status_code = 201 if created else 200

@@ -1,7 +1,9 @@
 """Handwriting recognition: one swappable function from a chunk image to text, LaTeX and kind.
 
 Recognition is a cache in front of a model (see INK-014); ink is the truth. Nothing here touches
-the database, so tests and the worker use any callable matching `Recognizer`.
+the database, so tests and the worker use any callable matching `Recognizer`. There is no
+module-level `recognize()`: the only caller is the opt-in worker, which owns the privacy gate
+(decision 0017).
 """
 
 from dataclasses import dataclass
@@ -49,10 +51,3 @@ class InvalidApiKey(PermanentError):
 
 class Recognizer(Protocol):
     def __call__(self, png: bytes, hint: str | None) -> Recognition: ...
-
-
-def recognize(png: bytes, hint: str | None = None) -> Recognition:
-    """Recognise one chunk image with the default (Gemini) recognizer."""
-    from inkbridge.recognizer.gemini import default_recognizer
-
-    return default_recognizer()(png, hint)

@@ -1,4 +1,4 @@
-# 0017: Manual chunk merge and split are pinned chunks
+# 0024: Manual chunk merge and split are pinned chunks
 
 Status: accepted (INK-059). Refines 0004 ("a manual region wins over an automatic chunk") and 0011.
 Code: `chunker.pin_groups` / `chunk_scene(pins=)`, `db.merge_chunks` / `db.split_chunk`,

@@ -280,7 +280,7 @@ def chunk_scene(
     its start (else of its end, else forms a chunk of its own), and its bound label goes with it,
     so connectors are part of some chunk's hash and crop.
 
-    `pins` (INK-059, docs/decisions/0017) are manual chunks: each becomes exactly one chunk of its
+    `pins` (INK-059, docs/decisions/0024) are manual chunks: each becomes exactly one chunk of its
     ink (see `pin_groups`), nothing joins it by proximity or by an arrow merge (such an arrow
     links instead), and connectors still attach to it.
     """
