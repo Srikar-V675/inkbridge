@@ -30,6 +30,35 @@ Claude Desktop (`claude_desktop_config.json`):
 
 Never run a script from inside `server/src/inkbridge/mcp/` (the directory name shadows the SDK); use the entry point or `python -m inkbridge.mcp`.
 
+## Verifying a client setup
+
+`uv run --directory server inkbridge-mcp-smoke --api http://127.0.0.1:8000` (API running) drives
+`inkbridge-mcp` over stdio with the MCP SDK's own client, the way Claude Desktop and Claude Code do:
+`initialize`, `tools/list`, then `read_canvas`, `get_region` on the first chunk, `search` and an
+unknown canvas. It prints one PASS/FAIL line per check and exits 1 on any failure; it only reads.
+`server/tests/test_mcp_smoke.py` runs it against a live API process in CI.
+
+Checked by the script (INK-039): every reply is standard MCP content; `read_canvas` returns text
+then an `image/png` block (a real PNG), `get_region` returns text plus the crop or a text note when no
+crop exists yet, and an unknown canvas is a tool error (`is_error`). Checked by the test suite on top:
+error texts carry a next step, and the raw stdout stream holds protocol frames only during real tool
+calls (the server's HTTP log goes to stderr).
+
+Not yet checked: how the real GUI clients render this (decision 0003 still says "?"). Manual steps
+for whoever is at the keyboard:
+1. Start the API (`make dev-server`) and open a canvas with a few chunks.
+2. Claude Code: `claude mcp add inkbridge -- uv run --directory /path/to/inkbridge/server inkbridge-mcp`,
+   then ask it to call `read_canvas`. Expect the outline JSON and the overview image.
+3. Claude Desktop: add the config above, restart, ask for `read_canvas` and `get_region <id>`.
+4. Record per client: text shown, image shown inline (yes/no), anything odd. Write the result into
+   decision 0003 and the quirks list below.
+
+Known quirks: the SDK 2.x client exposes `mime_type` / `is_error` (snake case), not the wire names
+`mimeType` / `isError`; scripts written against 1.x need the change. `check_sync`, `list_questions` and
+`create_canvas` are not built yet, so they cannot be checked here. The SDK 2.x stdio server diverts `sys.stdout` to stderr while it runs
+(SDK issue #1933), so a stray `print` in a tool cannot corrupt the protocol stream; the raw-stdout test
+in `test_mcp_smoke.py` still guards the stream end to end.
+
 ## Tools (built)
 
 | Tool | Input | Returns | Mutates |
