@@ -8,7 +8,7 @@
 
 **Specs of record**
 - Spec v3 (final, 23 Oct 2026): https://claude.ai/artifact/FkyFV1UySxqfC9oFEYb1P1
-- Technical reference v3: https://claude.ai/artifact/1uMmVHEyuvb2uS5Dgutaqy (an earlier local copy is `docs/tech/technical-reference.html`)
+- Technical reference v3: https://claude.ai/artifact/1uMmVHEyuvb2uS5Dgutaqy (a local, untracked copy may exist at `docs/tech/technical-reference.html`)
 - `docs/project-doc.html` is the v1 draft, history only.
 - Tickets (`INK-xxx`) live in `docs/tickets/` (local, gitignored). Decisions: `docs/decisions/`.
 

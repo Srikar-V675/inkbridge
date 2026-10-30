@@ -12,7 +12,7 @@ Single page, no router. URL contract shared with vault notes: `/?canvas=<documen
 | `src/cropSync.ts` | Renders and uploads PNG crops for stale chunks when idle and saved (decision 0015) |
 | `src/opsSocket.ts` | WebSocket client: receives ops, sends `op.applied`/`op.failed` |
 | `src/drawOp.ts`, `src/drafts.ts` | Draw `write_text`/`draw_diagram` ops as dashed drafts (Mermaid via `mermaid-to-excalidraw`) |
-| `src/view.ts` | Small view helper |
+| `src/view.ts` | Per-device scroll/zoom memory in `localStorage`; keeps fitting the first agent drafts on a freshly created canvas until the user pans or draws |
 
 Not built: Accept/Reject buttons (INK-045), Ask AI side panel (INK-049).
 
