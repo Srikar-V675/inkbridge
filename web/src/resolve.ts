@@ -2,7 +2,7 @@
 // Both helpers match by the op's server-issued id prefix, never by customData alone: customData
 // is client-writable and user ink must never be matched.
 
-import type { DraftElement } from "./drafts.ts";
+import { rejectOp, type DraftElement } from "./drafts.ts";
 
 /** Accept: make the op's elements ordinary content (no draft tag, solid, text back to full). */
 export function acceptOp<T extends DraftElement>(els: readonly T[], prefix: string): T[] {
@@ -73,6 +73,50 @@ export async function resolveAll(
     const r = await patchOp(opId, status, fetchFn);
     if (r.ok) out.done.push(opId);
     else out.failed.push({ opId, message: r.message });
+  }
+  return out;
+}
+
+export interface Ports {
+  scene(): DraftElement[];
+  setScene(els: DraftElement[]): void;
+  /** Flush the autosave and report whether the scene settled on the server. */
+  save(): Promise<boolean>;
+  patch: typeof patchOp;
+}
+
+/**
+ * Apply a verdict to ops in a safe order. Accept: rewrite locally, save, THEN PATCH, so a failed
+ * save can never leave stored elements tagged draft under an accepted op. Reject: PATCH first,
+ * then sweep only the ops the server accepted, so a failure leaves the drafts to retry.
+ */
+export async function applyVerdict(
+  opIds: string[],
+  verdict: Verdict,
+  p: Ports,
+): Promise<ResolveSummary> {
+  const patchAll = async (): Promise<ResolveSummary> => {
+    const out: ResolveSummary = { done: [], failed: [] };
+    for (const opId of opIds) {
+      const r = await p.patch(opId, verdict);
+      if (r.ok) out.done.push(opId);
+      else out.failed.push({ opId, message: r.message });
+    }
+    return out;
+  };
+  if (verdict === "accepted") {
+    let els = p.scene();
+    for (const id of opIds) els = acceptOp(els, `${id}:`);
+    p.setScene(els);
+    if (!(await p.save()))
+      return { done: [], failed: opIds.map((opId) => ({ opId, message: "could not save" })) };
+    return patchAll();
+  }
+  const out = await patchAll();
+  if (out.done.length) {
+    let els = p.scene();
+    for (const id of out.done) els = rejectOp(els, `${id}:`);
+    p.setScene(els);
   }
   return out;
 }

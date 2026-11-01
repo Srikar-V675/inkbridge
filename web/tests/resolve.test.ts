@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { acceptOp, draftOps, patchOp, resolveAll } from "../src/resolve.ts";
+import { acceptOp, applyVerdict, draftOps, patchOp, resolveAll, type Ports } from "../src/resolve.ts";
 import { markDraft, type DraftElement } from "../src/drafts.ts";
 
 const draftsOf = (opId: string, n: number): DraftElement[] =>
@@ -116,5 +116,71 @@ describe("resolveAll", () => {
     assert.equal(r.done.length, 19);
     assert.ok(!r.done.includes("op10"));
     assert.deepEqual(r.failed, [{ opId: "op10", message: "not ready yet" }]);
+  });
+});
+
+function makePorts(initial: DraftElement[], opts: { saveOk?: boolean; failIds?: string[] } = {}) {
+  const log: string[] = [];
+  let els = initial;
+  const ports: Ports = {
+    scene: () => els,
+    setScene: (e) => {
+      log.push("setScene");
+      els = e;
+    },
+    save: async () => {
+      log.push("save");
+      return opts.saveOk ?? true;
+    },
+    patch: async (id) => {
+      log.push(`patch:${id}`);
+      return opts.failIds?.includes(id) ? { ok: false, message: "not ready yet" } : { ok: true };
+    },
+  };
+  return { ports, log, get els() { return els; } };
+}
+
+describe("applyVerdict", () => {
+  const user: DraftElement = { id: "user1", type: "freedraw", x: 0, y: 0, version: 1 };
+
+  it("accept saves before any PATCH", async () => {
+    const m = makePorts([user, ...draftsOf("a", 2)]);
+    const r = await applyVerdict(["a"], "accepted", m.ports);
+    assert.deepEqual(m.log, ["setScene", "save", "patch:a"]);
+    assert.deepEqual(r.done, ["a"]);
+    assert.ok(!m.els.some((e) => e.customData?.draft));
+  });
+
+  it("failed save makes zero PATCH calls", async () => {
+    const m = makePorts(draftsOf("a", 2), { saveOk: false });
+    const r = await applyVerdict(["a"], "accepted", m.ports);
+    assert.ok(!m.log.some((l) => l.startsWith("patch")));
+    assert.equal(r.done.length, 0);
+    assert.equal(r.failed[0].message, "could not save");
+  });
+
+  it("reject leaves a failing op's drafts and never touches other elements", async () => {
+    const a = draftsOf("a", 2);
+    const b = draftsOf("b", 2);
+    const c = draftsOf("c", 1);
+    const m = makePorts([user, ...a, ...b, ...c], { failIds: ["b"] });
+    const r = await applyVerdict(["a", "b"], "rejected", m.ports);
+    assert.deepEqual(r.done, ["a"]);
+    assert.equal(r.failed[0].opId, "b");
+    const byId = new Map(m.els.map((e) => [e.id, e]));
+    assert.ok(byId.get("a:1")!.isDeleted);
+    assert.ok(!byId.get("b:1")!.isDeleted);
+    assert.equal(byId.get("user1"), user);
+    assert.equal(byId.get("c:1"), c[0]);
+  });
+
+  it("accept all of 20 ops: 1 setScene, 1 save, 20 patches", async () => {
+    const ids = Array.from({ length: 20 }, (_, i) => `op${i}`);
+    const m = makePorts(ids.flatMap((i) => draftsOf(i, 2)));
+    const r = await applyVerdict(ids, "accepted", m.ports);
+    assert.equal(m.log.filter((l) => l === "setScene").length, 1);
+    assert.equal(m.log.filter((l) => l === "save").length, 1);
+    assert.equal(m.log.filter((l) => l.startsWith("patch")).length, 20);
+    assert.equal(r.done.length, 20);
   });
 });
