@@ -33,7 +33,12 @@ export function draftOps(els: readonly DraftElement[]): { opId: string; count: n
 
 export type Verdict = "accepted" | "rejected";
 export type ResolveResult = { ok: true } | { ok: false; message: string };
-export type ResolveSummary = { done: string[]; failed: { opId: string; message: string }[] };
+export type ResolveSummary = {
+  done: string[];
+  failed: { opId: string; message: string }[];
+  /** Accepted-after-save ops whose PATCH failed: the scene is final, only the status needs a retry. */
+  retry: string[];
+};
 
 const TIMEOUT_MS = 8000;
 
@@ -62,18 +67,42 @@ export async function patchOp(
   }
 }
 
-/** Resolve ops one after another; a failure is recorded and the rest still run. */
-export async function resolveAll(
-  opIds: string[],
-  status: Verdict,
-  fetchFn?: typeof fetch,
-): Promise<ResolveSummary> {
-  const out: ResolveSummary = { done: [], failed: [] };
+/** Ids of the document's ops the server holds as `applied`, or null if it could not be asked. */
+export async function fetchAppliedOps(
+  documentId: string,
+  fetchFn: typeof fetch = (...a) => fetch(...a),
+): Promise<Set<string> | null> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetchFn(`/documents/${encodeURIComponent(documentId)}/ops?status=applied`, {
+      signal: ctl.signal,
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { ops?: { id: string }[] };
+    return new Set((body.ops ?? []).map((o) => o.id));
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** The one patch loop: ops one after another; a failure is recorded and the rest still run. */
+async function patchEach(opIds: string[], verdict: Verdict, patch: typeof patchOp): Promise<ResolveSummary> {
+  const out: ResolveSummary = { done: [], failed: [], retry: [] };
   for (const opId of opIds) {
-    const r = await patchOp(opId, status, fetchFn);
+    const r = await patch(opId, verdict);
     if (r.ok) out.done.push(opId);
     else out.failed.push({ opId, message: r.message });
   }
+  return out;
+}
+
+/** Re-PATCH `accepted` for ops whose scene was already saved; never touches the scene. */
+export async function retryAccept(opIds: string[], patch: typeof patchOp = patchOp): Promise<ResolveSummary> {
+  const out = await patchEach(opIds, "accepted", patch);
+  out.retry = out.failed.map((f) => f.opId);
   return out;
 }
 
@@ -83,6 +112,8 @@ export interface Ports {
   /** Flush the autosave and report whether the scene settled on the server. */
   save(): Promise<boolean>;
   patch: typeof patchOp;
+  /** Ops the server holds as `applied`; null when the check failed. */
+  appliedOps(): Promise<Set<string> | null>;
 }
 
 /**
@@ -95,24 +126,32 @@ export async function applyVerdict(
   verdict: Verdict,
   p: Ports,
 ): Promise<ResolveSummary> {
-  const patchAll = async (): Promise<ResolveSummary> => {
-    const out: ResolveSummary = { done: [], failed: [] };
-    for (const opId of opIds) {
-      const r = await p.patch(opId, verdict);
-      if (r.ok) out.done.push(opId);
-      else out.failed.push({ opId, message: r.message });
-    }
-    return out;
-  };
   if (verdict === "accepted") {
+    const applied = await p.appliedOps();
+    if (!applied)
+      return {
+        done: [],
+        failed: opIds.map((opId) => ({ opId, message: "could not check op status" })),
+        retry: [],
+      };
+    const ready = opIds.filter((id) => applied.has(id));
+    const notReady = opIds.filter((id) => !applied.has(id)).map((opId) => ({ opId, message: "not ready" }));
+    if (ready.length === 0) return { done: [], failed: notReady, retry: [] };
     let els = p.scene();
-    for (const id of opIds) els = acceptOp(els, `${id}:`);
+    for (const id of ready) els = acceptOp(els, `${id}:`);
     p.setScene(els);
     if (!(await p.save()))
-      return { done: [], failed: opIds.map((opId) => ({ opId, message: "could not save" })) };
-    return patchAll();
+      return {
+        done: [],
+        failed: [...ready.map((opId) => ({ opId, message: "could not save" })), ...notReady],
+        retry: [],
+      };
+    const out = await patchEach(ready, "accepted", p.patch);
+    out.retry = out.failed.map((f) => f.opId);
+    out.failed.push(...notReady);
+    return out;
   }
-  const out = await patchAll();
+  const out = await patchEach(opIds, "rejected", p.patch);
   if (out.done.length) {
     let els = p.scene();
     for (const id of out.done) els = rejectOp(els, `${id}:`);

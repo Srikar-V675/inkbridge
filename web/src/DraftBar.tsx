@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { DraftElement } from "./drafts";
-import { applyVerdict, draftOps, patchOp, type Verdict } from "./resolve";
+import { applyVerdict, draftOps, fetchAppliedOps, patchOp, retryAccept, type ResolveSummary, type Verdict } from "./resolve";
 import type { SceneSync } from "./sceneSync";
 
 type Sync = { current: SceneSync | null };
@@ -58,11 +58,33 @@ const btn = {
   pointerEvents: "auto",
 } as const;
 
-export function DraftBar({ api, sync }: { api: ExcalidrawImperativeAPI; sync: Sync }) {
+export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeAPI; sync: Sync; documentId: string }) {
   const drafts = useDraftOps(api);
   const selected = useSelectedOps(api, drafts);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  // Ops whose accept saved but whose PATCH failed: no draft elements left, so no other UI to retry.
+  const [retryIds, setRetryIds] = useState<string[]>([]);
+
+  const report = (summary: ResolveSummary) => {
+    const notReady = summary.failed.filter((f) => f.message === "not ready").length;
+    const others = summary.failed.filter((f) => f.message !== "not ready").map((f) => f.message);
+    const parts = [...(notReady ? [`${notReady} not ready`] : []), ...new Set(others)];
+    setMessage(parts.join("; "));
+  };
+
+  const retry = async () => {
+    if (busy || retryIds.length === 0) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const summary = await retryAccept(retryIds);
+      setRetryIds(summary.retry);
+      report(summary);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const run = async (opIds: string[], verdict: Verdict) => {
     const s = sync.current;
@@ -81,16 +103,18 @@ export function DraftBar({ api, sync }: { api: ExcalidrawImperativeAPI; sync: Sy
           return s.settledVersion() !== null;
         },
         patch: patchOp,
+        appliedOps: () => fetchAppliedOps(documentId),
       });
       // Undo history from before the verdict could bring a draft tag back; drop it.
       if (summary.done.length) api.history.clear();
-      if (summary.failed.length) setMessage(summary.failed.map((f) => f.message).join("; "));
+      if (verdict === "accepted") setRetryIds((prev) => [...new Set([...prev.filter((id) => !summary.done.includes(id)), ...summary.retry])]);
+      report(summary);
     } finally {
       setBusy(false);
     }
   };
 
-  if (drafts.length === 0 && !message) return null;
+  if (drafts.length === 0 && !message && retryIds.length === 0) return null;
   const all = drafts.map((d) => d.opId);
   const total = drafts.reduce((n, d) => n + d.count, 0);
   return (
@@ -112,6 +136,11 @@ export function DraftBar({ api, sync }: { api: ExcalidrawImperativeAPI; sync: Sy
         <div role="status" style={{ background: "#fff3cd", color: "#202124", padding: "2px 10px", borderRadius: 4 }}>
           {message}
         </div>
+      )}
+      {retryIds.length > 0 && (
+        <button style={btn} disabled={busy} onClick={() => void retry()}>
+          Retry accept ({retryIds.length})
+        </button>
       )}
       {drafts.length > 0 && (
         <div style={{ display: "flex", gap: 6, alignItems: "center", background: "#fff", padding: 6, borderRadius: 6, boxShadow: "0 1px 4px #0003" }}>

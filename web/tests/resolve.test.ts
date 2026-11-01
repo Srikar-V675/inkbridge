@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { acceptOp, applyVerdict, draftOps, patchOp, resolveAll, type Ports } from "../src/resolve.ts";
+import { acceptOp, applyVerdict, draftOps, fetchAppliedOps, patchOp, retryAccept, type Ports } from "../src/resolve.ts";
 import { markDraft, type DraftElement } from "../src/drafts.ts";
 
 const draftsOf = (opId: string, n: number): DraftElement[] =>
@@ -107,19 +107,7 @@ describe("patchOp", () => {
   });
 });
 
-describe("resolveAll", () => {
-  it("patches 20 ops in order and keeps going after a failure", async () => {
-    const ids = Array.from({ length: 20 }, (_, i) => `op${i}`);
-    const f = fakeFetch((u) => (u === "/ops/op10" ? 409 : 200));
-    const r = await resolveAll(ids, "accepted", f.fn);
-    assert.deepEqual(f.calls.map((c) => c.url), ids.map((i) => `/ops/${i}`));
-    assert.equal(r.done.length, 19);
-    assert.ok(!r.done.includes("op10"));
-    assert.deepEqual(r.failed, [{ opId: "op10", message: "not ready yet" }]);
-  });
-});
-
-function makePorts(initial: DraftElement[], opts: { saveOk?: boolean; failIds?: string[] } = {}) {
+function makePorts(initial: DraftElement[], opts: { saveOk?: boolean; failIds?: string[]; applied?: string[] | null } = {}) {
   const log: string[] = [];
   let els = initial;
   const ports: Ports = {
@@ -131,6 +119,10 @@ function makePorts(initial: DraftElement[], opts: { saveOk?: boolean; failIds?: 
     save: async () => {
       log.push("save");
       return opts.saveOk ?? true;
+    },
+    appliedOps: async () => {
+      log.push("applied");
+      return opts.applied === undefined ? new Set(initial.map((e) => e.customData?.op_id as string)) : opts.applied === null ? null : new Set(opts.applied);
     },
     patch: async (id) => {
       log.push(`patch:${id}`);
@@ -146,7 +138,7 @@ describe("applyVerdict", () => {
   it("accept saves before any PATCH", async () => {
     const m = makePorts([user, ...draftsOf("a", 2)]);
     const r = await applyVerdict(["a"], "accepted", m.ports);
-    assert.deepEqual(m.log, ["setScene", "save", "patch:a"]);
+    assert.deepEqual(m.log, ["applied", "setScene", "save", "patch:a"]);
     assert.deepEqual(r.done, ["a"]);
     assert.ok(!m.els.some((e) => e.customData?.draft));
   });
@@ -182,5 +174,81 @@ describe("applyVerdict", () => {
     assert.equal(m.log.filter((l) => l === "save").length, 1);
     assert.equal(m.log.filter((l) => l.startsWith("patch")).length, 20);
     assert.equal(r.done.length, 20);
+  });
+
+  it("accept skips ops not yet applied: no scene change, no PATCH, reported not ready", async () => {
+    const m = makePorts([...draftsOf("a", 2), ...draftsOf("b", 2)], { applied: ["a"] });
+    const r = await applyVerdict(["a", "b"], "accepted", m.ports);
+    assert.deepEqual(r.done, ["a"]);
+    assert.deepEqual(r.failed, [{ opId: "b", message: "not ready" }]);
+    assert.ok(!m.log.includes("patch:b"));
+    assert.ok(m.els.filter((e) => e.id.startsWith("b:")).every((e) => e.customData?.draft));
+  });
+
+  it("accept with nothing ready touches nothing", async () => {
+    const m = makePorts(draftsOf("a", 1), { applied: [] });
+    const r = await applyVerdict(["a"], "accepted", m.ports);
+    assert.deepEqual(m.log, ["applied"]);
+    assert.equal(r.failed[0].message, "not ready");
+  });
+
+  it("accept with a failed status check does nothing", async () => {
+    const m = makePorts(draftsOf("a", 1), { applied: null });
+    const r = await applyVerdict(["a"], "accepted", m.ports);
+    assert.deepEqual(m.log, ["applied"]);
+    assert.equal(r.done.length, 0);
+    assert.equal(r.failed[0].message, "could not check op status");
+  });
+
+  it("reject does not consult the applied set", async () => {
+    const m = makePorts(draftsOf("a", 1), { applied: [] });
+    await applyVerdict(["a"], "rejected", m.ports);
+    assert.ok(!m.log.includes("applied"));
+  });
+
+  it("20 ops with one PATCH failure: the rest still run and the failure is listed for retry", async () => {
+    const ids = Array.from({ length: 20 }, (_, i) => `op${i}`);
+    const m = makePorts(ids.flatMap((i) => draftsOf(i, 1)), { failIds: ["op10"] });
+    const r = await applyVerdict(ids, "accepted", m.ports);
+    assert.equal(r.done.length, 19);
+    assert.deepEqual(r.retry, ["op10"]);
+  });
+
+  it("failed save is not retryable (nothing was patched)", async () => {
+    const m = makePorts(draftsOf("a", 1), { saveOk: false });
+    assert.deepEqual((await applyVerdict(["a"], "accepted", m.ports)).retry, []);
+  });
+});
+
+describe("retryAccept", () => {
+  it("re-PATCHes accepted only, no scene work, and reports leftovers", async () => {
+    const calls: string[] = [];
+    const patch = (async (id: string, v: string) => {
+      calls.push(`${id}:${v}`);
+      return id === "b" ? { ok: false, message: "x" } : { ok: true };
+    }) as typeof patchOp;
+    const r = await retryAccept(["a", "b"], patch);
+    assert.deepEqual(calls, ["a:accepted", "b:accepted"]);
+    assert.deepEqual(r.done, ["a"]);
+    assert.deepEqual(r.retry, ["b"]);
+  });
+});
+
+describe("fetchAppliedOps", () => {
+  it("asks for applied ops of the document and returns their ids", async () => {
+    let url = "";
+    const f = (async (u: string) => {
+      url = u;
+      return new Response(JSON.stringify({ ops: [{ id: "a" }, { id: "b" }] }));
+    }) as unknown as typeof fetch;
+    assert.deepEqual([...(await fetchAppliedOps("my doc", f))!], ["a", "b"]);
+    assert.equal(url, "/documents/my%20doc/ops?status=applied");
+  });
+
+  it("returns null on failure", async () => {
+    const f = (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch;
+    assert.equal(await fetchAppliedOps("d", f), null);
+    const g = (async () => { throw new Error("down"); }) as unknown as typeof fetch;
+    assert.equal(await fetchAppliedOps("d", g), null);
   });
 });

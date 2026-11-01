@@ -400,7 +400,7 @@ export default function App() {
         />
       )}
       {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
-      {api && <DraftBar api={api} sync={syncRef} />}
+      {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} />}
       <SaveBadge store={status} />
     </div>
   );

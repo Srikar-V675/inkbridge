@@ -27,3 +27,24 @@ Code: `web/src/resolve.ts`, `web/src/DraftBar.tsx`, `server/src/inkbridge/api/op
   canvas (elements with `customData.draft` and an `op_id`), resolved one PATCH at a time. Accept all
   makes one scene update and one save for the whole batch. A 409 (`invalid_transition`, for example
   an op still being drawn or already resolved) is reported for that op and does not stop the batch.
+- **Accept checks op status first.** Before rewriting anything, the client asks
+  `GET /documents/{id}/ops?status=applied` and accepts only draft ops in that set. Others (still
+  `delivered`, already resolved elsewhere, expired) are skipped and reported as "N not ready"; the
+  scene is left alone for them. If the check itself fails, nothing is accepted ("could not check op
+  status"). Reject does not check; the PATCH's 409 is enough because nothing is rewritten first.
+- **Retry after a failed PATCH.** Accept saves the scene before it PATCHes, so a failed PATCH leaves the
+  op `applied` with no draft elements and nothing on the canvas to click. DraftBar keeps those op ids
+  and shows "Retry accept (N)", which re-sends `PATCH accepted` only (no scene rewrite, no save) and
+  clears the ids that succeed. The list lives in component state, so a reload loses it; the op then
+  stays `applied`, which is harmless (the elements are already ordinary content).
+- **`history.clear()` after a verdict.** Once any op resolves, the whole undo stack is dropped. Undo
+  entries recorded before the verdict hold the old element versions, and an undo would bring back
+  `draft: true` (or a rejected draft) under an op the server already resolved. Excalidraw's history API
+  cannot drop single entries, so the full stack goes. Accepted cost: the user loses undo for strokes
+  made before Accept/Reject.
+- **Stroke style is forced solid on accept.** Drafts are drawn dashed and the original style is not
+  stored, so every accepted element becomes solid, even a Mermaid shape that came dashed.
+- **Second tab lags.** Another tab on the same canvas only learns of a verdict through `op.updated`
+  and the next scene sync, so for a moment it still shows the drafts and its buttons would 409 (shown as
+  "not ready"). It converges on the next sync; no cross-tab locking.
+
