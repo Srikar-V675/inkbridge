@@ -21,9 +21,20 @@ def imports_db(source: str) -> bool:
     return False
 
 
+def scan_for_db_imports(root: Path) -> list[str]:
+    return [str(p.relative_to(root)) for p in root.rglob("*.py") if imports_db(p.read_text())]
+
+
 def test_mcp_package_never_imports_inkbridge_db():
-    offenders = [p.name for p in MCP_DIR.glob("*.py") if imports_db(p.read_text())]
-    assert offenders == []
+    assert scan_for_db_imports(MCP_DIR) == []
+
+
+def test_scan_reaches_subpackages(tmp_path):
+    sub = tmp_path / "tools" / "deep"
+    sub.mkdir(parents=True)
+    (sub / "bad.py").write_text("from inkbridge.db import connect\n")
+    (tmp_path / "ok.py").write_text("from inkbridge import config\n")
+    assert scan_for_db_imports(tmp_path) == ["tools/deep/bad.py"]
 
 
 def test_detector_catches_each_import_form():
