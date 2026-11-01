@@ -184,6 +184,7 @@ def test_replaced_follows_a_chain_of_successors_to_the_live_chunk(client):
     assert item["successor"] == z["id"] and item["hash"] == z["content_hash"]
 
 
+@pytest.mark.fts_unchecked  # corrupts successor_of on purpose
 def test_a_successor_cycle_or_dead_end_is_removed(client, canvas):
     a, b = canvas.chunk_of("a0"), canvas.chunk_of("b0")
     conn = db.connect()

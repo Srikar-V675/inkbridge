@@ -32,7 +32,7 @@ packages = ["src/inkbridge"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["fts_unchecked: skip the region_fts consistency check after this test"]
+markers = ["fts_unchecked: skip the region_fts and successor_of consistency checks after this test"]
 
 [tool.ruff]
 line-length = 100
