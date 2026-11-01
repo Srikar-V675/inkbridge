@@ -1,4 +1,4 @@
-"""INK-072 item 3: how big does the orphaned-chunk pool get on a long-lived canvas? (decision 0027)
+"""INK-072 item 3: how big does the orphaned-chunk pool get on a long-lived canvas? (decision 0028)
 
     cd server && uv run python ../scripts/orphan_growth.py --days 60 --saves 20
 

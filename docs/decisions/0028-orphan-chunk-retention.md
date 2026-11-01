@@ -1,4 +1,4 @@
-# 0027: orphaned chunks are kept (no deletion, no pool bound)
+# 0028: orphaned chunks are kept (no deletion, no pool bound)
 
 Status: accepted (INK-072)
 
@@ -30,7 +30,7 @@ randomly draws a cluster of 3-8 strokes, erases one, extends one or splits one; 
 
 - `match_chunks` is 3.4% of a save at 438 orphans (2.2 of 65.5 ms) and about 3% throughout; it
   grows with the pool but the save grows faster (the chunker over the whole scene dominates, see
-  0026). Extrapolated to 1,000 orphans it stays well under the 10% line.
+  0027). Extrapolated to 1,000 orphans it stays well under the 10% line.
 - DB growth is about 1.2 MB per 1,000 saves, almost all of it the scene JSON (deleted elements stay
   in it, as Excalidraw keeps them). The orphan rows themselves are about 260 B each (element ids,
   bbox, two hashes, crop path): 1,000 orphans is about 260 KB.
@@ -52,4 +52,4 @@ A rule that would be safe later: drop orphans older than N days that no active c
 explicit user action or a note scan by the export skill, not a timer.
 
 The numbers are synthetic. Re-check against E5 pages (INK-061) and the save timing logs (INK-067,
-`inkbridge.scene` log line from 0026).
+`inkbridge.scene` log line from 0027).

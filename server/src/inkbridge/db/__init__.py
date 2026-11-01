@@ -27,7 +27,7 @@ from inkbridge.regions import (
 )
 
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
-SLOW_SAVE_S = 1.0  # a scene save slower than this is logged at warning (INK-072, decision 0026)
+SLOW_SAVE_S = 1.0  # a scene save slower than this is logged at warning (INK-072, decision 0027)
 
 DEFAULT_DOCUMENT_ID = "default"
 RECOGNITION_SOURCES = ("user", "agent", "gemini")

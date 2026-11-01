@@ -1,4 +1,4 @@
-"""INK-072 item 3: orphaned chunks are kept on purpose (decision 0027)."""
+"""INK-072 item 3: orphaned chunks are kept on purpose (decision 0028)."""
 
 import random
 

@@ -1,4 +1,4 @@
-# 0028: containment matching for chunk ids (flag, off by default)
+# 0029: containment matching for chunk ids (flag, off by default)
 
 Status: accepted (INK-072)
 

@@ -1,4 +1,4 @@
-"""INK-072 item 6: how much of a scene save is parsing and diffing? (decision 0026)
+"""INK-072 item 6: how much of a scene save is parsing and diffing? (decision 0027)
 
     cd server && uv run python ../scripts/bench_scene_save.py --sizes 5000 50000
 

@@ -1,4 +1,4 @@
-"""INK-072 item 4: does containment matching keep chunk ids where it should? (decision 0028)
+"""INK-072 item 4: does containment matching keep chunk ids where it should? (decision 0029)
 
     cd server && uv run python ../scripts/chunk_identity_eval.py
 

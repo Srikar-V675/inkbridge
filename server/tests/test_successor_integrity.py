@@ -1,4 +1,4 @@
-"""INK-072 item 7: successor_of has no foreign key (decision 0026); this guards it in tests."""
+"""INK-072 item 7: successor_of has no foreign key (decision 0027); this guards it in tests."""
 
 import pytest
 

@@ -1,4 +1,4 @@
-"""INK-072 item 6: every successful scene save logs its cost (decision 0026)."""
+"""INK-072 item 6: every successful scene save logs its cost (decision 0027)."""
 
 import logging
 import time

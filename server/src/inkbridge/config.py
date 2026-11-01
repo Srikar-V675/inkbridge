@@ -28,7 +28,7 @@ def public_url() -> str:
 def chunk_containment() -> float | None:
     """INKBRIDGE_CHUNK_CONTAINMENT, a fraction in (0, 1] (for example 0.6). Unset, blank or 0 = off.
 
-    Keeps a chunk's id when that share of it survives in one cluster (decision 0028). Invalid or
+    Keeps a chunk's id when that share of it survives in one cluster (decision 0029). Invalid or
     out-of-range values are ignored with a warning on stderr.
     """
     raw = (os.environ.get("INKBRIDGE_CHUNK_CONTAINMENT") or "").strip()

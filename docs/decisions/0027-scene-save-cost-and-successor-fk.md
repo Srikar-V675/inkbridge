@@ -1,4 +1,4 @@
-# 0026: successor_of foreign key (and scene save cost)
+# 0027: successor_of foreign key (and scene save cost)
 
 Status: accepted (INK-072)
 
