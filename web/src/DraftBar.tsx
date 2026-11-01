@@ -1,9 +1,10 @@
 // Accept / Reject for agent drafts (INK-045, docs/decisions/0026). Plain DOM over the canvas; the
 // ordering rules (save before accept, PATCH before sweep on reject) live in resolve.ts.
 import { useEffect, useRef, useState } from "react";
+import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import type { DraftElement } from "./drafts";
-import { applyVerdict, draftOps, fetchAppliedOps, patchOp, retryAccept, type ResolveSummary, type Verdict } from "./resolve";
+import { applyVerdict, draftOpId, draftOps, fetchAppliedOps, NOT_READY, patchOp, retryAccept, type ResolveSummary, type Verdict } from "./resolve";
 import type { SceneSync } from "./sceneSync";
 
 type Sync = { current: SceneSync | null };
@@ -34,9 +35,8 @@ function useSelectedOps(api: ExcalidrawImperativeAPI, drafts: { opId: string }[]
         const sel = new Set(Object.keys(appState.selectedElementIds).filter((id) => appState.selectedElementIds[id]));
         const ops = new Set<string>();
         for (const e of els as readonly DraftElement[]) {
-          const opId = e.customData?.op_id;
-          if (sel.has(e.id) && !e.isDeleted && e.customData?.draft && typeof opId === "string" && e.id.startsWith(`${opId}:`))
-            ops.add(opId);
+          const opId = draftOpId(e);
+          if (opId !== null && sel.has(e.id)) ops.add(opId);
         }
         const next = [...ops].sort();
         setSelected((prev) => (prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next));
@@ -67,14 +67,14 @@ export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeA
   const [retryIds, setRetryIds] = useState<string[]>([]);
 
   const report = (summary: ResolveSummary) => {
-    const notReady = summary.failed.filter((f) => f.message === "not ready").length;
-    const others = summary.failed.filter((f) => f.message !== "not ready").map((f) => f.message);
+    const notReady = summary.failed.filter((f) => f.message === NOT_READY).length;
+    const others = summary.failed.filter((f) => f.message !== NOT_READY).map((f) => f.message);
     const parts = [...(notReady ? [`${notReady} not ready`] : []), ...new Set(others)];
     setMessage(parts.join("; "));
   };
 
   const retry = async () => {
-    if (busy || retryIds.length === 0) return;
+    if (busy) return;
     setBusy(true);
     setMessage("");
     try {
@@ -88,14 +88,14 @@ export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeA
 
   const run = async (opIds: string[], verdict: Verdict) => {
     const s = sync.current;
-    if (!s || busy || opIds.length === 0) return;
+    if (!s || busy) return;
     setBusy(true);
     setMessage("");
     try {
       const summary = await applyVerdict(opIds, verdict, {
         scene: () => api.getSceneElementsIncludingDeleted() as unknown as DraftElement[],
         setScene: (els) => {
-          api.updateScene({ elements: els as never });
+          api.updateScene({ elements: els as never, captureUpdate: CaptureUpdateAction.NEVER });
           s.notify(els as never);
         },
         save: async () => {
@@ -105,8 +105,6 @@ export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeA
         patch: patchOp,
         appliedOps: () => fetchAppliedOps(documentId),
       });
-      // Undo history from before the verdict could bring a draft tag back; drop it.
-      if (summary.done.length) api.history.clear();
       if (verdict === "accepted") setRetryIds((prev) => [...new Set([...prev.filter((id) => !summary.done.includes(id)), ...summary.retry])]);
       report(summary);
     } finally {

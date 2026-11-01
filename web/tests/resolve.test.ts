@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { acceptOp, applyVerdict, draftOps, fetchAppliedOps, patchOp, retryAccept, type Ports } from "../src/resolve.ts";
+import { acceptOp, applyVerdict, draftOpId, draftOps, NOT_READY, fetchAppliedOps, patchOp, retryAccept, type Ports } from "../src/resolve.ts";
 import { markDraft, type DraftElement } from "../src/drafts.ts";
 
 const draftsOf = (opId: string, n: number): DraftElement[] =>
@@ -75,6 +75,8 @@ describe("draftOps", () => {
       customData: { draft: true, op_id: "opZ" },
     };
     assert.deepEqual(draftOps([...accepted, forged]), []);
+    assert.equal(draftOpId(forged), null);
+    assert.equal(draftOpId(draftsOf("opA", 1)[0]), "opA");
   });
 });
 
@@ -101,7 +103,7 @@ describe("patchOp", () => {
 
   it("maps 409 and network errors to ok:false without throwing", async () => {
     const r409 = await patchOp("a", "rejected", fakeFetch(() => 409).fn);
-    assert.deepEqual(r409, { ok: false, message: "not ready yet" });
+    assert.deepEqual(r409, { ok: false, message: NOT_READY });
     const rErr = await patchOp("a", "rejected", fakeFetch(() => "throw").fn);
     assert.equal(rErr.ok, false);
   });
@@ -126,7 +128,7 @@ function makePorts(initial: DraftElement[], opts: { saveOk?: boolean; failIds?: 
     },
     patch: async (id) => {
       log.push(`patch:${id}`);
-      return opts.failIds?.includes(id) ? { ok: false, message: "not ready yet" } : { ok: true };
+      return opts.failIds?.includes(id) ? { ok: false, message: NOT_READY } : { ok: true };
     },
   };
   return { ports, log, get els() { return els; } };
@@ -250,5 +252,18 @@ describe("fetchAppliedOps", () => {
     assert.equal(await fetchAppliedOps("d", f), null);
     const g = (async () => { throw new Error("down"); }) as unknown as typeof fetch;
     assert.equal(await fetchAppliedOps("d", g), null);
+  });
+});
+
+describe("patchEach order", () => {
+  it("keeps input order in results even when PATCHes finish out of order", async () => {
+    const delays: Record<string, number> = { a: 30, b: 0, c: 10 };
+    const patch = async (id: string) => {
+      await new Promise((r) => setTimeout(r, delays[id]));
+      return id === "b" ? { ok: false as const, message: "x" } : { ok: true as const };
+    };
+    const r = await retryAccept(["a", "b", "c"], patch as never);
+    assert.deepEqual(r.done, ["a", "c"]);
+    assert.deepEqual(r.failed, [{ opId: "b", message: "x" }]);
   });
 });

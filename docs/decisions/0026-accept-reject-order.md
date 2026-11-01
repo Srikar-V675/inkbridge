@@ -19,12 +19,12 @@ Code: `web/src/resolve.ts`, `web/src/DraftBar.tsx`, `server/src/inkbridge/api/op
   The existing `op.updated` sweep (dead ops) makes other tabs follow.
 - **Remove by id prefix, never by tag.** Reject removes elements whose id starts with `<op_id>:`
   (`rejectOp`). `customData` is written by the client, so a user element carrying a forged
-  `draft`/`op_id` must never be matched. `draftOps` applies the same prefix check when counting drafts.
+  `draft`/`op_id` must never be matched. `draftOpId` holds that check once; `draftOps` and the selection lookup both use it.
 - **Accept restores text opacity to 100.** Drafts draw text at 70 % opacity and the original opacity is
   not stored, so accept sets text back to 100 (the converted default). A Mermaid label that came with a
   different opacity changes on accept. Accepted that trade-off rather than storing a second value.
 - **"All" means the drafts in the scene.** Accept all and Reject all act on the op ids found on the
-  canvas (elements with `customData.draft` and an `op_id`), resolved one PATCH at a time. Accept all
+  canvas (elements with `customData.draft` and an `op_id`), resolved with their PATCHes sent in parallel (results keep op order). Accept all
   makes one scene update and one save for the whole batch. A 409 (`invalid_transition`, for example
   an op still being drawn or already resolved) is reported for that op and does not stop the batch.
 - **Accept checks op status first.** Before rewriting anything, the client asks
@@ -37,11 +37,12 @@ Code: `web/src/resolve.ts`, `web/src/DraftBar.tsx`, `server/src/inkbridge/api/op
   and shows "Retry accept (N)", which re-sends `PATCH accepted` only (no scene rewrite, no save) and
   clears the ids that succeed. The list lives in component state, so a reload loses it; the op then
   stays `applied`, which is harmless (the elements are already ordinary content).
-- **`history.clear()` after a verdict.** Once any op resolves, the whole undo stack is dropped. Undo
-  entries recorded before the verdict hold the old element versions, and an undo would bring back
-  `draft: true` (or a rejected draft) under an op the server already resolved. Excalidraw's history API
-  cannot drop single entries, so the full stack goes. Accepted cost: the user loses undo for strokes
-  made before Accept/Reject.
+- **Verdict updates skip undo history (`captureUpdate: NEVER`).** The scene update that applies Accept or
+  Reject is not recorded, so undo cannot step back over it and bring `draft: true` (or a rejected draft)
+  back under an op the server already resolved. Checked in headless Chromium: draw a stroke, receive a
+  draft, Accept all, Ctrl+Z; the stroke is undone (`isDeleted`), the accepted text stays and carries no
+  draft tag. This replaces an earlier `api.history.clear()`, which also cost the user undo for strokes
+  made before the verdict.
 - **Stroke style is forced solid on accept.** Drafts are drawn dashed and the original style is not
   stored, so every accepted element becomes solid, even a Mermaid shape that came dashed.
 - **Second tab lags.** Another tab on the same canvas only learns of a verdict through `op.updated`
