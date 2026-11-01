@@ -1,8 +1,8 @@
 """SQLite access. The only module that touches the database; the MCP server must not import it."""
 
 import json
-import re
 import logging
+import re
 import sqlite3
 import time
 import uuid
