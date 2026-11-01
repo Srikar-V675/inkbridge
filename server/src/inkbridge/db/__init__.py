@@ -501,7 +501,7 @@ def _sync_chunks(
     is skipped without hashing. Chunks that lose their id become orphaned, keep their last
     element ids and hashes, and point successor_of at the cluster that took most of their ink.
     """
-    cfg = chunker_config or ChunkerConfig()
+    cfg = chunker_config or ChunkerConfig(match_containment=config.chunk_containment())
     rows = {
         r["id"]: r
         for r in conn.execute(
@@ -526,6 +526,7 @@ def _sync_chunks(
         active={rid for rid, r in rows.items() if r["status"] == "active"},
         threshold=cfg.match_threshold,
         ignore=connector_ids(elements),
+        containment=cfg.match_containment,
     )
     ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
 

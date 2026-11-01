@@ -30,9 +30,12 @@ class ChunkerConfig:
     link_reach: float = 3.0  # free arrow ends link to chunks within this * median (INK-032)
     min_median: float = 4.0  # floor for the median size, in px
     # A new cluster keeps an old chunk's id when their element-id Jaccard is above this. Small
-    # chunks are fragile (2 elements gaining 3 is J = 0.4); INK-038 may switch to a 60%
-    # containment test instead (docs/decisions/0011-chunk-identity.md).
+    # chunks are fragile (2 elements gaining 3 is J = 0.4); match_containment below is the
+    # opt-in fix (docs/decisions/0028-containment-matching.md). Do not change the threshold.
     match_threshold: float = 0.5
+    # None = off. A fraction in (0, 1]: also keep the id when that share of the old chunk survives
+    # in the new cluster, or of the new cluster comes from the old chunk (INK-072).
+    match_containment: float | None = None
 
     def __post_init__(self) -> None:
         for name in ("k", "arrow_merge", "link_reach", "min_median"):
@@ -40,6 +43,8 @@ class ChunkerConfig:
                 raise ValueError(f"ChunkerConfig.{name} must be positive")
         if not 0 <= self.match_threshold < 1:
             raise ValueError("ChunkerConfig.match_threshold must be in [0, 1)")
+        if self.match_containment is not None and not 0 < self.match_containment <= 1:
+            raise ValueError("ChunkerConfig.match_containment must be in (0, 1] or None")
 
 
 def is_draft(element: dict[str, Any]) -> bool:
@@ -444,6 +449,7 @@ def match_chunks(
     active: Collection[str] | None = None,
     threshold: float = ChunkerConfig.match_threshold,
     ignore: Collection[str] = (),
+    containment: float | None = None,
 ) -> Matching:
     """Give new clusters the ids of old chunks by element-id Jaccard (tech ref 5.6).
 
@@ -457,6 +463,10 @@ def match_chunks(
     Ids in `ignore` (connectors and their labels, see `connector_ids`) do not count, so drawing
     or deleting an arrow from a small chunk keeps its id; a chunk of nothing but ignored ids is
     matched on all of them.
+
+    With `containment` (a fraction in (0, 1]) a pair also qualifies when that share of the old
+    chunk is inside the cluster or that share of the cluster came from the old chunk. Pairs still
+    sort by Jaccard, so a containment-only pair never takes an id from a better Jaccard match.
     """
     active_ids = set(old) if active is None else set(active)
     skip = set(ignore)
@@ -484,7 +494,10 @@ def match_chunks(
         for oid, inter in counts.items():
             shared.setdefault(oid, []).append((ci, inter))
             j = inter / (len(members) + len(old[oid]) - inter)
-            if j > threshold:
+            contained = containment is not None and (
+                inter / len(old[oid]) >= containment or inter / len(members) >= containment
+            )
+            if j > threshold or contained:
                 pairs.append((-j, -inter, oid not in active_ids, oid, ci))
     pairs.sort()
 
