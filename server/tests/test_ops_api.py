@@ -432,3 +432,48 @@ def test_draw_diagram_accepts_graph_and_flowchart_headers(client):
     for source in ("graph LR\n  A-->B", "%%{init: {}}%%\nflowchart TD\n  A-->B"):
         r = client.post(OPS, json={"type": "draw_diagram", "payload": {"mermaid": source}})
         assert r.status_code == 201, r.json()
+
+
+# --- INK-045: resolving drafts (Accept / Reject) ------------------------------------------------
+
+
+def test_twenty_ops_can_all_be_accepted(client):
+    ids = []
+    for i in range(20):
+        op = write(client, f"t{i}").json()
+        assert ack(client, op["id"], [own(op["id"])]).status_code == 200
+        ids.append(op["id"])
+    for op_id in ids:
+        r = client.patch(f"/ops/{op_id}", json={"status": "accepted"})
+        assert r.status_code == 200 and r.json()["status"] == "accepted"
+    accepted = client.get(OPS, params={"status": "accepted"}).json()["ops"]
+    assert {o["id"] for o in accepted} == set(ids)
+    assert len(accepted) == 20
+
+
+@pytest.mark.parametrize("verdict", ["accepted", "rejected"])
+@pytest.mark.parametrize("delivered", [False, True])
+def test_resolving_an_unapplied_op_is_409(client, verdict, delivered):
+    op = write(client).json()
+    if delivered:
+        conn = db.connect()
+        try:
+            ops_db.mark_delivered(conn, op["id"])
+        finally:
+            conn.close()
+    assert client.patch(f"/ops/{op['id']}", json={"status": verdict}).status_code == 409
+    assert client.get(f"/ops/{op['id']}").json()["status"] == (
+        "delivered" if delivered else "pending"
+    )
+
+
+def test_resolving_never_touches_the_stored_scene(client):
+    seed(client)
+    op = write(client).json()
+    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
+    before = client.get(SCENE).json()
+    r = client.patch(f"/ops/{op['id']}", json={"status": "rejected"})
+    assert r.status_code == 200
+    after = client.get(SCENE).json()
+    assert after["version"] == before["version"]
+    assert after["elements"] == before["elements"]
