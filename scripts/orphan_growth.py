@@ -92,7 +92,6 @@ def main() -> None:
     db.init_db()
     conn = db.connect()
     sim = Sim()
-    version = 0
     saves, match_ms = [], []
     print(
         f"{'saves':>6} {'live':>6} {'deleted':>7} {'active':>6} {'orphans':>7} {'orph ids':>8}"
@@ -102,9 +101,8 @@ def main() -> None:
         sim.step()
         payload = json.dumps(sim.elements)
         t = time.perf_counter()
-        db.put_scene(conn, "default", version, payload)
+        db.put_scene(conn, "default", i - 1, payload)
         saves.append((time.perf_counter() - t) * 1000)
-        version += 1
         # match_chunks alone, on the current pool and clusters
         rows = conn.execute("SELECT id, status, element_ids_json FROM regions").fetchall()
         old = {r["id"]: json.loads(r["element_ids_json"]) for r in rows}
