@@ -30,3 +30,49 @@ export function draftOps(els: readonly DraftElement[]): { opId: string; count: n
   }
   return [...counts].map(([opId, count]) => ({ opId, count }));
 }
+
+export type Verdict = "accepted" | "rejected";
+export type ResolveResult = { ok: true } | { ok: false; message: string };
+export type ResolveSummary = { done: string[]; failed: { opId: string; message: string }[] };
+
+const TIMEOUT_MS = 8000;
+
+/** PATCH one op to accepted/rejected. Never throws; failures come back as a message. */
+export async function patchOp(
+  opId: string,
+  status: Verdict,
+  fetchFn: typeof fetch = (...a) => fetch(...a),
+): Promise<ResolveResult> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetchFn(`/ops/${encodeURIComponent(opId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+      signal: ctl.signal,
+    });
+    if (res.ok) return { ok: true };
+    if (res.status === 409) return { ok: false, message: "not ready yet" };
+    return { ok: false, message: `request failed (${res.status})` };
+  } catch {
+    return { ok: false, message: "Could not reach the server; try again." };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Resolve ops one after another; a failure is recorded and the rest still run. */
+export async function resolveAll(
+  opIds: string[],
+  status: Verdict,
+  fetchFn?: typeof fetch,
+): Promise<ResolveSummary> {
+  const out: ResolveSummary = { done: [], failed: [] };
+  for (const opId of opIds) {
+    const r = await patchOp(opId, status, fetchFn);
+    if (r.ok) out.done.push(opId);
+    else out.failed.push({ opId, message: r.message });
+  }
+  return out;
+}
