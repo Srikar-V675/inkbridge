@@ -116,3 +116,86 @@ def test_generator_reproduces_committed_files(tmp_path):
     for f in sorted(SYNTHETIC.rglob("*")):
         if f.is_file():
             assert (tmp_path / f.relative_to(SYNTHETIC)).read_bytes() == f.read_bytes()
+
+
+# ---- Task 3: readers and the Gemini gate ----
+
+import dataclasses
+
+from evalkit.readers import (
+    GateError,
+    NoisyReader,
+    OracleReader,
+    load_reader,
+)
+
+
+def test_oracle_returns_truth(ds):
+    p = page(ds, "p02-equation")
+    r = OracleReader().read(p, p.chunks[0])
+    assert (r.text, r.latex) == (p.chunks[0].text, p.chunks[0].latex)
+
+
+def test_noisy_reader(ds):
+    p = page(ds, "p01-text")
+    c = p.chunks[0]
+    assert NoisyReader(0.0).read(p, c).text == c.text
+    a = NoisyReader(0.5).read(p, c).text
+    assert a == NoisyReader(0.5).read(p, c).text
+    assert a != c.text
+    assert a != NoisyReader(0.5, seed=1).read(p, c).text
+
+
+def gemini_ready(ds, monkeypatch, **overrides):
+    """A dataset that passes every gate condition, then break one via overrides."""
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")
+    pages = [dataclasses.replace(p, png=b"png", synthetic=False) for p in ds.pages]
+    base = dataclasses.replace(ds, synthetic=False, test_pages_only=True, pages=pages)
+    return dataclasses.replace(base, **overrides)
+
+
+@pytest.mark.parametrize("case", ["no_flag", "not_test_pages", "synthetic", "no_key", "no_png"])
+def test_gemini_gate_refuses(ds, monkeypatch, case):
+    from inkbridge.recognizer import gemini
+
+    def boom():
+        raise AssertionError("gate must refuse before reaching the recognizer")
+
+    monkeypatch.setattr(gemini, "default_recognizer", boom)
+    d = gemini_ready(ds, monkeypatch)
+    allow = True
+    if case == "no_flag":
+        allow = False
+    elif case == "not_test_pages":
+        d = dataclasses.replace(d, test_pages_only=False)
+    elif case == "synthetic":
+        d = dataclasses.replace(d, synthetic=True)
+    elif case == "no_key":
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    elif case == "no_png":
+        d = dataclasses.replace(d, pages=[dataclasses.replace(d.pages[0], png=None), *d.pages[1:]])
+    with pytest.raises(GateError):
+        load_reader("gemini", d, allow_model=allow)
+
+
+def test_gemini_gate_passes_to_recognizer_when_all_conditions_hold(ds, monkeypatch):
+    from inkbridge.recognizer import gemini
+
+    sentinel = object()
+    monkeypatch.setattr(gemini, "default_recognizer", lambda: sentinel)
+    reader = load_reader("gemini", gemini_ready(ds, monkeypatch), allow_model=True)
+    assert reader.name == "gemini"
+
+
+def test_load_reader_from_module(tmp_path, monkeypatch, ds):
+    (tmp_path / "myreader_mod.py").write_text(
+        "from evalkit.readers import Reading\n"
+        "class R:\n    name = 'mine'\n"
+        "    def read(self, page, chunk):\n        return Reading(text='x')\n"
+        "reader = R()\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    r = load_reader("myreader_mod:reader", ds)
+    assert r.read(ds.pages[0], ds.pages[0].chunks[0]).text == "x"
+    assert load_reader("oracle", ds).name == "oracle"
+    assert load_reader("noisy:0.25", ds).name == "noisy:0.25"
