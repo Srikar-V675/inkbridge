@@ -97,15 +97,21 @@ class _GeminiReader:
         )
 
 
-def load_gemini_reader(dataset: Dataset, allow_model: bool) -> Reader:
-    """The only place the eval can reach a model. Gemini's free tier trains on content, so it
-    only ever sees pages declared as test pages, and only when the caller opts in."""
+def check_model_gate(dataset: Dataset, allow_model: bool, who: str) -> None:
+    """One gate for every reader that may reach a model. Gemini's free tier trains on content, so
+    such a reader only ever sees pages declared as test pages, and only when the caller opts in.
+    `test_pages_only` is the user's own assertion: they must not set it for personal pages."""
     if not allow_model:
-        raise GateError("gemini reader needs --allow-model")
+        raise GateError(f"{who} reader needs --allow-model")
     if not dataset.test_pages_only:
         raise GateError("dataset manifest does not declare test_pages_only: true")
     if dataset.synthetic:
         raise GateError("synthetic fixtures have no handwriting: refusing a pointless model call")
+
+
+def load_gemini_reader(dataset: Dataset, allow_model: bool) -> Reader:
+    """The only place the eval can reach Gemini."""
+    check_model_gate(dataset, allow_model, "gemini")
     if not os.environ.get("GEMINI_API_KEY"):
         raise GateError("GEMINI_API_KEY is not set")
     missing = [p.id for p in dataset.pages if p.png is None]
@@ -124,6 +130,8 @@ def load_reader(spec: str, dataset: Dataset, allow_model: bool = False) -> Reade
     if spec == "gemini":
         return load_gemini_reader(dataset, allow_model)
     if ":" in spec:
+        # A custom reader may call any model: same gate as gemini (minus the Gemini specifics).
+        check_model_gate(dataset, allow_model, "custom")
         module, attr = spec.split(":", 1)
         return getattr(importlib.import_module(module), attr)
     raise ValueError(f"unknown reader spec: {spec}")

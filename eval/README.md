@@ -19,7 +19,9 @@ Options: `--reader oracle | noisy:0.1 | gemini | module:attr`, `--allow-model`.
 
 ## Models
 
-Nothing here calls a model unless you pass `--reader gemini --allow-model` on a real set whose
+`test_pages_only: true` is your own assertion that every page is a test page. Leave it false or absent for any page with personal content, and never commit real pages with personal content under `eval/data`.
+
+Nothing here calls a model unless you pass `--allow-model` with any reader other than oracle or noisy (gemini or `module:attr`) on a real set whose
 manifest says `"synthetic": false, "test_pages_only": true`, with `GEMINI_API_KEY` in your shell.
 Gemini's free tier trains on content: test pages only, never personal notes. Tests never call a
 model.

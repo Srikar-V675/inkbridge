@@ -195,7 +195,15 @@ def test_load_reader_from_module(tmp_path, monkeypatch, ds):
         "reader = R()\n"
     )
     monkeypatch.syspath_prepend(str(tmp_path))
-    r = load_reader("myreader_mod:reader", ds)
+    # Custom readers may reach a model, so they pass the same gate as gemini.
+    with pytest.raises(GateError):
+        load_reader("myreader_mod:reader", gemini_ready(ds, monkeypatch), allow_model=False)
+    with pytest.raises(GateError):
+        load_reader("myreader_mod:reader", ds, allow_model=True)  # synthetic set
+    with pytest.raises(GateError):
+        no_flag = dataclasses.replace(gemini_ready(ds, monkeypatch), test_pages_only=False)
+        load_reader("myreader_mod:reader", no_flag, allow_model=True)
+    r = load_reader("myreader_mod:reader", gemini_ready(ds, monkeypatch), allow_model=True)
     assert r.read(ds.pages[0], ds.pages[0].chunks[0]).text == "x"
     assert load_reader("oracle", ds).name == "oracle"
     assert load_reader("noisy:0.25", ds).name == "noisy:0.25"
