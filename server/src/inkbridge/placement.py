@@ -32,9 +32,7 @@ DIAGRAM_SIZE = (600.0, 400.0)
 def font_size_for(stroke_heights: list[float], hint: str | None = None) -> int:
     """Font size that reads beside handwriting whose strokes have these heights (px)."""
     heights = [h for h in stroke_heights if h > 0]
-    base = (
-        statistics.median(heights) * INK_TO_FONT if len(heights) >= MIN_SAMPLES else DEFAULT_FONT
-    )
+    base = statistics.median(heights) * INK_TO_FONT if len(heights) >= MIN_SAMPLES else DEFAULT_FONT
     return round(max(MIN_FONT, min(MAX_FONT, base * SIZE_HINTS.get(hint or "normal", 1.0))))
 
 
