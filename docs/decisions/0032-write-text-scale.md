@@ -1,4 +1,4 @@
-# 0031: write_text and draw_diagram scale to the handwriting (INK-066)
+# 0032: write_text and draw_diagram scale to the handwriting (INK-066)
 
 Status: accepted.
 
