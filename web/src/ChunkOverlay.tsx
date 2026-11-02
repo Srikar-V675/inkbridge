@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
-import { chunkMark, connectorIds, planOverride, sendOverride, toggleChunk } from "./overrides";
+import { chunkMark, connectorIds, overrideUi, planOverride, sendOverride, toggleChunk } from "./overrides";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
 
@@ -77,12 +77,14 @@ function useChunks(
 }
 
 const actionButton = (enabled: boolean): React.CSSProperties => ({
-  padding: "4px 10px",
+  minHeight: 44,
+  padding: "8px 14px",
   borderRadius: 6,
   border: "1px solid #ced4da",
   font: "12px system-ui, sans-serif",
   background: "#fff",
   color: enabled ? "#202124" : "#adb5bd",
+  opacity: enabled ? 1 : 0.5,
 });
 
 /** "Merge chunks" and "Split selection" for the current selection, next to the overlay toggle. */
@@ -109,14 +111,15 @@ function OverrideActions(props: {
     setMessage(r.ok ? (plan.kind === "merge" ? `Merged into ${r.ids[0]}` : `Split into ${r.ids.join(" and ")}`) : r.message);
     onDone(); // refresh either way: a refusal usually means the list was stale
   };
-  const merge = plan.kind === "merge" && !busy;
-  const split = plan.kind === "split" && !busy;
+  const ui = overrideUi(plan);
+  const merge = ui.canMerge && !busy;
+  const split = ui.canSplit && !busy;
   return (
     <div
       style={{
         position: "absolute",
         right: 12,
-        bottom: 96,
+        bottom: 104,
         zIndex: 10,
         display: "flex",
         flexDirection: "column",
@@ -130,23 +133,14 @@ function OverrideActions(props: {
           {message}
         </div>
       )}
+      <div data-testid="override-hint" style={{ font: "12px system-ui, sans-serif", background: "#fff", padding: "2px 8px", borderRadius: 4 }}>
+        {ui.hint}
+      </div>
       <div style={{ display: "flex", gap: 6 }}>
-        <button
-          type="button"
-          disabled={!merge}
-          title={plan.kind === "none" ? plan.reason : "Merges the whole of every chunk the selection touches"}
-          onClick={() => void run()}
-          style={actionButton(merge)}
-        >
+        <button type="button" disabled={!merge} onClick={() => void run()} style={actionButton(merge)}>
           Merge chunks
         </button>
-        <button
-          type="button"
-          disabled={!split}
-          title={plan.kind === "none" ? plan.reason : undefined}
-          onClick={() => void run()}
-          style={actionButton(split)}
-        >
+        <button type="button" disabled={!split} onClick={() => void run()} style={actionButton(split)}>
           Split selection
         </button>
       </div>
