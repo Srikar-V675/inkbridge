@@ -6,6 +6,7 @@ browser only draws at it. Sizes are estimates (the browser lays text and Mermaid
 """
 
 import math
+import statistics
 from typing import Any, TypedDict
 
 
@@ -19,19 +20,30 @@ class Box(TypedDict):
 GAP = 40  # space left between an op and the ink it is placed beside
 MARGIN = 16  # boxes closer than this count as overlapping
 
-# Excalidraw's default text is 20 px Virgil; about 0.6 em per character and 1.25 em per line.
-FONT_SIZE = 20
-CHAR_WIDTH = 0.6 * FONT_SIZE
-LINE_HEIGHT = 1.25 * FONT_SIZE
+FONT_SIZE = 20  # legacy: ops stored before INK-066 carry no font_size
+DEFAULT_FONT, MIN_FONT, MAX_FONT = 28, 18, 64
+INK_TO_FONT = 1.5  # text size per px of median handwritten stroke height; tune on the tablet
+MIN_SAMPLES = 3
+SIZE_HINTS = {"small": 0.75, "normal": 1.0, "large": 1.5}
 # Mermaid is laid out in the browser; reserve a generous box for a typical small flowchart.
 DIAGRAM_SIZE = (600.0, 400.0)
 
 
+def font_size_for(stroke_heights: list[float], hint: str | None = None) -> int:
+    """Font size that reads beside handwriting whose strokes have these heights (px)."""
+    heights = [h for h in stroke_heights if h > 0]
+    base = (
+        statistics.median(heights) * INK_TO_FONT if len(heights) >= MIN_SAMPLES else DEFAULT_FONT
+    )
+    return round(max(MIN_FONT, min(MAX_FONT, base * SIZE_HINTS.get(hint or "normal", 1.0))))
+
+
 def estimate_size(op_type: str, payload: dict[str, Any]) -> tuple[float, float]:
+    fs = payload.get("font_size") or FONT_SIZE
     if op_type == "write_text":
         lines = str(payload.get("text", "")).split("\n")
-        return (max(1, max(len(line) for line in lines)) * CHAR_WIDTH, len(lines) * LINE_HEIGHT)
-    return DIAGRAM_SIZE
+        return (max(1, max(len(line) for line in lines)) * 0.6 * fs, len(lines) * 1.25 * fs)
+    return (DIAGRAM_SIZE[0] * fs / FONT_SIZE, DIAGRAM_SIZE[1] * fs / FONT_SIZE)
 
 
 def rotated_box(box: Box, angle: float) -> Box:
