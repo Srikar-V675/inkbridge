@@ -7,9 +7,31 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Response, Uploa
 from fastapi.concurrency import run_in_threadpool
 
 from inkbridge import config, db, imaging, sketch, sketch_image
+from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 
 router = APIRouter()
+
+
+class RegionOut(Out):
+    id: str
+    document_id: str
+    element_ids: list[str]
+    bounds: dict[str, float]
+    stroke_count: int
+    kind: str | None
+    created_by: str | None
+    stroke_hash: str | None
+    content_hash: str | None
+    status: str
+    successor_of: str | None
+    png_stale: bool
+    pinned: bool
+    updated_at: str | None
+    text: str | None
+    latex: str | None
+    source: str | None
+    text_hash: str | None
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -24,7 +46,7 @@ async def _read_png(image: UploadFile) -> bytes:
     return png
 
 
-@router.post("/documents/{document_id}/regions", status_code=201)
+@router.post("/documents/{document_id}/regions", status_code=201, response_model=RegionOut)
 async def create_region(
     document_id: str,
     conn: Conn,
@@ -69,7 +91,7 @@ def _store_region(conn, document_id, ids, png, kind, created_by) -> dict:
         raise
 
 
-@router.get("/documents/{document_id}/regions")
+@router.get("/documents/{document_id}/regions", response_model=list[RegionOut])
 def list_regions(
     document_id: str,
     conn: Conn,
@@ -91,7 +113,7 @@ def list_regions(
     )
 
 
-@router.get("/regions/{region_id}")
+@router.get("/regions/{region_id}", response_model=RegionOut)
 def get_region(region_id: str, conn: Conn) -> dict:
     region = db.get_region(conn, region_id)
     if region is None:
@@ -99,7 +121,7 @@ def get_region(region_id: str, conn: Conn) -> dict:
     return region
 
 
-@router.put("/regions/{region_id}/image")
+@router.put("/regions/{region_id}/image", response_model=RegionOut)
 async def replace_region_image(
     region_id: str,
     conn: Conn,

@@ -5,13 +5,59 @@ from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from inkbridge import config, db, imaging
 from inkbridge.api.deps import Conn
 from inkbridge.db import outline
 
 router = APIRouter()
+
+
+class Out(BaseModel):
+    """Response base. extra="allow": a field added to a db dict later is still served, never
+    silently dropped. Declared fields have no defaults, so no key appears or disappears."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+class Link(Out):
+    to: str
+    kind: str
+
+
+class ChunkOut(Out):
+    id: str
+    order: int | None
+    kind: str | None
+    bounds: dict[str, float]
+    element_ids: list[str]
+    text: str | None
+    latex: str | None
+    source: str | None
+    status: str
+    successor_of: str | None
+    png_stale: bool
+    content_hash: str | None
+    text_hash: str | None
+    links: list[Link]
+    deep_link: str
+
+
+class ChunkOutline(Out):
+    document: str
+    version: int
+    chunk_count: int
+    chunks: list[ChunkOut]
+
+
+class DocumentOut(Out):
+    id: str
+    title: str
+    updated_at: str
+    version: int
+    url: str
+
 
 NOT_FOUND = "document not found; GET /documents lists the canvases"
 
@@ -32,7 +78,7 @@ class DocumentIn(BaseModel):
         return v.strip()
 
 
-@router.post("/documents", status_code=201)
+@router.post("/documents", status_code=201, response_model=DocumentOut)
 def create_document(body: DocumentIn, conn: Conn) -> dict:
     try:
         doc = outline.create_document(conn, body.title)
@@ -48,12 +94,12 @@ def create_document(body: DocumentIn, conn: Conn) -> dict:
     return {**doc, "url": deep_link(doc["id"])}
 
 
-@router.get("/documents")
+@router.get("/documents", response_model=list[DocumentOut])
 def list_documents(conn: Conn) -> list[dict]:
     return [{**d, "url": deep_link(d["id"])} for d in outline.list_documents(conn)]
 
 
-@router.get("/documents/{document_id}/chunks")
+@router.get("/documents/{document_id}/chunks", response_model=ChunkOutline)
 def list_chunks(
     document_id: str,
     conn: Conn,

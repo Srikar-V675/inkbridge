@@ -6,11 +6,28 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from inkbridge import db, mermaid
+from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
 
 router = APIRouter()
+
+
+class OpOut(Out):
+    id: str
+    document_id: str
+    type: str
+    status: str
+    payload: dict[str, Any]
+    result: dict[str, Any] | None
+    error: str | None
+    created_at: str
+
+
+class OpList(Out):
+    ops: list[OpOut]
+
 
 OpType = Literal["write_text", "draw_diagram"]
 OpId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
@@ -118,17 +135,17 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     return op
 
 
-@router.post("/documents/{document_id}/ops", status_code=201)
+@router.post("/documents/{document_id}/ops", status_code=201, response_model=OpOut)
 def create_op(document_id: str, body: OpIn, conn: Conn, response: Response) -> dict:
     return _enqueue(conn, document_id, body, response)
 
 
-@router.post("/ops", status_code=201)
+@router.post("/ops", status_code=201, response_model=OpOut)
 def create_op_default(body: OpInWithDocument, conn: Conn, response: Response) -> dict:
     return _enqueue(conn, body.document_id, body, response)
 
 
-@router.get("/documents/{document_id}/ops")
+@router.get("/documents/{document_id}/ops", response_model=OpList)
 def list_ops(
     document_id: str,
     conn: Conn,
@@ -143,7 +160,7 @@ def list_ops(
     return {"ops": ops_db.list_ops(conn, document_id, statuses)}
 
 
-@router.get("/ops/{op_id}")
+@router.get("/ops/{op_id}", response_model=OpOut)
 def get_op(op_id: str, conn: Conn) -> dict:
     try:
         return ops_db.get_op(conn, op_id)
@@ -151,7 +168,7 @@ def get_op(op_id: str, conn: Conn) -> dict:
         raise HTTPException(404, "op not found") from None
 
 
-@router.patch("/ops/{op_id}")
+@router.patch("/ops/{op_id}", response_model=OpOut)
 def patch_op(op_id: str, body: OpPatch, conn: Conn) -> dict:
     """Browser: applied (with the new element ids) or failed. User: accepted or rejected."""
     if body.status == "applied" and not body.element_ids:
