@@ -2,6 +2,8 @@
 // Deep link contract: /?canvas=<document id>&chunk=<chunk id> (docs/decisions/0014).
 // Only plain fetch and DOM-free maths: works over LAN HTTP, no secure-context APIs.
 
+import { timed } from "./timing.ts";
+
 export interface Bounds {
   x: number;
   y: number;
@@ -136,7 +138,11 @@ export async function listChunks(
 ): Promise<Chunk[]> {
   try {
     const url = `/documents/${encodeURIComponent(canvas)}/regions?chunks=true&limit=500`;
-    const rows = await fetchWithTimeout(fetchFn, url, async (res) => (res.ok ? ((await res.json()) as Chunk[]) : []));
+    const rows = await timed(
+      "chunks.list",
+      () => fetchWithTimeout(fetchFn, url, async (res) => (res.ok ? ((await res.json()) as Chunk[]) : [])),
+      (r) => ({ chunks: r?.length ?? 0 }),
+    );
     return rows.filter((c) => c.status === "active");
   } catch {
     return [];

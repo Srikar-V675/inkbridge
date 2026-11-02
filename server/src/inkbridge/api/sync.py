@@ -13,6 +13,7 @@ from inkbridge import db
 from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.db import sync
+from inkbridge.timing import timed
 
 router = APIRouter()
 
@@ -70,19 +71,20 @@ async def check_sync(document_id: str, body: CheckSyncIn, conn: Conn, request: R
     while waiting). Without a reading a chunk is `changed` with `reading: null`: a visible update,
     never a silent miss.
     """
-    notes = [c.model_dump() for c in body.chunks]
-    try:
-        resolved = await run_in_threadpool(sync.resolve, conn, document_id, notes)
-    except db.DocumentNotFound:
-        raise HTTPException(404, "document not found") from None
-    missing = sync.needs_reading(resolved)
-    worker = getattr(request.app.state, "recognition_worker", None)
-    if missing and body.wait_s > 0 and worker is not None:
-        # Only the ids the worker accepted can arrive (opt-in canvas, not in backoff).
-        waiting = list(worker.request(document_id, missing, ttl_s=body.wait_s))
-        deadline = time.monotonic() + body.wait_s
-        while waiting and time.monotonic() < deadline:
-            await asyncio.sleep(max(0.0, min(POLL_S, deadline - time.monotonic())))
-            if await run_in_threadpool(sync.has_readings, conn, waiting):
-                break
-    return await run_in_threadpool(sync.check, conn, document_id, notes)
+    with timed("check_sync", chunks=len(body.chunks)):
+        notes = [c.model_dump() for c in body.chunks]
+        try:
+            resolved = await run_in_threadpool(sync.resolve, conn, document_id, notes)
+        except db.DocumentNotFound:
+            raise HTTPException(404, "document not found") from None
+        missing = sync.needs_reading(resolved)
+        worker = getattr(request.app.state, "recognition_worker", None)
+        if missing and body.wait_s > 0 and worker is not None:
+            # Only the ids the worker accepted can arrive (opt-in canvas, not in backoff).
+            waiting = list(worker.request(document_id, missing, ttl_s=body.wait_s))
+            deadline = time.monotonic() + body.wait_s
+            while waiting and time.monotonic() < deadline:
+                await asyncio.sleep(max(0.0, min(POLL_S, deadline - time.monotonic())))
+                if await run_in_threadpool(sync.has_readings, conn, waiting):
+                    break
+        return await run_in_threadpool(sync.check, conn, document_id, notes)

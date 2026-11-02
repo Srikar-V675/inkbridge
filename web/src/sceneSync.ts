@@ -1,6 +1,8 @@
 // Framework-free load/autosave for one canvas. App.tsx wires it to Excalidraw's onChange.
 // Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0008).
 
+import { record } from "./timing.ts";
+
 export interface SceneElement {
   id: string;
   version: number;
@@ -76,6 +78,7 @@ export class SceneSync {
   /** Fetch the saved scene; null (state "error") if the canvas does not exist or the API is down. */
   async load(): Promise<SceneElement[] | null> {
     this.emit("loading");
+    const t0 = performance.now();
     try {
       const r = await this.fetchFn(this.url());
       if (!r.ok) {
@@ -88,6 +91,7 @@ export class SceneSync {
       this.savedIds = liveIds(body.elements);
       this.pending = null;
       this.loaded = true;
+      record("scene.load", performance.now() - t0, { elements: body.elements.length });
       this.emit("saved");
       return body.elements;
     } catch {
@@ -159,6 +163,7 @@ export class SceneSync {
     const sentSig = signature(sent);
     this.saving = true;
     this.emit("saving");
+    const t0 = performance.now();
     try {
       const body = JSON.stringify({ base_version: this.version, elements: sent });
       const r = await this.fetchFn(this.url(), {
@@ -174,12 +179,14 @@ export class SceneSync {
         this.lastSig = sentSig;
         this.savedIds = liveIds(sent);
         this.failures = 0;
+        const ms = Math.round(performance.now() - t0);
+        record("scene.save", ms, { elements: sent.length, bytes: body.length });
         if (this.pendingSig === sentSig) this.pending = null;
         if (this.pending) {
           this.emit("dirty");
           this.schedule(this.o.debounceMs ?? 1500);
         } else {
-          this.emit("saved");
+          this.emit("saved", `${ms} ms`);
         }
       } else if (r.status === 409) {
         await this.resolveConflict(sent);

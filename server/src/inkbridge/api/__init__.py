@@ -13,10 +13,12 @@ from inkbridge.api import chunks, ops, overrides, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.recognition_worker import RecognitionWorker
+from inkbridge.timing import RequestTiming, configure_logging
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
     db.init_db()
     # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0017).
     worker = RecognitionWorker.from_env(publish=ws.hub.publish)
@@ -32,6 +34,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
 app.add_middleware(BodySizeLimit)  # 413 before any route reads an oversized body
+app.add_middleware(RequestTiming)  # added last = outermost: times the body-limit 413 too
 
 
 @app.exception_handler(RequestValidationError)
