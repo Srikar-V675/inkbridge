@@ -200,3 +200,47 @@ def test_input_repr_needs_arm_reader_or_simulated(ds):
 def test_parse_arm_rates_rejects_unknown_arm():
     with pytest.raises(ValueError):
         load_reader("arms-noisy:video=0.1", load_dataset(SYNTHETIC))
+
+
+# ---- Task 3: CLI wiring and the section ----
+
+import run as eval_run
+
+ARMS_SPEC = "arms-noisy:image=0.05,image+strokes=0.02,strokes=0.2"
+
+
+def _body_rows(text: str, section: str) -> list[str]:
+    block = text.split(f"<!-- eval:{section} -->", 1)[1].split("<!-- /eval -->", 1)[0]
+    return [
+        ln
+        for ln in block.splitlines()
+        if ln.startswith("| ") and not ln.startswith("| arm") and not ln.startswith("| ---")
+    ]
+
+
+def test_cli_input_repr_writes_section(tmp_path):
+    out = tmp_path / "r.md"
+    code = eval_run.main(
+        ["input_repr", "--reader", ARMS_SPEC, "--out", str(out), "--label", "input_repr"],
+        today="2026-11-02",
+    )
+    assert code == 0
+    text = out.read_text()
+    assert "<!-- eval:input_repr -->" in text
+    assert "SYNTHETIC FIXTURES" in text
+    assert "image scale 1.0, stroke width 2, stroke budget 1500 tokens" in text
+    rows = _body_rows(text, "input_repr")
+    assert [r.split("|")[1].strip() for r in rows] == ["image", "image+strokes", "strokes"]
+
+
+def test_cli_input_repr_gate(tmp_path):
+    out = tmp_path / "r.md"
+    assert eval_run.main(["input_repr", "--reader", "gemini", "--out", str(out)]) == 2
+
+
+def test_cli_default_reader_is_oracle(tmp_path):
+    out = tmp_path / "r.md"
+    assert eval_run.main(["input_repr", "--out", str(out)], today="2026-11-02") == 0
+    text = out.read_text()
+    assert "reader: oracle" in text
+    assert "| image | 5 | 0.000" in text

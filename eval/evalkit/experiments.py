@@ -110,7 +110,10 @@ def run_input_repr(
                 no_input += payload.no_input
                 items.append((chunk, arm_read(reader, page, chunk, payload)))
         row = _score_rows(arm, items)
-        rows.append([*row, fell_back, no_input])
+        # cost is a few hundredths of a cent here: six decimals keep it visible in the table
+        rows.append(
+            [row[0], row[1], row[2], row[3], row[4], f"{row[5]:.6f}", row[6], fell_back, no_input]
+        )
         text_pairs = [(c.text, r.text) for c, r in items if c.kind != "equation"]
         eq = [(c, r) for c, r in items if c.kind == "equation"]
         summary[arm] = {

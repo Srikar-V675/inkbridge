@@ -14,11 +14,12 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from evalkit import report
+from evalkit.arms import IMAGE_SCALE, STROKE_TOKEN_BUDGET, STROKE_WIDTH
 from evalkit.dataset import load_dataset
 from evalkit.experiments import EXPERIMENTS
 from evalkit.readers import GateError, load_reader
 
-NEEDS_READER = {"transcribe", "diagram"}
+NEEDS_READER = {"transcribe", "diagram", "input_repr"}
 
 
 def _resolve(p: str) -> Path:
@@ -53,6 +54,11 @@ def main(argv: list[str] | None = None, today: str | None = None) -> int:
     note = f"\n\n{result.summary['skipped']}" if "skipped" in result.summary else ""
     body = report.section_header(dataset.name, dataset.synthetic, reader_name, today)
     body += f"\n\n{table}{note}"
+    if args.experiment == "input_repr":
+        body += (
+            f"\n\nfixed across arms: image scale {IMAGE_SCALE:.1f}, stroke width {STROKE_WIDTH}, "
+            f"stroke budget {STROKE_TOKEN_BUDGET} tokens"
+        )
     print(body)
     report.write_section(_resolve(args.out), args.label or args.experiment, body)
     return 0
