@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
       - run: uv sync
-      - run: uv run ruff check .
+      - run: uv run ruff check . ../eval
       - run: uv run pytest
 
   web:

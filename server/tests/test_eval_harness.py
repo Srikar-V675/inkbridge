@@ -199,3 +199,80 @@ def test_load_reader_from_module(tmp_path, monkeypatch, ds):
     assert r.read(ds.pages[0], ds.pages[0].chunks[0]).text == "x"
     assert load_reader("oracle", ds).name == "oracle"
     assert load_reader("noisy:0.25", ds).name == "noisy:0.25"
+
+
+# ---- Task 4: report, experiments, CLI ----
+
+import run as eval_run
+from evalkit import report
+from evalkit.experiments import run_chunks, run_stale, run_transcribe
+
+
+def test_transcribe_oracle_and_noisy(ds):
+    res = run_transcribe(ds, OracleReader())
+    assert res.summary["cer"] == 0.0 and res.summary["equation_exact"] == 1.0
+    noisy = run_transcribe(ds, NoisyReader(0.3))
+    kinds = {c.kind for p in ds.pages for c in p.chunks}
+    assert noisy.summary["cer"] > 0
+    assert len(noisy.rows) == len(kinds) + 1  # one row per kind plus "all"
+
+
+def test_chunks_experiment(ds):
+    res = run_chunks(ds)
+    total = res.rows[-1]
+    assert total[0] == "all" and total[1] == sum(len(p.chunks) for p in ds.pages)
+    for row in res.rows:
+        assert 0.0 <= row[3] <= 1.0 and 0.0 <= row[6] <= 1.0
+    assert res.summary["matched_share"] == 1.0  # fixtures are laid out to chunk cleanly
+
+
+def test_stale_experiment_is_designed_by_construction(ds):
+    res = run_stale(ds)
+    flags = {(r[0], r[1]): (r[3], r[4], r[5]) for r in res.rows}  # real, hash-only, early-cutoff
+    assert flags[("p01-text", "e1")] == (False, False, False)  # move keeps content_hash
+    assert flags[("p01-text", "e2")] == (False, True, False)  # nudge: hash moves, reading does not
+    assert flags[("p01-text", "e3")] == (False, False, False)  # redraw identical keeps it
+    assert flags[("p01-text", "e4")] == (True, True, True)  # change_word: both change
+    assert flags[("p03-diagram", "e1")] == (True, True, True)
+    assert flags[("p03-diagram", "e2")] == (True, True, True)
+    assert (
+        res.summary["hash_only"]["false_alarm_rate"]
+        > res.summary["early_cutoff"]["false_alarm_rate"]
+    )
+    assert res.summary["early_cutoff"]["recall"] == 1.0
+
+
+def test_write_section(tmp_path):
+    path = tmp_path / "results.md"
+    report.write_section(path, "a", "one")
+    path.write_text(path.read_text().replace("# Eval results", "# Eval results\n\nhand note"))
+    report.write_section(path, "b", "two")
+    text = path.read_text()
+    path.write_text(text + "\ntrailing hand text\n")
+    before = path.read_text()
+    report.write_section(path, "a", "ONE")
+    after = path.read_text()
+    assert "ONE" in after and "one" not in after
+    assert "hand note" in after and "trailing hand text" in after
+    assert after.count("<!-- eval:b -->") == 1
+    assert after.split("<!-- eval:a -->")[0] == before.split("<!-- eval:a -->")[0]
+    assert after.split("<!-- /eval -->", 1)[1] == before.split("<!-- /eval -->", 1)[1]
+    report.write_section(path, "a", "ONE")
+    assert path.read_text() == after
+
+
+def test_section_header_marks_synthetic():
+    head = report.section_header("d", True, "oracle", today="2026-01-01")
+    assert head.startswith("_dataset: d, synthetic: yes, reader: oracle, run: 2026-01-01_")
+    assert "SYNTHETIC FIXTURES" in head
+    assert "SYNTHETIC" not in report.section_header("d", False, "oracle", today="2026-01-01")
+
+
+def test_cli(tmp_path, capsys):
+    out = tmp_path / "r.md"
+    assert eval_run.main(["chunks", "--out", str(out)], today="2026-01-01") == 0
+    assert "<!-- eval:chunks -->" in out.read_text()
+    assert "SYNTHETIC FIXTURES" in out.read_text()
+    assert eval_run.main(["transcribe", "--reader", "gemini", "--out", str(out)]) == 2
+    assert eval_run.main(["transcribe", "--out", str(out), "--label", "e1-oracle"]) == 0
+    assert "<!-- eval:e1-oracle -->" in out.read_text()
