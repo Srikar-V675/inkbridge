@@ -7,9 +7,10 @@ from inkbridge.chunker import chunk_scene
 from inkbridge.regions import bbox_of, content_hash, text_hash
 
 from . import scoring
+from .arms import ARMS, STROKE_TOKEN_BUDGET, arm_read, build_payload
 from .dataset import Dataset, Page
 from .edits import apply_edit
-from .readers import Reader
+from .readers import NoisyReader, OracleReader, Reader
 
 
 @dataclass
@@ -25,6 +26,29 @@ def _need_reader(reader: Reader | None) -> Reader:
     return reader
 
 
+def _score_rows(label: str, items: list) -> list[Any]:
+    """One table row: CER on text kinds, exact match on equations, tokens, cost, latency."""
+    text_items = [(c.text, r.text) for c, r in items if c.kind != "equation"]
+    eq_items = [(c, r) for c, r in items if c.kind == "equation"]
+    n = len(items)
+    cer_v: Any = scoring.mean_cer(text_items) if text_items else "-"
+    exact: Any = (
+        sum(scoring.exact_match(c.latex or c.text, r.latex or r.text) for c, r in eq_items)
+        / len(eq_items)
+        if eq_items
+        else "-"
+    )
+    return [
+        label,
+        n,
+        cer_v,
+        exact,
+        sum(r.tokens for _, r in items) / n,
+        sum(r.cost_usd for _, r in items),
+        sum(r.latency_s for _, r in items) / n,
+    ]
+
+
 def run_transcribe(dataset: Dataset, reader: Reader | None = None, **_: Any) -> Result:
     """E1 base: read every hand-boxed chunk. CER for text kinds, exact match for equations."""
     reader = _need_reader(reader)
@@ -34,30 +58,9 @@ def run_transcribe(dataset: Dataset, reader: Reader | None = None, **_: Any) -> 
             by_kind.setdefault(chunk.kind, []).append((chunk, reader.read(page, chunk)))
     headers = ["kind", "n", "CER", "exact match", "mean tokens", "total cost usd", "mean latency s"]
 
-    def row(label: str, items: list) -> list[Any]:
-        text_items = [(c.text, r.text) for c, r in items if c.kind != "equation"]
-        eq_items = [(c, r) for c, r in items if c.kind == "equation"]
-        n = len(items)
-        cer_v: Any = scoring.mean_cer(text_items) if text_items else "-"
-        exact: Any = (
-            sum(scoring.exact_match(c.latex or c.text, r.latex or r.text) for c, r in eq_items)
-            / len(eq_items)
-            if eq_items
-            else "-"
-        )
-        return [
-            label,
-            n,
-            cer_v,
-            exact,
-            sum(r.tokens for _, r in items) / n,
-            sum(r.cost_usd for _, r in items),
-            sum(r.latency_s for _, r in items) / n,
-        ]
-
-    rows = [row(kind, items) for kind, items in sorted(by_kind.items())]
+    rows = [_score_rows(kind, items) for kind, items in sorted(by_kind.items())]
     everything = [i for items in by_kind.values() for i in items]
-    rows.append(row("all", everything))
+    rows.append(_score_rows("all", everything))
     text_all = [(c.text, r.text) for c, r in everything if c.kind != "equation"]
     eq = [(c, r) for c, r in everything if c.kind == "equation"]
     summary = {
@@ -68,6 +71,58 @@ def run_transcribe(dataset: Dataset, reader: Reader | None = None, **_: Any) -> 
             else 0.0
         ),
     }
+    return Result(headers, rows, summary)
+
+
+def run_input_repr(
+    dataset: Dataset, reader: Reader | None = None, budget: int = STROKE_TOKEN_BUDGET, **_: Any
+) -> Result:
+    """E1: image only, image plus compact strokes, strokes only, over every chunk.
+
+    The reader must implement read_arm(page, chunk, payload) to see strokes. Only the simulated
+    readers (oracle, noisy, arms-noisy) may skip it: a reader that sees only the image would
+    silently score every arm as image-only.
+    """
+    reader = _need_reader(reader)
+    simulated = isinstance(reader, OracleReader | NoisyReader)
+    if not hasattr(reader, "read_arm") and not simulated:
+        raise ValueError("input_repr needs a reader with read_arm(page, chunk, payload)")
+    headers = [
+        "arm",
+        "n",
+        "CER",
+        "exact match",
+        "mean tokens",
+        "total cost usd",
+        "mean latency s",
+        "fell back",
+        "no input",
+    ]
+    rows: list[list[Any]] = []
+    summary: dict[str, Any] = {}
+    for arm in ARMS:
+        items = []
+        fell_back = no_input = 0
+        for page in dataset.pages:
+            for chunk in page.chunks:
+                payload = build_payload(page, chunk, arm, budget)
+                fell_back += payload.fell_back
+                no_input += payload.no_input
+                items.append((chunk, arm_read(reader, page, chunk, payload)))
+        row = _score_rows(arm, items)
+        rows.append([*row, fell_back, no_input])
+        text_pairs = [(c.text, r.text) for c, r in items if c.kind != "equation"]
+        eq = [(c, r) for c, r in items if c.kind == "equation"]
+        summary[arm] = {
+            "cer": scoring.mean_cer(text_pairs) if text_pairs else 0.0,
+            "equation_exact": (
+                sum(scoring.exact_match(c.latex or c.text, r.latex or r.text) for c, r in eq)
+                / len(eq)
+                if eq
+                else 0.0
+            ),
+            "tokens": row[4],
+        }
     return Result(headers, rows, summary)
 
 
@@ -206,4 +261,5 @@ EXPERIMENTS = {
     "chunks": run_chunks,
     "stale": run_stale,
     "diagram": run_diagram,
+    "input_repr": run_input_repr,
 }

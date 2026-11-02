@@ -111,3 +111,92 @@ def test_image_tokens_is_padded_area_estimate(ds):
     h = c.box["height"] + 2 * arms.PAD
     assert image_tokens(c) == math.ceil(w * h * arms.IMAGE_SCALE**2 / 750)
     assert ARMS == ("image", "image+strokes", "strokes")
+
+
+# ---- Task 2: arm readers and the input_repr experiment ----
+
+from evalkit.experiments import run_input_repr
+from evalkit.readers import OracleReader, load_reader
+
+
+def test_input_repr_three_rows(ds):
+    res = run_input_repr(ds, reader=OracleReader())
+    assert [r[0] for r in res.rows] == list(ARMS)
+    assert res.headers == [
+        "arm",
+        "n",
+        "CER",
+        "exact match",
+        "mean tokens",
+        "total cost usd",
+        "mean latency s",
+        "fell back",
+        "no input",
+    ]
+    by_arm = {r[0]: r for r in res.rows}
+    # the strokes arm has no input for the diagram chunk, which is a miss and is reported
+    for arm in ("image", "image+strokes"):
+        assert by_arm[arm][2] == 0.0 and by_arm[arm][3] == 1.0
+    assert by_arm["strokes"][8] == 1 and by_arm["strokes"][2] > 0.0
+    assert by_arm["image"][7] == 0 and by_arm["image"][8] == 0
+
+
+def test_tokens_come_from_payload(ds):
+    res = run_input_repr(ds, reader=OracleReader())
+    chunks = [(p, c) for p in ds.pages for c in p.chunks]
+    expected = sum(build_payload(p, c, "image").tokens for p, c in chunks) / len(chunks)
+    image_row = next(r for r in res.rows if r[0] == "image")
+    assert image_row[4] > 0
+    assert image_row[4] == pytest.approx(expected)
+
+
+def test_noisy_arm_rates_ordering(ds):
+    reader = load_reader("arms-noisy:image=0.05,image+strokes=0.02,strokes=0.2", ds)
+    cer = run_input_repr(ds, reader=reader).summary
+    assert cer["image+strokes"]["cer"] < cer["image"]["cer"] < cer["strokes"]["cer"]
+
+
+def test_cost_uses_price_table(ds, monkeypatch):
+    from evalkit.readers import Reading
+
+    monkeypatch.setattr(arms, "PRICE_PER_MTOK_IN", 1.0)
+    p = page(ds, "p01-text")
+    c = chunk(p, "c1")
+    payload = build_payload(p, c, "image+strokes")
+
+    class Plain:
+        name = "plain"
+
+        def read(self, page, chunk):
+            return Reading(text=chunk.text)
+
+    got = arms.arm_read(Plain(), p, c, payload)
+    assert got.tokens == payload.tokens
+    assert got.cost_usd == pytest.approx(payload.tokens / 1e6)
+
+
+def test_no_model_reach(ds, monkeypatch):
+    from inkbridge.recognizer import gemini
+
+    def boom():
+        raise AssertionError("the oracle run must never reach a model")
+
+    monkeypatch.setattr(gemini, "default_recognizer", boom)
+    res = run_input_repr(ds, reader=OracleReader())
+    assert len(res.rows) == 3
+
+
+def test_input_repr_needs_arm_reader_or_simulated(ds):
+    class RealLooking:
+        name = "real"
+
+        def read(self, page, chunk):
+            raise AssertionError("must not be called as if it could see strokes")
+
+    with pytest.raises(ValueError, match="read_arm"):
+        run_input_repr(ds, reader=RealLooking())
+
+
+def test_parse_arm_rates_rejects_unknown_arm():
+    with pytest.raises(ValueError):
+        load_reader("arms-noisy:video=0.1", load_dataset(SYNTHETIC))

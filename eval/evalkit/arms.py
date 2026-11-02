@@ -5,13 +5,16 @@ Only the model's behaviour is simulated (see ArmNoisy, which lives beside the ot
 Read-only: nothing here writes scenes or touches a hash; pressure is only read.
 """
 
+import dataclasses
 import math
+import random
 from dataclasses import dataclass
 from typing import Any
 
 from inkbridge.imaging import decimate_strokes
 
 from .dataset import Chunk, Page
+from .readers import NoisyReader, Reading
 
 ARMS = ("image", "image+strokes", "strokes")
 IMAGE_SCALE = 1.0  # fixed across arms
@@ -117,3 +120,62 @@ def build_payload(page, chunk, arm, budget: int = STROKE_TOKEN_BUDGET) -> Payloa
         return Payload(arm, 0, None, 0, no_input=True)
     kept = "\n".join(lines)
     return Payload(arm, 0, kept, _stroke_tokens(kept))
+
+
+def cost_usd(tokens: int) -> float:
+    return tokens * PRICE_PER_MTOK_IN / 1e6
+
+
+def arm_read(reader: Any, page: Page, chunk: Chunk, payload: Payload) -> Reading:
+    """Read one chunk under one arm. A reader with read_arm(page, chunk, payload) sees the payload
+    itself. Any other reader gets only the page and chunk, so its tokens and cost are the payload's
+    (the simulated path); its latency is whatever it reports (0 for the simulated readers)."""
+    if payload.no_input:
+        return Reading(text="")
+    read_arm = getattr(reader, "read_arm", None)
+    if read_arm is not None:
+        return read_arm(page, chunk, payload)
+    r = reader.read(page, chunk)
+    return dataclasses.replace(r, tokens=payload.tokens, cost_usd=cost_usd(payload.tokens))
+
+
+class ArmNoisy:
+    """Simulated reader for the arms: each arm corrupts text at its own rate (self-test only).
+    A fallen-back image+strokes payload is read at the image rate, since that is what it saw."""
+
+    name = "arms-noisy"
+
+    def __init__(self, rates: dict[str, float]):
+        unknown = set(rates) - set(ARMS)
+        if unknown:
+            raise ValueError(f"unknown arms: {sorted(unknown)}")
+        missing = set(ARMS) - set(rates)
+        if missing:
+            raise ValueError(f"missing rates for arms: {sorted(missing)}")
+        self.rates = dict(rates)
+
+    def read_arm(self, page: Page, chunk: Chunk, payload: Payload) -> Reading:
+        if payload.no_input:
+            return Reading(text="")
+        arm = "image" if payload.fell_back else payload.arm
+        rng = random.Random(f"{arm}:{page.id}:{chunk.id}")
+        corrupt = NoisyReader(self.rates[arm])._corrupt
+        text = corrupt(chunk.text, rng)
+        latex = corrupt(chunk.latex, rng) if chunk.latex else None
+        return Reading(
+            text=text,
+            latex=latex,
+            tokens=payload.tokens,
+            cost_usd=cost_usd(payload.tokens),
+        )
+
+
+def parse_arm_rates(spec: str) -> dict[str, float]:
+    """'image=0.05,image+strokes=0.02,strokes=0.2' -> {arm: rate}. Unknown arms are rejected."""
+    rates: dict[str, float] = {}
+    for part in filter(None, spec.split(",")):
+        arm, _, rate = part.partition("=")
+        if arm not in ARMS or not rate:
+            raise ValueError(f"bad arm rate '{part}': expected ARM=RATE with ARM in {ARMS}")
+        rates[arm] = float(rate)
+    return rates
