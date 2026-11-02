@@ -54,8 +54,7 @@ for whoever is at the keyboard:
    decision 0003 and the quirks list below.
 
 Known quirks: the SDK 2.x client exposes `mime_type` / `is_error` (snake case), not the wire names
-`mimeType` / `isError`; scripts written against 1.x need the change. `check_sync`, `list_questions` and
-`create_canvas` are not built yet, so they cannot be checked here. The SDK 2.x stdio server diverts `sys.stdout` to stderr while it runs
+`mimeType` / `isError`; scripts written against 1.x need the change. `list_questions` is not built yet (INK-047), so it cannot be checked here. The SDK 2.x stdio server diverts `sys.stdout` to stderr while it runs
 (SDK issue #1933), so a stray `print` in a tool cannot corrupt the protocol stream; the raw-stdout test
 in `test_mcp_smoke.py` still guards the stream end to end.
 

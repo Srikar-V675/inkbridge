@@ -184,6 +184,7 @@ def test_replaced_follows_a_chain_of_successors_to_the_live_chunk(client):
     assert item["successor"] == z["id"] and item["hash"] == z["content_hash"]
 
 
+@pytest.mark.fts_unchecked  # corrupts successor_of on purpose
 def test_a_successor_cycle_or_dead_end_is_removed(client, canvas):
     a, b = canvas.chunk_of("a0"), canvas.chunk_of("b0")
     conn = db.connect()
@@ -437,6 +438,7 @@ def test_a_user_correction_of_the_same_ink_is_changed_and_wins_over_gemini(clien
     assert canvas.chunk_of("a0")["source"] == "user"
 
 
+@pytest.mark.fts_unchecked
 def test_same_ink_whose_reading_vanished_is_still_fresh(client, canvas):
     note = notes(canvas, "a0")
     conn = db.connect()

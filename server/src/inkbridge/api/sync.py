@@ -10,6 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from inkbridge import db
+from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.db import sync
 
@@ -26,12 +27,41 @@ class NoteChunk(BaseModel):
     reading: Hash | None = None  # the reading's text_hash then (null if it had none)
 
 
+class SyncItem(Out):
+    id: str
+    hash: str | None
+    reading: str | None
+
+
+class Replaced(Out):
+    id: str
+    successor: str
+    hash: str | None
+    reading: str | None
+
+
+class NewChunk(Out):
+    id: str
+    hash: str | None
+    reading: str | None
+    preview: str | None
+
+
+class CheckSyncOut(Out):
+    fresh: list[str]
+    fresh_after_reread: list[SyncItem]
+    changed: list[SyncItem]
+    replaced: list[Replaced]
+    removed: list[str]
+    new: list[NewChunk]
+
+
 class CheckSyncIn(BaseModel):
     chunks: Annotated[list[NoteChunk], Field(max_length=MAX_CHUNKS)]
     wait_s: Annotated[float, Field(ge=0, le=30)] = 15.0
 
 
-@router.post("/documents/{document_id}/check_sync")
+@router.post("/documents/{document_id}/check_sync", response_model=CheckSyncOut)
 async def check_sync(document_id: str, body: CheckSyncIn, conn: Conn, request: Request) -> dict:
     """Per note chunk: fresh, fresh_after_reread, changed, replaced or removed; plus new chunks.
 
