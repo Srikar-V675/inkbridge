@@ -12,18 +12,16 @@ from tests.test_regions_api import SCENE
 
 def test_timed_logs_name_and_ms_not_payload(caplog):
     secret = "PRIVATE-INK-TEXT"  # noqa: F841 - must never reach a log
-    with caplog.at_level(logging.INFO, logger="inkbridge.timing"):
-        with timed("demo", elements=3):
-            pass
-        with timed("x", elements=1):
-            pass
+    with caplog.at_level(logging.INFO, logger="inkbridge.timing"), timed("demo", elements=3):
+        pass
+    with caplog.at_level(logging.INFO, logger="inkbridge.timing"), timed("x", elements=1):
+        pass
     msgs = [r.getMessage() for r in caplog.records if r.name == "inkbridge.timing"]
     assert len(msgs) == 2
     assert "demo" in msgs[0] and "elements=3" in msgs[0] and "ms=" in msgs[0]
     assert "PRIVATE-INK-TEXT" not in caplog.text
-    with pytest.raises(TypeError):
-        with timed("bad", text="PRIVATE-INK-TEXT"):  # type: ignore[arg-type]
-            pass
+    with pytest.raises(TypeError), timed("bad", text="PRIVATE-INK-TEXT"):  # type: ignore[arg-type]
+        pass
 
 
 def request_records(caplog):
@@ -53,3 +51,43 @@ def test_slow_request_flagged(client, caplog, monkeypatch):
     with caplog.at_level(logging.INFO, logger="inkbridge.request"):
         client.get("/health")
     assert [r.levelno for r in caplog.records if r.name == "inkbridge.request"] == [logging.WARNING]
+
+
+def timing_msgs(caplog, prefix):
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "inkbridge.timing" and r.getMessage().startswith(prefix)
+    ]
+
+
+def test_check_sync_logs_a_timing_record(client, caplog):
+    canvas = Canvas(client, row("a", 3))
+    chunk = canvas.chunk_of("a0")
+    note = {"id": chunk["id"], "hash": chunk["content_hash"], "reading": None}
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="inkbridge.timing"):
+        r = client.post("/documents/default/check_sync", json={"chunks": [note], "wait_s": 0})
+    assert r.status_code == 200
+    (msg,) = timing_msgs(caplog, "check_sync")
+    assert "chunks=1" in msg and "ms=" in msg
+
+
+def test_op_placement_logs_a_timing_record(client, caplog):
+    with caplog.at_level(logging.INFO, logger="inkbridge.timing"):
+        r = client.post(
+            "/documents/default/ops", json={"type": "write_text", "payload": {"text": "hi"}}
+        )
+    assert r.status_code == 201
+    (msg,) = timing_msgs(caplog, "ops.create")
+    assert "fields=1" in msg and "ms=" in msg
+
+
+def test_worker_pass_logs(client, caplog):
+    from inkbridge.recognition_worker import RecognitionWorker
+
+    w = RecognitionWorker(lambda png, hint: None, ("default",), clock=lambda: 10**10)
+    with caplog.at_level(logging.INFO, logger="inkbridge.timing"):
+        w.run_once()
+    (msg,) = timing_msgs(caplog, "recognition.pass")
+    assert "documents=1" in msg
