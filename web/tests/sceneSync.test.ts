@@ -48,6 +48,15 @@ function deferred() {
 }
 
 describe("SceneSync", () => {
+  it("reports the save time in the saved badge detail", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    await h.sync.flushNow();
+    assert.equal(h.states.at(-1), "saved");
+    assert.match(h.details.at(-1) ?? "", /^\d+ ms$/);
+  });
+
   beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
   afterEach(() => mock.timers.reset());
 
