@@ -133,5 +133,5 @@ def test_size_hint_changes_the_stored_font_size(mcp_client):
 
 
 def test_unknown_size_is_a_tool_error(mcp_client):
-    with pytest.raises(Exception):
+    with pytest.raises(ToolError):
         call("write_text", text="x", size="huge")
