@@ -10,6 +10,7 @@ from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
+from inkbridge.timing import timed
 
 router = APIRouter()
 
@@ -101,9 +102,10 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
             },
         )
     try:
-        op, created = ops_db.create_op(
-            conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id
-        )
+        with timed("ops.create", fields=len(body.payload)):  # includes server-side placement
+            op, created = ops_db.create_op(
+                conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id
+            )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
     except ops_db.ExistingElementIds as e:

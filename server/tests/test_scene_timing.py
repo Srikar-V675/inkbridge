@@ -16,6 +16,7 @@ def test_a_save_logs_one_timing_record(client, caplog):
 
 def test_a_version_conflict_logs_nothing(client, caplog):
     Canvas(client, row("a", 3))
+    caplog.clear()  # the app now logs at INFO from startup (INK-067)
     with caplog.at_level(logging.INFO, logger="inkbridge.scene"):
         r = client.put(SCENE, json={"base_version": 0, "elements": []})
     assert r.status_code == 409

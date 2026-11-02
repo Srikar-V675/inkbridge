@@ -19,8 +19,8 @@ from pathlib import Path
 PHASES = ("parse", "diff", "refresh", "chunks", "total")
 
 
-def scene(n: int) -> list[dict]:
-    """n freedraw strokes in clusters of 5 on a grid (n / 5 chunks)."""
+def scene(n: int, points: int = 2) -> list[dict]:
+    """n freedraw strokes in clusters of 5 on a grid (n / 5 chunks), `points` points each."""
     out = []
     for c in range(n // 5):
         for i in range(5):
@@ -33,8 +33,11 @@ def scene(n: int) -> list[dict]:
                     "width": 30,
                     "height": 40,
                     "angle": 0,
-                    "points": [[0, 0], [30, 40]],
-                    "pressures": [0.3, 0.6],
+                    "points": [
+                        [round(30 * k / (points - 1)), round(40 * k / (points - 1))]
+                        for k in range(points)
+                    ],
+                    "pressures": [0.5] * points,
                     "simulatePressure": False,
                     "isDeleted": False,
                     "version": 1,
@@ -58,6 +61,9 @@ class Grab(logging.Handler):
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sizes", type=int, nargs="+", default=[5000, 50000])
+    ap.add_argument(
+        "--points", type=int, default=2, help="points per stroke (a real pen stroke: 50-200)"
+    )
     ap.add_argument("--db", default="/tmp/claude-1000/bench.db")
     args = ap.parse_args()
     if not args.db.startswith("/tmp/"):
@@ -84,7 +90,7 @@ def main() -> None:
             (doc,),
         )
         conn.commit()
-        els = scene(n)
+        els = scene(n, args.points)
         grab.rows.clear()
         version = 0
         db.put_scene(conn, doc, version, json.dumps(els))
@@ -92,7 +98,7 @@ def main() -> None:
         cold = grab.rows[-1]
         grab.rows.clear()
         for k in range(10):
-            els[k * 7]["points"][1] = [31 + k, 41]
+            els[k * 7]["points"][-1] = [31 + k, 41]
             els[k * 7]["version"] += 1
             db.put_scene(conn, doc, version, json.dumps(els))
             version += 1

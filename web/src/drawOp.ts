@@ -1,6 +1,7 @@
 // Browser-only: turn a pending op into draft elements on the live canvas (tech ref 9.9).
 import { convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { timed } from "./timing";
 import { opElements, toDrafts, type DraftElement, type PendingOp } from "./drafts";
 
 const FONT_SIZE = 20;
@@ -31,7 +32,19 @@ async function skeletonFor(op: PendingOp): Promise<Skeleton> {
  * `persist` saves the scene with the drafts in it: the caller acks only after that, because an
  * applied op is never replayed, so an unsaved draft lost to a reload would never come back.
  */
-export async function drawOp(
+export function drawOp(
+  api: ExcalidrawImperativeAPI,
+  op: PendingOp,
+  persist: (elements: readonly unknown[]) => Promise<void>,
+): Promise<string[]> {
+  return timed(
+    "ops.apply",
+    () => applyOp(api, op, persist),
+    (ids) => ({ elements: ids?.length ?? 0 }),
+  );
+}
+
+async function applyOp(
   api: ExcalidrawImperativeAPI,
   op: PendingOp,
   persist: (elements: readonly unknown[]) => Promise<void>,

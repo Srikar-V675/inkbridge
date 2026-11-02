@@ -4,6 +4,8 @@
 // down or a change in the last ~2 s), only when the canvas equals a saved scene version, and the
 // upload carries that version so the server can refuse a crop of older ink.
 
+import { record } from "./timing.ts";
+
 export interface StaleChunk {
   id: string;
   element_ids: string[];
@@ -125,12 +127,15 @@ export class CropSync {
     this.running = true;
     this.wanted = false;
     const since = this.lastActivity;
+    const t0 = performance.now();
+    let listed = 0;
     try {
       const r = await this.fetchFn(staleUrl(this.o.documentId));
       if (!r.ok) return; // the next request or poll retries
       const chunks = ((await r.json()) as StaleChunk[]).filter(
         (c) => c.png_stale && c.status === "active",
       );
+      listed = chunks.length;
       for (const c of chunks) {
         await this.yieldFn(); // a pen-down queued during the last upload is handled first
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
@@ -146,16 +151,19 @@ export class CropSync {
         const form = new FormData();
         form.append("image", png, `${c.id}.png`);
         form.append("scene_version", String(version));
+        const u0 = performance.now();
         const put = await this.fetchFn(`/regions/${encodeURIComponent(c.id)}/image`, {
           method: "PUT",
           body: form,
         });
+        record("crop.upload", performance.now() - u0, { bytes: png.size });
         // 409: the stored scene moved on (another tab saved); wait for this tab's next save.
         if (put.status === 409) return void (this.refusedAt = version);
       }
     } catch {
       // API unreachable: the crops stay stale and the next request or poll catches up.
     } finally {
+      if (listed) record("crop.pass", performance.now() - t0, { chunks: listed });
       this.running = false;
       if (this.wanted) this.schedule(this.idleLeft());
     }
