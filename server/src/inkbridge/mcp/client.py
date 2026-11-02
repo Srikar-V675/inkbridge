@@ -173,6 +173,19 @@ class ApiClient:
             "POST", f"/documents/{quote(doc, safe='')}/ops", {"type": op_type, "payload": payload}
         )
 
+    def list_questions(self, document_id: str | None, status: str | None, limit: int) -> list[dict]:
+        path = f"/documents/{self._document(document_id)}/questions"
+        return self._json(self._get(path, {"status": status, "limit": limit}, not_found=NO_CANVAS))[
+            "questions"
+        ]
+
+    def answer_question(self, question_id: str, answer_md: str, sources: list[dict]) -> dict:
+        return self._send(
+            "POST",
+            f"/questions/{quote(question_id, safe='')}/answer",
+            {"answer_md": answer_md, "sources": sources},
+        )
+
     def get_op(self, op_id: str) -> dict:
         return self._json(self._get(f"/ops/{quote(op_id, safe='')}"))
 

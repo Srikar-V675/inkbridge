@@ -2,7 +2,6 @@
 
 import time
 
-import pytest
 from fastapi.testclient import TestClient
 
 from inkbridge.api import app
