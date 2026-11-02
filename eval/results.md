@@ -68,7 +68,7 @@ fixed across arms: image scale 1.0, stroke width 2, stroke budget 1500 tokens
 ### E1 finding (INK-051)
 
 1. The table above is a harness proof on SYNTHETIC fixtures with simulated noise (`arms-noisy`, rates 0.05 / 0.02 / 0.2 are inputs, not results). It says nothing about handwriting.
-2. Token cost is measured from the real payloads: strokes add about 65 tokens per chunk where ink exists (stroke text `len/4`, 261 over the 4 chunks with ink), against about 21 image tokens per chunk (`ceil(w*h/750)` of the padded crop, 104 over 5 chunks).
+2. Token cost is estimated from the real payloads: strokes add about 65 tokens per chunk where ink exists (stroke text `len/4`, 261 over the 4 chunks with ink), against about 21 image tokens per chunk (`ceil(w*h/750)` of the padded crop, 104 over 5 chunks).
 3. Fixed across arms: image scale 1.0, stroke width 2, stroke budget 1500 tokens; image+strokes falls back to image when it has no strokes or they exceed the budget (1 chunk fell back here, the diagram).
 4. Caveat: published gains from stroke input come from research models, not API calls; Excalidraw has no per-point timing, so the strokes carry order and pressure only.
 5. Default: `read_canvas` keeps the image by default. Strokes become the default only if the real-data run (`eval/data/pages-v1`, `--allow-model`) shows a clear win; there is not enough evidence for strokes yet.
