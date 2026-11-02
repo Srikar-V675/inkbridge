@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
-import { connectorIds, planOverride, sendOverride } from "./overrides";
+import { chunkMark, connectorIds, planOverride, sendOverride, toggleChunk } from "./overrides";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
 
@@ -159,16 +159,25 @@ const box = (b: Bounds, v: View): React.CSSProperties => {
   return { position: "absolute", left: s.left, top: s.top, width: s.width, height: s.height, boxSizing: "border-box" };
 };
 
-const label: React.CSSProperties = {
+/** The label chip is the tap target: big enough for a finger, the only part of a box that takes input. */
+const chip: React.CSSProperties = {
   position: "absolute",
   left: -1,
-  padding: "0 4px",
+  display: "flex",
+  alignItems: "center",
+  minWidth: 44,
+  minHeight: 32,
+  padding: "0 6px",
+  margin: 0,
+  border: 0,
   font: "11px ui-monospace, monospace",
-  lineHeight: "16px",
   whiteSpace: "nowrap",
   background: "#1971c2",
   color: "#fff",
   borderRadius: "3px 3px 0 0",
+  pointerEvents: "auto",
+  touchAction: "manipulation",
+  cursor: "pointer",
 };
 
 export function ChunkOverlay(props: {
@@ -184,32 +193,69 @@ export function ChunkOverlay(props: {
   const view = useView(api);
   const selected = useSelection(api);
   const [chunks, reload] = useChunks(canvas, on, session, status);
+  // Read the scene only when the selection or the list changes, never per stroke point.
+  const connectors = useMemo(
+    () => (on ? connectorIds(api.getSceneElements() as never) : new Set<string>()),
+    [api, on, selected, chunks],
+  );
+  // Tapping a chip writes the chunk's live ink into Excalidraw's own selection; no element changes.
+  const select = useCallback(
+    (c: Chunk) => {
+      const ids = toggleChunk(selected, c, api.getSceneElements() as never);
+      api.updateScene({ appState: { selectedElementIds: Object.fromEntries(ids.map((id) => [id, true])) as never } });
+    },
+    [api, selected],
+  );
 
   return (
     <>
       {(on || ghost) && (
         <div
           data-testid="chunk-overlay"
-          aria-hidden
           style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 4 }}
         >
           {on &&
-            chunks.map((c) => (
-              <div
-                key={c.id}
-                data-chunk-id={c.id}
-                data-pinned={c.pinned ? "true" : undefined}
-                style={{ ...box(c.bounds, view), border: `${c.pinned ? 2.5 : 1.5}px solid #1971c2` }}
-              >
-                {/* Above the box, or inside it when the box touches the top edge. */}
-                <span style={{ ...label, top: toScreen(c.bounds, view).top < 16 ? 0 : -16 }}>
-                  {c.id}
-                  {c.pinned ? " · manual" : ""}
-                </span>
-              </div>
-            ))}
+            chunks.map((c) => {
+              const mark = chunkMark(selected, c, connectors);
+              const edge =
+                mark === "full"
+                  ? "3px solid #e8590c"
+                  : mark === "partial"
+                    ? "1.5px dashed #e8590c"
+                    : `${c.pinned ? 2.5 : 1.5}px solid #1971c2`;
+              return (
+                <div
+                  key={c.id}
+                  data-chunk-id={c.id}
+                  data-pinned={c.pinned ? "true" : undefined}
+                  data-selected={mark}
+                  style={{
+                    ...box(c.bounds, view),
+                    border: edge,
+                    background: mark === "full" ? "rgba(232,89,12,0.12)" : undefined,
+                  }}
+                >
+                  {/* Above the box, or inside it when the box touches the top edge. */}
+                  <button
+                    type="button"
+                    aria-pressed={mark === "full"}
+                    data-testid={`chunk-tab-${c.id}`}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={() => select(c)}
+                    style={{ ...chip, top: toScreen(c.bounds, view).top < 32 ? 0 : -32 }}
+                  >
+                    {c.id}
+                    {c.pinned ? " · manual" : ""}
+                  </button>
+                </div>
+              );
+            })}
           {ghost && (
-            <div data-testid="chunk-ghost" style={{ ...box(ghost, view), border: "2px dashed #e8590c" }} />
+            <div
+              data-testid="chunk-ghost"
+              aria-hidden
+              style={{ ...box(ghost, view), border: "2px dashed #e8590c" }}
+            />
           )}
         </div>
       )}
