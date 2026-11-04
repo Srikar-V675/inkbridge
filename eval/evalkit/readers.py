@@ -123,6 +123,10 @@ def load_gemini_reader(dataset: Dataset, allow_model: bool) -> Reader:
 
 
 def load_reader(spec: str, dataset: Dataset, allow_model: bool = False) -> Reader:
+    if spec.startswith("arms-noisy:"):
+        from .arms import ArmNoisy, parse_arm_rates  # lazy: arms imports this module
+
+        return ArmNoisy(parse_arm_rates(spec.split(":", 1)[1]))
     if spec == "oracle":
         return OracleReader()
     if spec.startswith("noisy:"):
