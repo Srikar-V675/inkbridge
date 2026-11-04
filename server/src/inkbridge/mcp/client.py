@@ -77,7 +77,9 @@ class ApiClient:
                 "Is `make dev-server` running, and is INKBRIDGE_API_URL correct?"
             ) from e
         if r.status_code == 404:
-            raise NotFound(f"Not found: {path}. {not_found}")
+            raise NotFound(f"Not found: {path}. {not_found} {_detail_text(r)}".strip())
+        if r.status_code == 410:
+            raise ApiError(_detail_text(r) or "That chunk no longer exists; call read_canvas.")
         # By status code, not raise_for_status(): the error class differs between httpx builds
         # (Starlette's TestClient ships its own). Anything but 2xx is an ApiError, including an
         # unfollowed 3xx, which would otherwise pass as an empty image or a JSON decode error.
@@ -132,6 +134,48 @@ class ApiClient:
 
     def get_chunks(self, document_id: str | None) -> dict:
         path = f"/documents/{self._document(document_id)}/chunks"
+        return self._json(self._get(path, not_found=NO_CANVAS))
+
+    def get_subgraph(
+        self,
+        document_id: str | None,
+        chunk_id: str,
+        depth: int,
+        direction: str,
+        max_nodes: int,
+        max_edges: int | None,
+        mermaid: bool,
+    ) -> dict:
+        path = f"/documents/{self._document(document_id)}/graph/subgraph"
+        params = {
+            "chunk_id": chunk_id,
+            "depth": depth,
+            "direction": direction,
+            "max_nodes": max_nodes,
+            "max_edges": max_edges,
+            "mermaid": str(mermaid).lower(),
+        }
+        return self._json(self._get(path, params, not_found=NO_CANVAS))
+
+    def get_graph_path(
+        self,
+        document_id: str | None,
+        from_chunk: str,
+        to_chunk: str,
+        direction: str,
+        mermaid: bool,
+    ) -> dict:
+        path = f"/documents/{self._document(document_id)}/graph/path"
+        params = {
+            "from_chunk": from_chunk,
+            "to_chunk": to_chunk,
+            "direction": direction,
+            "mermaid": str(mermaid).lower(),
+        }
+        return self._json(self._get(path, params, not_found=NO_CANVAS))
+
+    def get_components(self, document_id: str | None) -> dict:
+        path = f"/documents/{self._document(document_id)}/graph/components"
         return self._json(self._get(path, not_found=NO_CANVAS))
 
     def get_overview(

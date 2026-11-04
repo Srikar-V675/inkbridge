@@ -457,6 +457,63 @@ def read_canvas(
     return content
 
 
+@mcp.tool()
+def get_subgraph(
+    chunk_id: Annotated[str, Field(description="Chunk id from read_canvas to start from")],
+    depth: Annotated[int, Field(ge=1, le=5, description="Arrow hops to follow")] = 1,
+    direction: Annotated[
+        Literal["both", "out", "in"],
+        Field(description="out follows arrows, in goes against them, both ignores direction"),
+    ] = "both",
+    to_chunk_id: Annotated[
+        str | None,
+        Field(description="Set to get the shortest arrow path chunk_id -> to_chunk_id instead"),
+    ] = None,
+    max_nodes: Annotated[int, Field(ge=1, le=100, description="Max chunks returned")] = 40,
+    mermaid: Annotated[bool, Field(description="Also return flowchart text of the result")] = False,
+    document_id: Annotated[
+        str | None, Field(description="Canvas to read; defaults to the configured document")
+    ] = None,
+) -> str:
+    """Chunks connected to one chunk by arrows, or the shortest arrow path between two chunks.
+
+    Read-only; only long arrows between chunks count as links (short ones merge chunks). Each
+    node has id, order, kind, a text preview, distance and a deep_link. An orphaned (replaced)
+    chunk id is followed to its live successor: see anchor_used and note. A deleted chunk is
+    refused; call read_canvas. omitted_nodes / omitted_edges say what the caps cut. mermaid
+    returns `flowchart TD` text only; nothing is drawn on the canvas.
+    """
+    client = get_client()
+    try:
+        if to_chunk_id is not None:
+            data = client.get_graph_path(document_id, chunk_id, to_chunk_id, direction, mermaid)
+        else:
+            data = client.get_subgraph(
+                document_id, chunk_id, depth, direction, max_nodes, None, mermaid
+            )
+    except ApiError as e:
+        raise ToolError(str(e)) from e
+    return _dump(data, True)
+
+
+@mcp.tool()
+def canvas_components(
+    document_id: Annotated[
+        str | None, Field(description="Canvas to read; defaults to the configured document")
+    ] = None,
+) -> str:
+    """Groups of chunks joined by arrows, largest first, and how many chunks stand alone.
+
+    Read-only. At most 30 groups with at most 20 chunk ids each; omitted_components and
+    omitted_ids count the rest. Only active chunks are listed.
+    """
+    try:
+        data = get_client().get_components(document_id)
+    except ApiError as e:
+        raise ToolError(str(e)) from e
+    return _dump(data, True)
+
+
 class NoteChunk(BaseModel):
     id: Annotated[str, Field(min_length=1, description="Chunk id from the note's frontmatter")]
     hash: Annotated[str, Field(min_length=1, description="The chunk's content hash in the note")]
