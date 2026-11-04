@@ -26,3 +26,10 @@ worker would have sent it to Gemini. Agent ink near handwriting could also merge
 First save after deploy re-chunks accepted agent ink out of any merged user chunk; that chunk is
 orphaned (successor_of set) and its export block goes stale once. Reject (isDeleted on `<op>:*`)
 removes only the agent chunk.
+
+## Known limit
+A chunk is read as agent ink only if every element is accepted agent ink. A user arrow that starts
+at an accepted agent shape, or a manual merge or pin of agent and user ink, makes a mixed chunk: it
+gets no agent reading and stays a Gemini candidate. This is deliberate, not changed here: Gemini
+only reads canvases listed in `INKBRIDGE_RECOGNIZE_DOCUMENTS`, which are test pages by rule, and a
+mixed chunk does hold user ink. Tests pin both cases (`test_mixed_chunks_get_no_agent_reading`).

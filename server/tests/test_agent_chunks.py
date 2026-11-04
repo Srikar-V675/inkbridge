@@ -166,3 +166,37 @@ def test_reject_removes_only_its_own_agent_chunk(client):
     canvas.put()
     assert [c["id"] for c in canvas.chunks("active")] == [user["id"]]
     assert canvas.chunk_of("a0")["content_hash"] == user["content_hash"]
+
+
+def test_mixed_chunks_get_no_agent_reading(client):
+    """Limit pinned (decision 0044): a chunk with any user ink is not read as agent ink."""
+    from tests.test_chunker import arrow
+
+    shape = {**rect("op1:0", 0, 0), "customData": AGENT, "version": 1, "isDeleted": False}
+    user_arrow = arrow("ua", 100, 25, 100, start="op1:0")  # user arrow starting at the shape
+    canvas = Canvas(client, [shape, user_arrow])
+    chunk = canvas.chunk_of("op1:0")
+    assert "ua" in chunk["element_ids"] and chunk["source"] is None  # a Gemini candidate
+
+    # a manual merge of agent and user ink is not all-agent either
+    canvas = Canvas(client, [text("op1:0", 0, 0), *row("u", 3, x=3000, y=3000)])
+    ids = [c["id"] for c in canvas.chunks("active")]
+    r = client.post("/documents/default/chunks/merge", json={"chunk_ids": ids})
+    assert r.status_code == 200, r.text
+    merged = canvas.chunk_of("op1:0")
+    assert "u0" in merged["element_ids"] and merged["source"] is None
+
+
+def test_empty_agent_reading_passes_through_mcp(client):
+    from inkbridge.mcp import server
+    from inkbridge.mcp.client import ApiClient
+    from tests.test_mcp_read_canvas import call, outline
+
+    server.set_client(ApiClient(client))
+    try:
+        shape = {**rect("op1:0", 0, 0), "customData": AGENT, "version": 1, "isDeleted": False}
+        Canvas(client, [shape])
+        (chunk,) = outline(call("read_canvas", include_overview=False))["chunks"]
+        assert chunk["text"] == ""
+    finally:
+        server.set_client(None)
