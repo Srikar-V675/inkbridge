@@ -134,13 +134,17 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
                 "get chunk ids from read_canvas, or omit anchor",
             },
         ) from None
-    except ops_db.TooManyOpen:
+    except ops_db.TooManyOpen as e:
+        since = e.since or "unknown"
         raise HTTPException(
             409,
             {
                 "code": "too_many_open_ops",
-                "msg": f"this canvas already has {ops_db.MAX_OPEN_OPS} drafts waiting for a "
-                "browser; open the canvas, or wait for the user to accept or reject them",
+                "open": e.count,
+                "since": e.since,
+                "msg": f"this canvas already has {e.count} drafts waiting for a browser "
+                f"(oldest since {since}); they expire after {ops_db.OP_TTL_S // 3600} h. "
+                "Open the canvas, or wait for the user to accept or reject them",
             },
         ) from None
     except ops_db.OpConflict:

@@ -832,3 +832,17 @@ def test_stale_op_without_created_at_is_never_expired(client):
         assert ops_db.get_op(conn, op)["status"] == "pending"
     finally:
         conn.close()
+
+
+def test_too_many_open_is_informative(client, monkeypatch):
+    monkeypatch.setattr(ops_db, "MAX_OPEN_OPS", 1)
+    seed(client)
+    first = write(client).json()
+    r = write(client, "second")
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "too_many_open_ops"
+    assert detail["open"] == 1
+    assert detail["since"] == first["created_at"]
+    assert "since" in detail["msg"] and first["created_at"] in detail["msg"]
+    assert "24 h" in detail["msg"]
