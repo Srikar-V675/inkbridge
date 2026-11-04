@@ -216,9 +216,11 @@ describe("applyVerdict", () => {
     assert.deepEqual(r.retry, ["op10"]);
   });
 
-  it("failed save is not retryable (nothing was patched)", async () => {
+  it("failed save puts ops in retry (nothing was patched; the retry re-saves first)", async () => {
     const m = makePorts(draftsOf("a", 1), { saveOk: false });
-    assert.deepEqual((await applyVerdict(["a"], "accepted", m.ports)).retry, []);
+    const r = await applyVerdict(["a"], "accepted", m.ports);
+    assert.deepEqual(r.retry, ["a"]);
+    assert.equal(r.failed[0].message, "could not save");
   });
 });
 
@@ -233,6 +235,22 @@ describe("retryAccept", () => {
     assert.deepEqual(calls, ["a:accepted", "b:accepted"]);
     assert.deepEqual(r.done, ["a"]);
     assert.deepEqual(r.retry, ["b"]);
+  });
+
+  it("re-saves before patching; while the save fails it keeps the ops in retry with no PATCH", async () => {
+    const calls: string[] = [];
+    const patch = (async (id: string, v: string) => {
+      calls.push(`${id}:${v}`);
+      return { ok: true };
+    }) as typeof patchOp;
+    const saves = [false, true];
+    const save = async () => saves.shift()!;
+    const first = await retryAccept(["a"], patch, save);
+    assert.deepEqual(first.retry, ["a"]);
+    assert.deepEqual(calls, []);
+    const second = await retryAccept(["a"], patch, save);
+    assert.deepEqual(second.done, ["a"]);
+    assert.deepEqual(calls, ["a:accepted"]);
   });
 });
 
