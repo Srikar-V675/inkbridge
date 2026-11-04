@@ -756,3 +756,79 @@ def test_applied_op_reserves_real_box_not_estimate(client):
     nxt = write(client, text="b").json()["payload"]["placement"]
     assert nxt["y"] < p["y"] + est[1]  # old code stayed below the estimated box
     assert nxt["y"] >= p["y"] + 10
+
+
+# --- INK-088: pending and delivered ops expire after 24 h -------------------------------------
+
+
+def _backdate(op_id, hours):
+    """Age an op's created_at as if it were enqueued that many hours ago."""
+    from datetime import UTC, datetime, timedelta
+
+    ts = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+    conn = db.connect()
+    try:
+        conn.execute("UPDATE agent_ops SET created_at = ? WHERE id = ?", (ts, op_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_op_older_than_ttl_expires_and_leaves_the_cap(client, monkeypatch):
+    monkeypatch.setattr(ops_db, "MAX_OPEN_OPS", 1)  # the stale op would block the next if counted
+    seed(client)
+    old = write(client).json()["id"]
+    _backdate(old, 25)
+    assert write(client).status_code == 201
+    assert client.get(f"/ops/{old}").json()["status"] == "expired"
+
+
+def test_fresh_op_is_not_expired(client):
+    seed(client)
+    op = write(client).json()["id"]
+    _backdate(op, 23)
+    assert write(client).status_code == 201
+    assert client.get(f"/ops/{op}").json()["status"] == "pending"
+
+
+def test_applied_op_is_never_expired(client):
+    seed(client)
+    op = write(client).json()["id"]
+    assert ack(client, op, [own(op)]).status_code == 200
+    _backdate(op, 48)
+    write(client, "later")  # runs the sweep
+    assert client.get(f"/ops/{op}").json()["status"] == "applied"
+
+
+def test_delivered_op_expires_too(client):
+    seed(client)
+    op = write(client).json()["id"]
+    conn = db.connect()
+    try:
+        ops_db.mark_delivered(conn, op)
+    finally:
+        conn.close()
+    _backdate(op, 25)
+    assert client.get(OPS, params={"status": "pending,delivered"}).json()["ops"] == []
+    assert client.get(f"/ops/{op}").json()["status"] == "expired"
+
+
+def test_expired_op_is_not_listed_as_pending(client):
+    seed(client)
+    op = write(client).json()["id"]
+    _backdate(op, 25)
+    assert client.get(OPS, params={"status": "pending"}).json()["ops"] == []
+
+
+def test_stale_op_without_created_at_is_never_expired(client):
+    # Rows from before migration 0004 have no created_at; they must not be swept.
+    seed(client)
+    op = write(client).json()["id"]
+    conn = db.connect()
+    try:
+        conn.execute("UPDATE agent_ops SET created_at = NULL WHERE id = ?", (op,))
+        conn.commit()
+        ops_db.list_ops(conn, "default", ["pending"])  # the sweep runs here
+        assert ops_db.get_op(conn, op)["status"] == "pending"
+    finally:
+        conn.close()
