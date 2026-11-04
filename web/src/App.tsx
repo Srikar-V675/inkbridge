@@ -6,6 +6,7 @@ import { ChunkOverlay } from "./ChunkOverlay";
 import { createRefresh, wireRefresh } from "./chunkRefresh";
 import AskPanel from "./AskPanel";
 import { DraftBar } from "./DraftBar";
+import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "./draftView";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
 import { CropSync } from "./cropSync";
 import { rejectOp, type DraftElement } from "./drafts";
@@ -14,7 +15,7 @@ import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
-import { keepFittingFirstDrafts, loadView, saveView, type View } from "./view";
+import { loadView, saveView, type View } from "./view";
 
 const LABEL: Record<SaveState, string> = {
   loading: "Loading…",
@@ -29,6 +30,28 @@ const LABEL: Record<SaveState, string> = {
 type Restored = ReturnType<typeof restoreElements>;
 type Initial = { elements: Restored; view: View | null } | "failed" | null;
 type Api = ExcalidrawImperativeAPI;
+
+/**
+ * Show a freshly drawn draft (INK-076): nothing when it is in view, a pan when the pen is up and
+ * no pan happened in the batch window, else a chip (the user jumps when they want). Returns the
+ * time of a pan, or the previous value.
+ */
+function reveal(api: Api, opId: string, st: { penDown: boolean; lastPanAt: number | null }, unseen: Unseen): number | null {
+  const box = draftBox(api.getSceneElements() as never, opId);
+  if (!box) return st.lastPanAt;
+  const s = api.getAppState();
+  const view = { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value, width: s.width, height: s.height };
+  const now = Date.now();
+  const r = planReveal({ box, view, penDown: st.penDown, lastPanAt: st.lastPanAt, now });
+  if (r === "chip") unseen.add(opId);
+  if (r === "pan") {
+    const t = panTarget(box, view);
+    // Never pass zoom: the user's zoom stays as it is.
+    api.updateScene({ appState: { scrollX: t.scrollX, scrollY: t.scrollY }, captureUpdate: CaptureUpdateAction.NEVER });
+    return now;
+  }
+  return st.lastPanAt;
+}
 
 /** Deep link: select the chunk's live strokes and fit them, or open at the old bounds of an orphan. */
 function applyJump(api: Api, jump: JumpResult) {
@@ -127,7 +150,10 @@ function SaveBadge({ store }: { store: ReturnType<typeof createStatusStore> }) {
 const Canvas = memo(function Canvas(props: {
   initial: { elements: Restored; view: View | null };
   onApi: (api: ExcalidrawImperativeAPI) => void;
-  onChange: (elements: readonly unknown[], appState: { scrollX: number; scrollY: number; zoom: { value: number } }) => void;
+  onChange: (
+    elements: readonly unknown[],
+    appState: { scrollX: number; scrollY: number; zoom: { value: number }; cursorButton?: string; newElement?: unknown },
+  ) => void;
 }) {
   const { initial, onApi, onChange } = props;
   const initialData = useMemo(
@@ -157,11 +183,13 @@ export default function App() {
   const cropRef = useRef<CropSync | null>(null);
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
-  // A canvas opened empty with no remembered view (one an agent just created): show the first
-  // drafts that arrive instead of leaving them under the toolbar at the origin.
-  const fitFirstDrafts = useRef(false);
-  const armedView = useRef<View | null>(null);
   const pendingJump = useRef<JumpResult | null>(null);
+  // Pen state from onChange, read when a draft arrives: a draft never pans the view mid-stroke.
+  const penDown = useRef(false);
+  // When the view last moved for a draft (INK-076): a second draft within the batch window waits.
+  const lastPanAt = useRef<number | null>(null);
+  // Drafts that were off-screen and not yet looked at (the DraftBar chip).
+  const unseen = useMemo(() => createUnseen(), []);
   const sceneReady = useRef(false);
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
@@ -234,7 +262,6 @@ export default function App() {
       const restored = restoreElements(elements as never, null);
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
       fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
-      fitFirstDrafts.current = !view && !restored.some((e) => !e.isDeleted);
       setInitial({ elements: restored, view });
     });
     const onHide = () => {
@@ -320,10 +347,7 @@ export default function App() {
         };
         const api = apiRef.current ?? (await apiReady.promise);
         const ids = await drawOp(api, op, persist);
-        if (fitFirstDrafts.current) {
-          fitFirstDrafts.current = false;
-          api.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.9, maxZoom: 1, animate: false });
-        }
+        lastPanAt.current = reveal(api, op.op_id, { penDown: penDown.current, lastPanAt: lastPanAt.current }, unseen);
         return ids;
       },
       // A save left chunks with stale crops: export them once the canvas is idle (INK-057).
@@ -349,24 +373,19 @@ export default function App() {
       socket.dispose();
       wire.off();
     };
-  }, [canvasReady, route.canvas, apiReady, refresh]);
+  }, [canvasReady, route.canvas, apiReady, refresh, unseen]);
 
   const onChange = useCallback(
     (
       elements: readonly unknown[],
-      appState: { scrollX: number; scrollY: number; zoom: { value: number } },
+      appState: { scrollX: number; scrollY: number; zoom: { value: number }; cursorButton?: string; newElement?: unknown },
     ) => {
+      // Set before any early return below, so every change event keeps it current.
+      penDown.current = appState.cursorButton === "down" || appState.newElement != null;
       if (syncRef.current?.notify(elements as unknown as SceneElement[])) cropRef.current?.activity();
       // The first change event means the canvas holds the loaded scene, so crops can be exported;
       // a reopened tab then catches up on crops left stale while it was closed.
       cropRef.current?.start();
-      // The user took over (panned, zoomed or drew): drafts never move their view from now on.
-      if (fitFirstDrafts.current) {
-        const now = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
-        armedView.current ??= now;
-        if (!keepFittingFirstDrafts(armedView.current, now, elements as never))
-          fitFirstDrafts.current = false;
-      }
       // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
       sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {
@@ -415,7 +434,7 @@ export default function App() {
         />
       )}
       {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
-      {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} />}
+      {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
       {api && initial && initial !== "failed" && <AskPanel api={api} canvas={route.canvas} />}
       <SaveBadge store={status} />
     </div>
