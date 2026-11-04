@@ -51,3 +51,9 @@ uv run python ../eval/run.py input_repr --data eval/data/pages-v1 --reader my_mo
 
 Create `eval/data/pages-v1/` following `data/FORMAT.md`, with a manifest
 `"synthetic": false, "test_pages_only": true`, and run with `--data eval/data/pages-v1`.
+
+## Real-scale fixture (INK-095)
+
+`fixtures/make_real_scale.py` generates a SYNTHETIC canvas shaped like the real one (about 640
+elements, 10x handwriting, a 1x block, diagrams, deleted strokes), seeded and deterministic. Import
+`make_real_scale.build()` and `boxes()`; do not copy the data. Decision 0053 has the details.

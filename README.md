@@ -35,6 +35,14 @@ make dev-web      # canvas on :5173
 make test
 ```
 
+## Privacy
+
+Real notes stay out of the repo and out of any model. Private snapshots of a real canvas
+(`scripts/snapshot_canvas.py`) go to `~/.inkbridge-private/`, which is outside the repo and gitignored;
+CI never reads that folder, nothing in it is committed, and it is never sent to Gemini or listed in
+`INKBRIDGE_RECOGNIZE_DOCUMENTS`. The committed real-scale fixture is generated and synthetic
+(`eval/fixtures/make_real_scale.py`, INK-095).
+
 ## License
 
 [MIT](LICENSE)

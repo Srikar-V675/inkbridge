@@ -8,3 +8,8 @@ __pycache__/
 
 # Local ticketing (not tracked)
 docs/tickets/
+
+# Private snapshots of a real canvas (INK-095, decision 0053): never committed
+.inkbridge-private/
+# Generated fixture output (eval/fixtures/make_real_scale.py): produced on demand, never committed
+eval/fixtures/*.json
