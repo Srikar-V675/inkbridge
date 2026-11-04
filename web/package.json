@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
-    "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
+    "@excalidraw/mermaid-to-excalidraw": "^3.1.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
