@@ -124,4 +124,21 @@ describe("OpsSocket", () => {
     sock.onmessage?.({ data: "garbage" });
     assert.equal(got.length, 2);
   });
+
+  it("reports connect and disconnect, so the chunk list refetches on reconnect", () => {
+    const got: boolean[] = [];
+    let sock!: FakeSocket;
+    const s = new OpsSocket({
+      url: "x",
+      onOp: async () => [],
+      onConnection: (c) => got.push(c),
+      createSocket: () => (sock = new FakeSocket()),
+      setTimer: () => {},
+    });
+    s.start();
+    sock.onopen?.({});
+    sock.close();
+    assert.deepEqual(got, [true, false]);
+    s.dispose();
+  });
 });
