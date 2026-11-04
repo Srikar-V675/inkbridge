@@ -194,6 +194,7 @@ export default function App() {
   const unseen = useMemo(() => createUnseen(), []);
   const sceneReady = useRef(false);
   const clock = useMemo(() => createLoadClock(), []);
+  // Once per mount: switching canvases needs a page reload, so the gate never reopens.
   const gate = useMemo(() => createStartupGate(), []);
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);

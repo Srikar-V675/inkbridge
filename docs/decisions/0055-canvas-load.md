@@ -12,9 +12,9 @@ at this size.
 
 ## What changed
 - `GZipMiddleware` (level 3, 1 KB minimum): 536 081 bytes become 123 652 (23 %). The Vite proxy passes the
-  encoded body through. Crop PNGs go through it too (no size gain, small CPU cost at level 3; accepted).
+  encoded body through. Starlette's middleware already skips image/png and other compressed types, so crop PNGs are not re-compressed (`test_images_are_not_gzipped`).
 - `GET /documents/{id}/scene` returns the stored JSON text instead of `json.loads` then re-encoding. Bytes are
-  unchanged, so `pressures` and `simulatePressure` are preserved.
+  unchanged, so `pressures` and `simulatePressure` are preserved. Non-finite floats cannot reach the stored text: PUT already rejects NaN/Infinity with 422 (`test_nan_and_infinity_are_rejected`), so the body is always valid JSON.
 - `web/src/startupGate.ts`: the ops socket and crop sync start after the first change event plus an idle
   callback (3 s fallback timer for the socket). The first draft replay can be up to about 1.5 s later.
 
