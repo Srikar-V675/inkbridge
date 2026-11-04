@@ -75,12 +75,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--batch", type=int, default=20, help="elements per delta save")
     args = parser.parse_args(argv)
 
-    # Imported here so that importing this module does not need the server package.
+    # Point the API at a fresh throwaway database BEFORE importing it, so no code path can reach
+    # the configured database (the everyday one), whatever INKBRIDGE_DB held before.
+    os.environ["INKBRIDGE_DB"] = str(Path(tempfile.mkdtemp(prefix="replay-")) / "replay.db")
     from fastapi.testclient import TestClient
 
     from inkbridge.api import app
 
-    os.environ["INKBRIDGE_DB"] = str(Path(tempfile.mkdtemp(prefix="replay-")) / "replay.db")
     with TestClient(app) as client:
         document_id = client.post("/documents", json={"title": "replay"}).json()["id"]
         out = replay(client, document_id, make_real_scale.build(), batch=args.batch)

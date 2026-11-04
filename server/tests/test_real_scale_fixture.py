@@ -7,6 +7,7 @@ elements, 10x handwriting, a 1x block, diagrams, deleted elements). Nothing here
 import json
 import os
 import sqlite3
+import tempfile
 import statistics
 import sys
 from pathlib import Path
@@ -292,3 +293,13 @@ def test_snapshot_stats_flag_prints_numbers_only(tmp_path, capsys):
     printed = json.loads(capsys.readouterr().out)
     assert set(printed) == set(snapshot_canvas.stats([]))
     assert list(tmp_path.glob("**/*.scene.json")) == []
+
+
+def test_replay_cli_never_touches_the_configured_database(tmp_path, monkeypatch, capsys):
+    real = tmp_path / "real-notes.db"  # stands in for the user's everyday database
+    monkeypatch.setenv("INKBRIDGE_DB", str(real))
+    assert replay_fixture.main(["--batch", "100"]) == 0
+    assert not real.exists()
+    used = Path(os.environ["INKBRIDGE_DB"]).resolve()
+    assert Path(tempfile.gettempdir()).resolve() in used.parents
+    assert "saves=7" in capsys.readouterr().out
