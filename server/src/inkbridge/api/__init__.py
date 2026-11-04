@@ -1,9 +1,11 @@
 import json
+import logging
 import math
+import re
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
@@ -124,8 +126,34 @@ def get_scene(document_id: str, conn: Conn) -> dict[str, Any]:
     return {"version": version, "elements": json.loads(elements_json)}
 
 
+_last_writer: dict[str, tuple[str, str]] = {}  # document -> (tab, ip) of the last save (INK-083)
+_log = logging.getLogger("inkbridge.request")
+
+
 @app.put("/documents/{document_id}/scene")
-def put_scene(document_id: str, body: SceneIn, conn: Conn) -> dict[str, int]:
+def put_scene(
+    document_id: str,
+    body: SceneIn,
+    conn: Conn,
+    request: Request,
+    x_inkbridge_save: Annotated[str | None, Header()] = None,
+) -> dict[str, int]:
+    key = (
+        x_inkbridge_save
+        if re.fullmatch(r"[a-z0-9]{1,16}:\d{1,9}", x_inkbridge_save or "")
+        else None
+    )
+    tab = key.split(":")[0] if key else "?"
+    replay = key is not None and db.was_applied(document_id, key)
+    ip = request.client.host if request.client else "?"
+    _log.info(
+        "scene PUT doc=%s tab=%s ip=%s ua=%s key=%s",
+        document_id,
+        tab,
+        ip,
+        request.headers.get("user-agent", "?"),
+        x_inkbridge_save,
+    )
     try:
         version = db.put_scene(
             conn,
@@ -134,13 +162,21 @@ def put_scene(document_id: str, body: SceneIn, conn: Conn) -> dict[str, int]:
             json.dumps(body.elements, ensure_ascii=False, separators=(",", ":")),
             delta=body.delta,
             max_elements=MAX_ELEMENTS,
+            save_key=key,
         )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
     except db.VersionConflict as e:
-        raise HTTPException(409, {"current_version": e.current_version}) from None
+        detail: dict[str, Any] = {"current_version": e.current_version}
+        if last := _last_writer.get(document_id):
+            detail["last_writer"] = {"tab": last[0], "same_ip": last[1] == ip}
+        raise HTTPException(409, detail) from None
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
+    if replay:
+        return {"version": version}
+    if key:
+        _last_writer[document_id] = (tab, ip)
     ws.hub.publish(
         document_id,
         {
