@@ -603,6 +603,8 @@ def test_chain_of_two_orphans_reaches_live(client, kind):
     r = client.post(OPS, json=_op_body(kind, a))
     assert r.status_code == 201, r.text
     assert r.json()["payload"]["anchor_resolved"] == c
+    box = bbox_of([USER_B])
+    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + 40
 
 
 @pytest.mark.parametrize("kind", ["write_text", "draw_diagram"])

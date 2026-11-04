@@ -7,7 +7,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Response, Uploa
 from fastapi.concurrency import run_in_threadpool
 
 from inkbridge import config, db, imaging, sketch, sketch_image
-from inkbridge.api.chunks import Out
+from inkbridge.api.chunks import Out, refuse_orphan
 from inkbridge.api.deps import Conn
 from inkbridge.db import sync
 
@@ -126,20 +126,6 @@ def get_region(region_id: str, conn: Conn) -> dict:
     return region
 
 
-def _refuse_orphan(conn, region_id: str, history: bool) -> None:
-    """Orphaned chunks hold stale ink; point the caller at the live chunk (INK-084)."""
-    region = db.get_region(conn, region_id)
-    if region is None or history or region["status"] == "active":
-        return
-    live = sync._live_successor(conn, region, region["document_id"])
-    raise HTTPException(
-        410,
-        f"chunk {region_id} was replaced or deleted; "
-        + (f"read live_successor {live['id']}" if live else "call read_canvas")
-        + " (or pass ?history=true for the old ink)",
-    )
-
-
 @router.put("/regions/{region_id}/image", response_model=RegionOut)
 async def replace_region_image(
     region_id: str,
@@ -199,7 +185,7 @@ def get_region_image(
     history: bool = False,
 ) -> Response:
     """The crop, downscaled to max_width (default 1024). The stored file is never modified."""
-    _refuse_orphan(conn, region_id, history)
+    refuse_orphan(conn, region_id, history)
     path = db.get_region_png_path(conn, region_id)
     if path is None or not Path(path).exists():
         raise HTTPException(404, "image not found")
@@ -213,7 +199,7 @@ def get_region_ink(
     max_points: Annotated[int, Query(ge=2, le=100_000)] = imaging.MAX_INK_POINTS,
     history: bool = False,
 ) -> dict:
-    _refuse_orphan(conn, region_id, history)
+    refuse_orphan(conn, region_id, history)
     ink = db.get_region_ink(conn, region_id)
     if ink is None:
         raise HTTPException(404, "region not found")
@@ -231,7 +217,7 @@ MAX_SKETCH_ELEMENTS = 2000  # a flowchart sketch, not a page of notes; keeps pas
 
 
 def _sketch(conn, region_id: str, history: bool) -> tuple[list[dict], dict]:
-    _refuse_orphan(conn, region_id, history)
+    refuse_orphan(conn, region_id, history)
     elements = db.get_sketch_elements(conn, region_id)
     if elements is None:
         raise HTTPException(404, "region not found")
