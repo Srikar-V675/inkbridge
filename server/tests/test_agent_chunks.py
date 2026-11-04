@@ -69,9 +69,9 @@ def test_accepted_diagram_is_one_chunk(client):
 
 
 # --- Task 2: per-op groups in the pure chunker ---------------------------------------------------
-from inkbridge.chunker import chunk_scene  # noqa: E402
-from inkbridge.regions import content_hash  # noqa: E402
-from tests.test_chunker import stroke  # noqa: E402
+from inkbridge.chunker import chunk_scene
+from inkbridge.regions import content_hash
+from tests.test_chunker import stroke
 
 
 def accepted(i, x, y, op="op1", **extra):
@@ -117,9 +117,9 @@ def test_custom_data_stays_out_of_the_content_hash():
 
 
 # --- Task 3: the agent reads its own chunk, no model call ----------------------------------------
-from inkbridge.recognition_worker import RecognitionWorker  # noqa: E402
-from tests.test_recognition_worker import FakeModel, upload  # noqa: E402
-from tests.test_search import recognise  # noqa: E402
+from inkbridge.recognition_worker import RecognitionWorker
+from tests.test_recognition_worker import FakeModel, upload
+from tests.test_search import recognise
 
 
 def agent_chunk(canvas):
