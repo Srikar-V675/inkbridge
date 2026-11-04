@@ -544,3 +544,43 @@ def test_resolving_never_touches_the_stored_scene(client):
     after = client.get(SCENE).json()
     assert after["version"] == before["version"]
     assert after["elements"] == before["elements"]
+
+
+def _link(rid, **cols):
+    conn = db.connect()
+    try:
+        sets = ", ".join(f"{k} = ?" for k in cols)
+        conn.execute(f"UPDATE regions SET {sets} WHERE id = ?", (*cols.values(), rid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_orphaned_anchor_resolves_to_successor(client):
+    seed(client)
+    a, b = _anchor_region(["user-a"]), _anchor_region(["user-b"])
+    _link(a, status="orphaned", successor_of=b)
+    op = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": a}})
+    assert op.status_code == 201
+    box = bbox_of([USER_B])
+    assert op.json()["payload"]["anchor_resolved"] == b
+    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + 40
+
+
+@pytest.mark.fts_unchecked
+def test_successor_cycle_does_not_hang(client):
+    seed(client)
+    a, b = _anchor_region(["user-a"]), _anchor_region(["user-b"])
+    _link(a, status="orphaned", successor_of=b)
+    _link(b, status="orphaned", successor_of=a)
+    op = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": a}})
+    assert op.status_code == 422
+
+
+def test_client_sent_anchor_resolved_is_ignored(client):
+    seed(client)
+    op = client.post(
+        OPS, json={"type": "write_text", "payload": {"text": "x", "anchor_resolved": "forged"}}
+    )
+    # the payload schema rejects unknown keys; _create_op strips it as well
+    assert op.status_code == 422 or "anchor_resolved" not in op.json()["payload"]
