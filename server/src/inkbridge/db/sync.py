@@ -7,6 +7,7 @@ reading decides between `fresh_after_reread` (same words) and `changed`.
 
 import sqlite3
 
+from inkbridge import imaging
 from inkbridge.db import DocumentNotFound, document_exists, get_region
 from inkbridge.db.outline import chunk_outline
 
@@ -62,7 +63,12 @@ def needs_reading(resolved: list[tuple]) -> list[str]:
     for note, region, successor in resolved:
         live = region if region is not None and region["content_hash"] != note["hash"] else None
         live = live or successor
-        if live is not None and not live["source"] and not live["png_stale"]:
+        if (
+            live is not None
+            and not live["source"]
+            and not live["png_stale"]
+            and imaging.unreadable_reason(live["bounds"], live["stroke_count"]) is None
+        ):
             ids.append(live["id"])
     return list(dict.fromkeys(ids))
 

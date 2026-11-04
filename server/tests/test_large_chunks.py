@@ -27,3 +27,15 @@ def test_outline_flags_the_too_large_chunk_only(client):
     assert chunks["n0"]["read_status"] == "ok" and chunks["n0"]["read_note"] is None
     assert chunks["big"]["read_status"] == "too_large"
     assert "split" in chunks["big"]["read_note"]
+
+
+def test_check_sync_does_not_wait_for_a_too_large_chunk():
+    from inkbridge.db.sync import needs_reading
+
+    def region(rid, width):
+        return {"id": rid, "content_hash": "new", "source": None, "png_stale": 0,
+                "bounds": {"width": width, "height": 10}, "stroke_count": 3}  # fmt: skip
+
+    note = {"hash": "old"}
+    resolved = [(note, region("ok", 100), None), (note, region("big", 5000), None)]
+    assert needs_reading(resolved) == ["ok"]
