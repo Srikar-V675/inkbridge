@@ -48,6 +48,10 @@ Also: `create_document` (12-hex id, empty scene, cap `MAX_DOCUMENTS = 500` so an
 
 ## Sequence
 
+![diagram 1](../../img/check-sync-1.png)
+
+<details><summary>Mermaid source</summary>
+
 ```mermaid
 sequenceDiagram
   participant Skill as export skill / MCP check_sync
@@ -64,6 +68,8 @@ sequenceDiagram
   API->>DB: check (read snapshot) -> classify
   API-->>Skill: fresh, fresh_after_reread, changed, replaced, removed, new
 ```
+
+</details>
 
 ## Testing
 

@@ -25,20 +25,26 @@
 
 `put_scene` takes `delta=` and `max_elements=`; in delta mode it merges changed elements by id under the same lock ([scene-delta-saves](scene-delta-saves.md)). It logs phase timings under `inkbridge.scene`. Orphaned chunks are never deleted (decision 0028) and `successor_of` has no foreign key yet (decision 0027; guarded by `tests/integrity_check.py`).
 
+![diagram 1](../../img/database-1.png)
+
+<details><summary>Mermaid source</summary>
+
 ```mermaid
 sequenceDiagram
   participant API
   participant DB as put_scene
   API->>DB: put_scene(doc, base_version, elements_json)
   DB->>DB: BEGIN IMMEDIATE (write lock)
-  DB->>DB: read old scene; version != base? raise VersionConflict
-  DB->>DB: UPDATE scenes SET version+1 WHERE version = base (second guard)
+  DB->>DB: read old scene, version != base? raise VersionConflict
+  DB->>DB: UPDATE scenes SET version+1 WHERE version = base
   DB->>DB: _changed_ids(old, new)
   DB->>DB: _refresh_regions (manual regions)
   DB->>DB: _sync_chunks (chunker, match ids, upsert, orphan, rebuild links)
   DB->>DB: UPDATE documents.updated_at, COMMIT
   Note over DB: any exception -> ROLLBACK the whole save
 ```
+
+</details>
 
 `_changed_ids` (`:271-280`) compares whole elements (added, removed or edited). Volatile-field churn counts as a change here but the hashes then come out equal and nothing is written.
 

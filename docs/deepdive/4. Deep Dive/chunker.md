@@ -12,6 +12,10 @@ Pure module: no I/O, no SQLite. Imports only `bbox_of` from `regions.py` (`chunk
 
 ## Pipeline
 
+![diagram 1](../../img/chunker-1.png)
+
+<details><summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TD
   E[scene elements] --> CE[clustering_elements<br/>drop deleted, drafts, arrows, lines,<br/>and labels of non-participating containers]
@@ -29,6 +33,8 @@ flowchart TD
   OUT --> MC[match_chunks<br/>Jaccard against old chunks]
   MC --> IDS[stable ids, orphans, successors]
 ```
+
+</details>
 
 ## Configuration (`ChunkerConfig`, `chunker.py:26-42`)
 

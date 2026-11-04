@@ -30,6 +30,10 @@ Tests inject a `transport` callable so nothing goes to the network (`tests/test_
 
 ## RecognitionWorker (`recognition_worker.py`)
 
+![diagram 1](../../img/recognition-1.png)
+
+<details><summary>Mermaid source</summary>
+
 ```mermaid
 flowchart TD
   T[thread loop every poll_s=2s] --> RO[run_once: own db connection]
@@ -47,6 +51,8 @@ flowchart TD
   SAVE -->|locked| UNSAVED[keep reading in _unsaved]
   SAVE --> PUB[publish chunks.updated with recognized ids]
 ```
+
+</details>
 
 ### Construction (`from_env`, `:68-91`)
 

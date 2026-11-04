@@ -6,6 +6,10 @@ An **op** is an agent write: `write_text` or `draw_diagram`. Agents can only **a
 
 ## Lifecycle (`db/ops.py:11, 24-31`)
 
+![diagram 1](../../img/ops-queue-and-websocket-1.png)
+
+<details><summary>Mermaid source</summary>
+
 ```mermaid
 stateDiagram-v2
   [*] --> pending
@@ -19,6 +23,8 @@ stateDiagram-v2
   applied --> accepted: user
   applied --> rejected: user
 ```
+
+</details>
 
 `_TRANSITIONS` encodes this. Repeating the current status is a no-op, except a repeated `applied` with a different id set raises `InvalidTransition` (`:252-256`). Anything else not in the table also raises, which the API maps to 409 `invalid_transition`.
 
@@ -77,6 +83,10 @@ Schemas are strict (`extra="forbid"`): `WriteTextPayload` (1 to 10,000 character
 
 ## Sequence: `draw_diagram`
 
+![diagram 2](../../img/ops-queue-and-websocket-2.png)
+
+<details><summary>Mermaid source</summary>
+
 ```mermaid
 sequenceDiagram
   participant Agent as MCP draw_diagram
@@ -95,6 +105,8 @@ sequenceDiagram
   API-->>Agent: applied
   Note over Agent: no ack in wait_seconds -> PATCH expired
 ```
+
+</details>
 
 ## Testing
 
