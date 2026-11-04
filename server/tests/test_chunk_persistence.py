@@ -346,3 +346,13 @@ def test_restart_rekeys_hashes_stored_before_integral_floats_hashed_as_ints(clie
         e["x"] += 100
     canvas.put()
     assert [h["region_id"] for h in search(client, "gradient")] == [chunk["id"]]
+
+
+def test_appending_strokes_keeps_chunk_id(client):
+    canvas = Canvas(client, row("a", 3))
+    first = canvas.chunk_of("a0")["id"]
+    for i in range(3, 23):  # 20 strokes, one scene save each (INK-081)
+        canvas.elements.append(stroke(f"a{i}", 15 * i, 0))
+        canvas.put()
+        assert [c["id"] for c in canvas.chunks("active")] == [first]
+    assert canvas.chunks("orphaned") == []
