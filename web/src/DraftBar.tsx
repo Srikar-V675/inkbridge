@@ -63,7 +63,7 @@ export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeA
   const selected = useSelectedOps(api, drafts);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  // Ops whose accept saved but whose PATCH failed: no draft elements left, so no other UI to retry.
+  // Ops whose accept failed to save or to PATCH: the scene is already accepted locally, so no draft UI can retry them.
   const [retryIds, setRetryIds] = useState<string[]>([]);
 
   const report = (summary: ResolveSummary) => {
@@ -73,12 +73,20 @@ export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeA
     setMessage(parts.join("; "));
   };
 
+  // Flush the autosave; true only if the scene settled on the server (the accept must not PATCH before this).
+  const save = async () => {
+    const s = sync.current;
+    if (!s) return false;
+    await s.flushNow();
+    return s.settledVersion() !== null;
+  };
+
   const retry = async () => {
     if (busy) return;
     setBusy(true);
     setMessage("");
     try {
-      const summary = await retryAccept(retryIds);
+      const summary = await retryAccept(retryIds, patchOp, save);
       setRetryIds(summary.retry);
       report(summary);
     } finally {
@@ -98,10 +106,7 @@ export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeA
           api.updateScene({ elements: els as never, captureUpdate: CaptureUpdateAction.NEVER });
           s.notify(els as never);
         },
-        save: async () => {
-          await s.flushNow();
-          return s.settledVersion() !== null;
-        },
+        save,
         patch: patchOp,
         appliedOps: () => fetchAppliedOps(documentId),
       });
