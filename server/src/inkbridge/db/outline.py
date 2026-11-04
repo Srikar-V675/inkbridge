@@ -4,6 +4,7 @@ import json
 import sqlite3
 import uuid
 
+from inkbridge import imaging
 from inkbridge.chunker import reading_order
 from inkbridge.db import AUTO, DocumentNotFound, _now, _region_dict
 
@@ -84,6 +85,7 @@ def chunk_outline(
     out = []
     for cid in active + orphaned:
         c = chunks[cid]
+        why = imaging.unreadable_reason(c["bounds"], len(c["element_ids"]))
         if status != "all" and c["status"] != status:
             continue
         if png_stale is not None and c["png_stale"] != png_stale:
@@ -104,6 +106,8 @@ def chunk_outline(
                 "content_hash": c["content_hash"],
                 "text_hash": c["text_hash"],
                 "links": links.get(cid, []),
+                "read_status": "too_large" if why else "ok",
+                "read_note": why,
             }
         )
     return {"document": document_id, "version": version, "chunk_count": len(out), "chunks": out}

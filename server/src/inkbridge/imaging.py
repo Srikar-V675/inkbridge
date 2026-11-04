@@ -10,6 +10,22 @@ MAX_IMAGE_WIDTH = 1024
 MAX_INK_POINTS = 5000
 MIN_BOX_PX = 24  # an overview chunk box is never drawn shorter than this (INK-086)
 MAX_OVERVIEW_IMAGES = 3  # per read_canvas call; the rest continues with offset
+# INK-096: the browser exports crops at most 2048 px on the long side, so 4096 units keeps the
+# scale >= 0.5; the element cap bounds the main-thread cost of one export. Mirrored in
+# web/src/cropSync.ts (a test on each side pins the numbers).
+MAX_READ_UNITS = 4096
+MAX_CROP_ELEMENTS = 1500
+
+
+def unreadable_reason(bounds: dict[str, float], element_count: int) -> str | None:
+    """Why a chunk cannot be cropped or read at a useful scale, or None when it can."""
+    w, h = bounds["width"], bounds["height"]
+    if max(w, h) > MAX_READ_UNITS or element_count > MAX_CROP_ELEMENTS:
+        return (
+            f"too large to read ({round(w)}x{round(h)} units, {element_count} elements): "
+            "split the chunk"
+        )
+    return None
 
 
 def cap_width(png: bytes, max_width: int = MAX_IMAGE_WIDTH) -> bytes:
