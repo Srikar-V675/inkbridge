@@ -25,7 +25,10 @@ from typing import Any
 from inkbridge.regions import bbox_of
 
 SHAPES = ("rectangle", "ellipse", "diamond")
-MIN_NODE_SIZE = 20.0  # px diagonal: smaller loops are letters (o, a), not boxes
+MIN_NODE_FRACTION = 0.05  # a loop's diagonal is at least this fraction of the whole sketch's
+LETTER_FACTOR = 2.0  # ... and at least this many median stroke diagonals (handwriting pages)
+MIN_STROKES_FOR_MEDIAN = 8  # fewer freedraw strokes than this: skip the median test
+MAX_UNATTACHED = 30  # unattached strokes listed; the longest, the rest is probably handwriting
 CLOSURE = 0.25  # ends of a loop are within this fraction of its box diagonal
 LOOP_LENGTH = 1.8  # a loop's path is at least this many box diagonals long
 HEAD_SIZE = 0.4  # a separate head stroke is at most this fraction of the shaft's length
@@ -65,14 +68,14 @@ def _distance(p: Point, box: Box) -> float:
     return math.hypot(dx, dy)
 
 
-def _loop_confidence(e: dict[str, Any]) -> float:
+def _loop_confidence(e: dict[str, Any], min_diag: float) -> float:
     """> 0 if a freedraw stroke is a closed loop big enough to be a node."""
     pts = _points(e)
     if e.get("type") != "freedraw" or len(pts) < 4:
         return 0.0
     box = bbox_of([e])
     d = _diag(box)
-    if d < MIN_NODE_SIZE:
+    if d < min_diag:
         return 0.0
     gap = math.dist(pts[0], pts[-1])
     if gap > CLOSURE * d or _length(pts) < LOOP_LENGTH * d:
@@ -114,12 +117,19 @@ def usable(e: Any) -> bool:
 def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
     """Nodes, arrows and unattached strokes of a sketch, with confidences and element ids."""
     live = [e for e in elements if not e.get("isDeleted") and usable(e)]
+    sketch_diag = _diag(bbox_of(live)) if live else 0.0
+    strokes = sorted(_diag(bbox_of([e])) for e in live if e.get("type") == "freedraw")
+    min_diag = MIN_NODE_FRACTION * sketch_diag
+    # Median test only when most strokes are tiny (handwriting): in a chart of boxes the median
+    # stroke is a node itself and must not raise the bar above the nodes.
+    if len(strokes) >= MIN_STROKES_FOR_MEDIAN and strokes[len(strokes) // 2] < min_diag:
+        min_diag = max(min_diag, LETTER_FACTOR * strokes[len(strokes) // 2])
     nodes: list[dict[str, Any]] = []
     rest: list[dict[str, Any]] = []
     for e in live:
         if e.get("type") in SHAPES:
             nodes.append({"box": bbox_of([e]), "element_ids": [e["id"]], "confidence": 1.0})
-        elif (c := _loop_confidence(e)) > 0:
+        elif (c := _loop_confidence(e, min_diag)) > 0:
             nodes.append({"box": bbox_of([e]), "element_ids": [e["id"]], "confidence": c})
         else:
             rest.append(e)
@@ -250,7 +260,17 @@ def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
                 "confidence": round(confidence, 3),
             }
         )
-    unattached = [e["id"] for e in pool if e["id"] not in used]
+    left = [e for e in pool if e["id"] not in used]
+    unattached_total = len({e["id"] for e in left})
+    if len(left) > MAX_UNATTACHED:
+        left = sorted(left, key=lambda e: -_length(_points(e)))[:MAX_UNATTACHED]
+    unattached = [e["id"] for e in left]
+    note = None
+    if unattached_total > MAX_UNATTACHED:
+        note = (
+            f"showing {MAX_UNATTACHED} of {unattached_total} unattached strokes; "
+            "the rest are probably handwriting"
+        )
     arrows.sort(key=lambda r: (int(r["from"][1:]), int(r["to"][1:])))
     for i, r in enumerate(arrows, 1):
         r["id"] = f"A{i}"
@@ -268,4 +288,6 @@ def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
         ],
         "arrows": [{"id": r.pop("id"), **r} for r in arrows],
         "unattached": sorted(set(unattached)),
+        "unattached_total": unattached_total,
+        "unattached_note": note,
     }
