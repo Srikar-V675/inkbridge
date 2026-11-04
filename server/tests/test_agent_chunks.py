@@ -155,3 +155,14 @@ def test_shape_only_diagram_reads_empty_and_a_user_reading_wins(client):
     assert (chunk["text"], chunk["source"]) == ("", "agent")
     recognise(chunk, "mine", source="user")
     assert agent_chunk(canvas)["text"] == "mine"
+
+
+def test_reject_removes_only_its_own_agent_chunk(client):
+    canvas = Canvas(client, row("a", 5) + [text("op1:0", FAR, FAR, draft=True)])
+    accept(canvas, {"op1:0"})
+    user = canvas.chunk_of("a0")
+    canvas.el("op1:0")["isDeleted"] = True  # what rejectOp does to the op's elements
+    canvas.el("op1:0")["version"] += 1
+    canvas.put()
+    assert [c["id"] for c in canvas.chunks("active")] == [user["id"]]
+    assert canvas.chunk_of("a0")["content_hash"] == user["content_hash"]
