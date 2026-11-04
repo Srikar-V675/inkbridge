@@ -1,8 +1,9 @@
 // Accept / Reject for agent drafts (INK-045, docs/decisions/0026). Plain DOM over the canvas; the
 // ordering rules (save before accept, PATCH before sweep on reject) live in resolve.ts.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { draftBox, inView, panTarget, type Unseen } from "./draftView";
 import type { DraftElement } from "./drafts";
 import { applyVerdict, draftOpId, draftOps, fetchAppliedOps, NOT_READY, patchOp, retryAccept, type ResolveSummary, type Verdict } from "./resolve";
 import type { SceneSync } from "./sceneSync";
@@ -58,9 +59,52 @@ const btn = {
   pointerEvents: "auto",
 } as const;
 
-export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeAPI; sync: Sync; documentId: string }) {
+export function DraftBar({
+  api,
+  sync,
+  documentId,
+  unseen,
+}: {
+  api: ExcalidrawImperativeAPI;
+  sync: Sync;
+  documentId: string;
+  unseen: Unseen;
+}) {
   const drafts = useDraftOps(api);
   const selected = useSelectedOps(api, drafts);
+  const unseenIds = useSyncExternalStore(unseen.subscribe, unseen.ids);
+  const unseenCount = unseenIds.length;
+  // Accepted or rejected drafts leave the chip. Read from the scene, not the drafts state, which can
+  // lag behind a draft that was just added and marked unseen.
+  useEffect(() => {
+    const live = new Set(draftOps(api.getSceneElements() as never).map((d) => d.opId));
+    unseen.prune(live);
+  }, [drafts, api, unseen]);
+  // A draft the user brings into view by hand stops being unseen. Only listens while there is one.
+  useEffect(() => {
+    if (unseenCount === 0) return;
+    return api.onChange(() => {
+      const s = api.getAppState();
+      const view = { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value, width: s.width, height: s.height };
+      const els = api.getSceneElements() as never;
+      for (const id of unseen.ids()) {
+        const box = draftBox(els, id);
+        if (!box || inView(box, view)) unseen.remove(id);
+      }
+    });
+  }, [api, unseen, unseenCount]);
+  // Pans to the oldest unseen draft at the current zoom (never changes it), then clears it.
+  const jumpToUnseen = () => {
+    const id = unseen.ids()[0];
+    if (id === undefined) return;
+    const box = draftBox(api.getSceneElements() as never, id);
+    if (box) {
+      const s = api.getAppState();
+      const t = panTarget(box, { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value, width: s.width, height: s.height });
+      api.updateScene({ appState: { scrollX: t.scrollX, scrollY: t.scrollY }, captureUpdate: CaptureUpdateAction.NEVER });
+    }
+    unseen.remove(id);
+  };
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   // Ops whose accept failed to save or to PATCH: the scene is already accepted locally, so no draft UI can retry them.
@@ -143,6 +187,11 @@ export function DraftBar({ api, sync, documentId }: { api: ExcalidrawImperativeA
       {retryIds.length > 0 && (
         <button style={btn} disabled={busy} onClick={() => void retry()}>
           Retry accept ({retryIds.length})
+        </button>
+      )}
+      {unseenCount > 0 && (
+        <button style={btn} onClick={jumpToUnseen}>
+          New draft, jump{unseenCount > 1 ? ` (${unseenCount})` : ""}
         </button>
       )}
       {drafts.length > 0 && (
