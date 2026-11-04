@@ -256,7 +256,7 @@ def test_plan_bands_single_band_when_it_fits():
 
 def test_plan_bands_always_makes_progress():
     # A chunk too wide to ever reach 24 px is shown alone, never upscaled, and never loops.
-    bands = imaging.plan_bands([_tile(0, 0, 0, w=5000, h=5), _tile(1, 0, 100)], 1568)
+    bands = imaging.plan_bands([_tile(0, 0, 0, w=5000, h=30), _tile(1, 0, 100)], 1568)
     assert [[c["id"] for c in b] for b in bands] == [["c0"], ["c1"]]
 
 
@@ -327,3 +327,17 @@ def test_small_canvas_overview_is_one_band_without_next(client):
     r = client.get("/documents/default/overview")
     assert r.headers["X-Overview-Count"] == "5" and r.headers["X-Overview-Total"] == "5"
     assert "X-Overview-Next" not in r.headers
+
+
+def test_tiny_chunks_do_not_split_their_neighbours_into_bands():
+    # A 10-unit dot after every 250-unit box is ignored for sizing: the page still groups.
+    tiles = _spread_tiles()
+    dotted = []
+    for tl in tiles:
+        b = tl["bounds"]
+        dotted += [tl, _tile(100 + int(tl["id"][1:]), b["x"] + 300, b["y"] + 40, w=10, h=10)]
+    baseline = imaging.plan_bands(tiles, 1568)
+    bands = imaging.plan_bands(dotted, 1568)
+    assert sum(map(len, bands)) == len(dotted)
+    assert [c["id"] for band in bands for c in band] == [c["id"] for c in dotted]
+    assert len(bands) <= len(baseline) + 1  # 8 without the dots; one band per chunk would be 40

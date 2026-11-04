@@ -153,17 +153,19 @@ def plan_bands(
 ) -> list[list[dict[str, Any]]]:
     """Split chunks (in reading order) into consecutive bands that each render readable.
 
-    A band grows while its union, fitted to max_width, still draws its smallest chunk at least
-    min_box px tall (or at full size, if it is smaller than that already). A band always holds at
-    least one chunk, so a chunk too small to ever reach min_box is shown alone, never upscaled.
+    A band grows while its union, fitted to max_width, still draws its smallest sized chunk at
+    least min_box px tall. "Sized" means at least min_box canvas units tall: a dot or a bullet
+    shorter than that is ignored when choosing bands, so it cannot cut its neighbours into
+    one-chunk bands. Such a chunk may render below min_box px. A band always holds at least one
+    chunk, so a chunk too small to ever reach min_box is shown alone, never upscaled.
     """
     bands: list[list[dict[str, Any]]] = []
     band: list[dict[str, Any]] = []
     for c in chunks:
         trial = [*band, c]
         x0, y0, x1, y1 = _union(trial)
-        smallest = min(t["bounds"]["height"] for t in trial)
-        need = min(1.0, min_box / max(1, smallest))
+        sized = [t["bounds"]["height"] for t in trial if t["bounds"]["height"] >= min_box]
+        need = min(1.0, min_box / min(sized)) if sized else 0.0
         if band and _scale(x1 - x0, y1 - y0, max_width) < need:
             bands.append(band)
             band = [c]
