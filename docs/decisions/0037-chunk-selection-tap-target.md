@@ -1,4 +1,4 @@
-# 0031: Chunk selection by tapping the label chip
+# 0037: Chunk selection by tapping the label chip
 
 Status: accepted (INK-065). Builds on 0024 (manual merge and split).
 Code: `web/src/ChunkOverlay.tsx` (chip, highlight, `OverrideActions`), `web/src/overrides.ts`
