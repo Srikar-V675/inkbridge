@@ -39,9 +39,13 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+SizeHint = Literal["small", "normal", "large"]
+
+
 class WriteTextPayload(_Strict):
     text: str = Field(min_length=1, max_length=10_000)
     anchor: str | None = None  # chunk (region) id to place beside
+    size: SizeHint | None = None  # hint only; the server computes the pixel font_size
 
 
 class DrawDiagramPayload(_Strict):

@@ -1,0 +1,19 @@
+{
+  "page_id": "p02-equation",
+  "kind": "equation",
+  "synthetic": true,
+  "chunks": [
+    {
+      "id": "c1",
+      "box": {
+        "x": -4,
+        "y": -4,
+        "width": 252,
+        "height": 38
+      },
+      "kind": "equation",
+      "text": "x^2 + y^2 = r^2",
+      "latex": "x^2 + y^2 = r^2"
+    }
+  ]
+}
