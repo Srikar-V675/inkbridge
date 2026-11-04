@@ -11,7 +11,7 @@ const settle = () => new Promise((r) => setImmediate(r));
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-type Call = { url: string; method: string; body?: { base_version: number; elements: SceneElement[] } };
+type Call = { url: string; method: string; key?: string; raw?: string; signal?: AbortSignal | null; body?: { base_version: number; elements: SceneElement[] } };
 
 function harness(responses: Array<Response | Error | (() => Response)>) {
   const calls: Call[] = [];
@@ -23,6 +23,9 @@ function harness(responses: Array<Response | Error | (() => Response)>) {
     calls.push({
       url,
       method: init?.method ?? "GET",
+      key: (init?.headers as Record<string, string> | undefined)?.["x-inkbridge-save"],
+      raw: init?.body as string | undefined,
+      signal: init?.signal,
       body: init?.body ? JSON.parse(init.body as string) : undefined,
     });
     const next = responses.shift();
@@ -441,22 +444,26 @@ describe("delta saves (INK-075)", () => {
     });
   });
 
-  it("diffs against the last confirmed save, and keeps the whole diff after a failed save", async () => {
+  it("diffs against the last confirmed save, and resends a failed save unchanged (INK-083)", async () => {
     const h = harness([
       json(200, { version: 1, elements: [el("a"), el("b")] }),
       new Error("offline"),
       json(200, { version: 2 }),
       json(200, { version: 3 }),
+      json(200, { version: 4 }),
+      json(200, { version: 5 }),
     ]);
     await h.sync.load();
     h.sync.notify([el("a", 2), el("b")]);
     await h.sync.flushNow(); // fails
     h.sync.notify([el("a", 2), el("b", 2)]);
-    await h.sync.flushNow(); // both changes are still unconfirmed
-    assert.deepEqual(h.calls[2].body?.elements, [el("a", 2), el("b", 2)]);
+    await h.sync.flushNow(); // the failed request is resent as it was
+    assert.deepEqual(h.calls[2].body?.elements, [el("a", 2)]);
+    await h.sync.flushNow(); // the newer edit follows, diffed against the confirmed save
+    assert.deepEqual(h.calls[3].body?.elements, [el("b", 2)]);
     h.sync.notify([el("a", 2), el("b", 3)]);
     await h.sync.flushNow();
-    assert.deepEqual(h.calls[3].body?.elements, [el("b", 3)]);
+    assert.deepEqual(h.calls[4].body?.elements, [el("b", 3)]);
   });
 
   it("does a full save when an element the server holds is no longer in the list", () => {
@@ -513,4 +520,108 @@ describe("delta saves (INK-075)", () => {
     assert.match(h.details.at(-1) ?? "", /1 of your edits/);
     assert.equal(h.reloads.at(-1)?.find((e) => e.id === "x")?.x, 100);
   });
+});
+
+describe("SceneSync idempotent saves (INK-083)", () => {
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
+  afterEach(() => mock.timers.reset());
+  const puts = (h: ReturnType<typeof harness>) => h.calls.filter((c) => c.method === "PUT");
+
+  it("resends the identical request under the same key after a network error", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [] }),
+      new TypeError("fetch failed"),
+      json(200, { version: 2 }),
+      json(200, { version: 3 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    h.sync.notify([el("a", 1), el("b", 1)]); // newer edit between attempts
+    mock.timers.tick(2000);
+    await settle();
+    const [first, retry] = puts(h);
+    assert.ok(first.key);
+    assert.equal(retry.key, first.key);
+    assert.equal(retry.raw, first.raw);
+    mock.timers.tick(1500);
+    await settle();
+    const third = puts(h)[2];
+    assert.notEqual(third.key, first.key);
+    assert.equal(third.body?.base_version, 2);
+  });
+
+  it("uses a new seq for each new save, same tab prefix", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [] }),
+      json(200, { version: 2 }),
+      json(200, { version: 3 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    await h.sync.flushNow();
+    h.sync.notify([el("a", 2)]);
+    await h.sync.flushNow();
+    const [p1, p2] = puts(h);
+    assert.notEqual(p1.key, p2.key);
+    assert.equal(p1.key!.split(":")[0], p2.key!.split(":")[0]);
+  });
+
+  it("treats a 200 replay as saved, not a conflict", async () => {
+    const h = harness([json(200, { version: 1, elements: [] }), new TypeError("x"), json(200, { version: 2 })]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    mock.timers.tick(2000);
+    await settle();
+    assert.equal(h.states.at(-1), "saved");
+    assert.ok(!h.states.includes("conflict"));
+  });
+
+  it("sends no second PUT while one is in flight", async () => {
+    const d = deferred();
+    const h = harness([json(200, { version: 1, elements: [] }), d.next, json(200, { version: 3 })]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    h.sync.notify([el("a", 2)]);
+    mock.timers.tick(5000);
+    void h.sync.flushNow();
+    await settle();
+    assert.equal(puts(h).length, 1);
+    d.release(json(200, { version: 2 }));
+    await settle();
+    await settle();
+    assert.equal(puts(h).length, 2);
+  });
+
+  it("gives every PUT a timeout signal", async () => {
+    const h = harness([json(200, { version: 1, elements: [] }), json(200, { version: 2 })]);
+    await h.sync.load();
+    h.sync.notify([el("a", 1)]);
+    await h.sync.flushNow();
+    assert.ok(puts(h)[0].signal);
+  });
+
+  for (const [lw, text] of [
+    [{ tab: "x", same_ip: false }, /^Another device saved first/],
+    [{ tab: "x", same_ip: true }, /^Another tab saved first/],
+    [undefined, /^Another tab saved first/],
+  ] as const) {
+    it(`words the 409 notice for last_writer ${JSON.stringify(lw)}`, async () => {
+      const h = harness([
+        json(200, { version: 1, elements: [] }),
+        json(409, { detail: { current_version: 2, last_writer: lw } }),
+        json(200, { version: 2, elements: [el("z", 1)] }),
+      ]);
+      await h.sync.load();
+      h.sync.notify([el("a", 1)]);
+      await h.sync.flushNow();
+      assert.match(h.details.filter((d) => d?.includes("saved first")).at(0) ?? "", text);
+      assert.match(h.details.at(-1) ?? "", text);
+    });
+  }
 });
