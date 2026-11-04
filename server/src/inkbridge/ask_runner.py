@@ -5,9 +5,11 @@ failure or timeout leaves the question `pending` (the pull path still works)."""
 
 import logging
 import os
+import re
 import signal
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -33,6 +35,12 @@ WRITE_WORDS = (
     "replace",
 )
 READ_TOOLS = ("read_canvas", "get_region", "search", "answer_question")
+ENV_KEEP = re.compile(
+    r"(PATH|HOME|LANG|LC_.*|ANTHROPIC_.*|XDG_.*|CLAUDE_.*)$"
+)  # not GEMINI_API_KEY or tokens
+VAULT_VERB = re.compile(
+    r"(search|read|get|list)", re.IGNORECASE
+)  # positive allow-list; curate the list anyway
 DENIED_NATIVE = ("Bash", "Edit", "Write", "WebFetch", "WebSearch", "NotebookEdit")
 DENIED_MCP = ("write_text", "draw_diagram", "create_canvas")
 
@@ -69,8 +77,9 @@ class ClaudeConfig:
             if t.strip()
         )
         for t in tools:
-            if any(w in t.lower() for w in WRITE_WORDS):
-                raise RunnerError("vault tools must be read-only")
+            name = t.rsplit("__", 1)[-1]
+            if not VAULT_VERB.match(name) or any(w in t.lower() for w in WRITE_WORDS):
+                raise RunnerError("vault tools must be read-only (search/read/get/list)")
         try:
             timeout = float(env.get("INKBRIDGE_RUNNER_TIMEOUT_S") or 180)
         except ValueError:
@@ -98,6 +107,8 @@ def build_command(cfg: ClaudeConfig) -> list[str]:
         "--mcp-config", str(cfg.mcp_config), "--strict-mcp-config",
         "--allowedTools", ",".join(allowed_tools(cfg)),
         "--disallowedTools", ",".join(denied),
+        "--permission-mode", "dontAsk",  # anything not allowed is denied, never prompted
+        "--setting-sources", "",  # ignore the user's and project's ambient settings
     ]  # fmt: skip
 
 
@@ -129,34 +140,43 @@ def _kill(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)  # pgid == pid because start_new_session
     except ProcessLookupError:
         pass
-    proc.wait(timeout=5)
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        log.warning("child %s did not exit after SIGKILL", proc.pid)
 
 
 class ClaudeCodeRunner:
     def __init__(self, cfg: ClaudeConfig):
         self.cfg, self._proc = cfg, None
+        self._lock, self._stopping = threading.Lock(), False
 
     def run(self, q: dict) -> None:
         env = {
-            k: v for k, v in os.environ.items() if k != "GEMINI_API_KEY"
+            k: v for k, v in os.environ.items() if ENV_KEEP.match(k)
         }  # child uses the user's claude login
-        try:
-            proc = subprocess.Popen(
-                build_command(self.cfg), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE, env=env, start_new_session=True,
-            )  # fmt: skip
-        except OSError as e:
-            raise RunnerError(
-                f"cannot start {Path(self.cfg.bin).name}: {type(e).__name__}"
-            ) from None
-        self._proc = proc
-        try:
-            _, err = proc.communicate(build_prompt(q).encode(), timeout=self.cfg.timeout_s)
-        except subprocess.TimeoutExpired:
-            raise RunnerError(f"timeout after {self.cfg.timeout_s}s") from None
-        finally:
-            _kill(proc)  # no-op if exited; also reaps stray grandchildren
-            self._proc = None
+        # An empty cwd: the child has no project files or CLAUDE.md to read or be steered by.
+        with tempfile.TemporaryDirectory(prefix="inkbridge-ask-") as cwd:
+            with self._lock:  # terminate() cannot slip between Popen and storing the handle
+                if self._stopping:
+                    raise RunnerError("runner is stopping")
+                try:
+                    proc = subprocess.Popen(
+                        build_command(self.cfg), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE, env=env, cwd=cwd, start_new_session=True,
+                    )  # fmt: skip
+                except OSError as e:
+                    raise RunnerError(
+                        f"cannot start {Path(self.cfg.bin).name}: {type(e).__name__}"
+                    ) from None
+                self._proc = proc
+            try:
+                _, err = proc.communicate(build_prompt(q).encode(), timeout=self.cfg.timeout_s)
+            except subprocess.TimeoutExpired:
+                raise RunnerError(f"timeout after {self.cfg.timeout_s}s") from None
+            finally:
+                _kill(proc)  # no-op if exited; also reaps stray grandchildren
+                self._proc = None
         if proc.returncode != 0:
             # Neither stderr text nor the prompt is logged: they may hold note paths or content.
             log.warning("%s exited %s for question %s (stderr %d bytes)",
@@ -164,9 +184,10 @@ class ClaudeCodeRunner:
             raise RunnerError(f"exit {proc.returncode}")
 
     def terminate(self) -> None:
-        proc = self._proc
-        if proc is not None:
-            _kill(proc)
+        with self._lock:
+            self._stopping = True
+            if self._proc is not None:
+                _kill(self._proc)
 
 
 # Adding an adapter = one entry here plus its class.

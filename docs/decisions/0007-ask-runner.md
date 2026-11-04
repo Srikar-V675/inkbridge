@@ -17,7 +17,7 @@ now holds the runner decision.
    `--allowedTools` (`read_canvas`, `get_region`, `search`, `answer_question`, plus vault tools from
    `INKBRIDGE_RUNNER_VAULT_TOOLS`) and a `--disallowedTools` list (Bash, Edit, Write, web, and the
    `write_text`, `draw_diagram`, `create_canvas` tools). Vault tool names containing a write word
-   are refused at startup; that filter is a safety net, the user owns the list. Never a permission
+   must start with search, read, get or list and contain no write word, or startup refuses them; the user must still curate the list. The child also gets `--permission-mode dontAsk` and `--setting-sources ""` (ambient user/project settings cannot widen the allow-list), an empty temp directory as cwd, and only PATH, HOME, LANG, LC_*, XDG_*, ANTHROPIC_* and CLAUDE_* from the environment. `terminate()` sets a flag under a lock held across Popen, so a shutdown cannot leak a child. Never a permission
    bypass. The prompt labels question, history, canvas and note text as untrusted.
 4. **Focus.** The prompt uses `focus_chunk_ids` from `get_question()` at start time (0035 point 1).
    The size of `read_canvas` output is capped by 0018.
@@ -34,5 +34,5 @@ now holds the runner decision.
 ## Manual check (not CI)
 With the real `claude`, an MCP config naming the inkbridge stdio server (`INKBRIDGE_RUNNER_MCP_CONFIG`),
 a test canvas, `INKBRIDGE_RUNNER=claude`, and a throwaway `INKBRIDGE_DB`: ask a question and see it
-`answered`. Confirm the flag spellings with `claude --help` (adjust `build_command` and its test
+`answered`. Confirm the flag spellings with `claude --help` (especially `--permission-mode dontAsk` and an empty `--setting-sources`; the CI fake cannot check them) (adjust `build_command` and its test
 together). Then `INKBRIDGE_RUNNER_TIMEOUT_S=1`: the row stays `pending` and `pgrep claude` is empty.

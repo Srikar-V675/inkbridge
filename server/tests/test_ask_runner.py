@@ -45,6 +45,7 @@ def test_command_has_explicit_allow_list(tmp_path):
     for t in ("write_text", "draw_diagram", "create_canvas", "Bash"):
         assert t not in ",".join(allowed) and t in denied
     assert "--strict-mcp-config" in cmd
+    assert flag(cmd, "--permission-mode") == "dontAsk" and flag(cmd, "--setting-sources") == ""
     assert not any("bypass" in a.lower() or "dangerously" in a for a in cmd)
     assert "Answer question" not in " ".join(cmd)  # prompt travels on stdin
 
@@ -52,6 +53,8 @@ def test_command_has_explicit_allow_list(tmp_path):
 def test_vault_write_tool_refused(tmp_path):
     with pytest.raises(RunnerError):
         cfg(tmp_path, INKBRIDGE_RUNNER_VAULT_TOOLS="mcp__vault__Write_Note")
+    with pytest.raises(RunnerError):  # not on the verb allow-list, though no write word in it
+        cfg(tmp_path, INKBRIDGE_RUNNER_VAULT_TOOLS="mcp__vault__sync_notes")
     c = cfg(tmp_path, INKBRIDGE_RUNNER_VAULT_TOOLS="mcp__vault__search_notes")
     assert "mcp__vault__search_notes" in flag(build_command(c), "--allowedTools")
 
@@ -117,7 +120,11 @@ def test_env_secret_not_passed_and_not_logged(tmp_path, monkeypatch, caplog):
     r = ClaudeCodeRunner(cfg(tmp_path, INKBRIDGE_CLAUDE_BIN=str(f)))
     with pytest.raises(RunnerError), caplog.at_level("DEBUG"):
         r.run(Q)
-    assert "sekret" not in envf.read_text() and "Answer question `q1`" in inf.read_text()
+    assert (
+        "sekret" not in envf.read_text()
+        and "GEMINI" not in envf.read_text()
+        and "Answer question `q1`" in inf.read_text()
+    )
     assert "sekret" not in caplog.text and str(tmp_path) not in caplog.text.replace(str(f.name), "")
 
 
@@ -213,3 +220,27 @@ def test_new_adapter_needs_no_other_change(monkeypatch):
     monkeypatch.setenv("INKBRIDGE_RUNNER", "fake")
     assert AskWorker.from_env().runner is fake
     assert ask_runner.RUNNERS["claude"]
+
+
+def test_env_is_allow_listed_and_cwd_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOME_TOKEN", "tok")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "keep")
+    out = tmp_path / "out"
+    f = fake_claude(
+        tmp_path,
+        f"open({str(out)!r},'w').write(repr((dict(os.environ), os.getcwd(), os.listdir('.'))))",
+    )
+    ClaudeCodeRunner(cfg(tmp_path, INKBRIDGE_CLAUDE_BIN=str(f))).run(Q)
+    env, cwd, listing = eval(out.read_text())
+    assert "SOME_TOKEN" not in env and env["ANTHROPIC_API_KEY"] == "keep"
+    assert listing == [] and cwd != os.getcwd()
+
+
+def test_terminate_before_start_refuses_to_spawn(tmp_path):
+    marker = tmp_path / "ran"
+    f = fake_claude(tmp_path, f"open({str(marker)!r},'w').write('x')")
+    r = ClaudeCodeRunner(cfg(tmp_path, INKBRIDGE_CLAUDE_BIN=str(f)))
+    r.terminate()  # stop() landed before Popen: no child may start afterwards
+    with pytest.raises(RunnerError):
+        r.run(Q)
+    assert not marker.exists()

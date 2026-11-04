@@ -35,10 +35,12 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        if worker is not None:
-            worker.stop()
-        if ask:
-            ask.stop()
+        try:
+            if worker is not None:
+                worker.stop()
+        finally:
+            if ask:
+                ask.stop()
 
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
