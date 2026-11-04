@@ -285,3 +285,45 @@ def test_overview_label_uses_a_sized_font():
     assert imaging._font(1568).size >= 20
     img = _img(imaging.overview(_spread_tiles()[:2], lambda _: None, 1568))
     assert img.width <= 1568
+
+
+def _spread_canvas(client, n=20):
+    # n far-apart rectangles: each is its own chunk, 250 px tall, in reading order.
+    els = [rect(f"r{i}", (i % 5) * 4250, (i // 5) * 3000, w=250, h=250) for i in range(n)]
+    return Canvas(client, els)
+
+
+def test_overview_pages_through_a_spread_canvas(client):
+    _spread_canvas(client)
+    first = client.get("/documents/default/overview", params={"max_width": 1568})
+    assert first.status_code == 200 and first.headers["content-type"] == "image/png"
+    assert first.headers["X-Overview-Total"] == "20" and first.headers["X-Overview-From"] == "0"
+    count = int(first.headers["X-Overview-Count"])
+    assert 0 < count < 20
+    assert first.headers["X-Overview-Next"] == str(count)
+    colours(first.content, max_width=1568)  # decodes as an image no wider than asked
+    shown, nxt = 0, 0
+    while True:
+        r = client.get("/documents/default/overview", params={"max_width": 1568, "offset": nxt})
+        assert r.headers["X-Overview-From"] == str(nxt)
+        n = int(r.headers["X-Overview-Count"])
+        assert n > 0
+        shown += n
+        if "X-Overview-Next" not in r.headers:
+            break
+        nxt = int(r.headers["X-Overview-Next"])
+    assert shown == 20 and nxt + n == 20
+
+
+def test_overview_offset_past_end_is_a_blank_image(client):
+    _spread_canvas(client)
+    r = client.get("/documents/default/overview", params={"offset": 99})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert r.headers["X-Overview-Count"] == "0" and "X-Overview-Next" not in r.headers
+
+
+def test_small_canvas_overview_is_one_band_without_next(client):
+    page(client)
+    r = client.get("/documents/default/overview")
+    assert r.headers["X-Overview-Count"] == "5" and r.headers["X-Overview-Total"] == "5"
+    assert "X-Overview-Next" not in r.headers

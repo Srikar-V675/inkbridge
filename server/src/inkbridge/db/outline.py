@@ -110,19 +110,24 @@ def chunk_outline(
 
 
 def chunk_crops(conn: sqlite3.Connection, document_id: str) -> list[dict]:
-    """Active chunks with bounds, crop path and png_stale, for the overview composite."""
+    """Active chunks in reading order, with bounds, crop path and png_stale, for the overview."""
     if conn.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone() is None:
         raise DocumentNotFound(document_id)
-    return [
-        {
-            "id": r["id"],
-            "bounds": json.loads(r["bbox"]),
-            "png_path": r["png_path"],
-            "png_stale": bool(r["png_stale"]),
-        }
+    rows = {
+        r["id"]: r
         for r in conn.execute(
             "SELECT id, bbox, png_path, png_stale FROM regions"
-            " WHERE document_id = ? AND created_by = ? AND status = 'active' ORDER BY id",
+            " WHERE document_id = ? AND created_by = ? AND status = 'active'",
             (document_id, AUTO),
         )
+    }
+    bounds = {i: json.loads(r["bbox"]) for i, r in rows.items()}
+    return [
+        {
+            "id": cid,
+            "bounds": bounds[cid],
+            "png_path": rows[cid]["png_path"],
+            "png_stale": bool(rows[cid]["png_stale"]),
+        }
+        for cid in reading_order(bounds)
     ]
