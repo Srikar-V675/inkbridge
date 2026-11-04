@@ -13,6 +13,7 @@ from pathlib import Path
 from inkbridge import config
 from inkbridge.chunker import (
     ChunkerConfig,
+    agent_op,
     chunk_scene,
     connector_ids,
     kind_hint,
@@ -629,6 +630,24 @@ def _sync_chunks(
         [(document_id, ids[a], ids[b]) for a, b in chunking.links],
     )
 
+    # Chunks made only of accepted agent ink are read from their own text: no crop, no model call.
+    for rid, members in zip(ids, clusters, strict=True):
+        if all(agent_op(by_id[i]) is not None for i in members):
+            _read_agent_chunk(conn, rid, [by_id[i] for i in members])
+
+
+def _read_agent_chunk(conn: sqlite3.Connection, rid: str, chunk: list[dict]) -> None:
+    """Store the chunk's text elements, in reading order, as an 'agent' reading (INK-078)."""
+    texts = sorted((e for e in chunk if e.get("text")), key=lambda e: (e["y"], e["x"]))
+    reading = "\n".join(e["text"] for e in texts)
+    h = conn.execute("SELECT content_hash FROM regions WHERE id = ?", (rid,)).fetchone()[0]
+    have = conn.execute(
+        "SELECT text FROM recognitions WHERE region_id = ? AND content_hash = ? AND source = 'agent'",
+        (rid, h),
+    ).fetchone()
+    if have is None or have["text"] != reading:
+        _put_recognition(conn, rid, h, "agent", reading)
+
 
 def _insert_chunk(
     conn: sqlite3.Connection,
@@ -868,6 +887,20 @@ def save_recognition(
     model: str | None = None,
 ) -> None:
     """Upsert a reading keyed by (region, content_hash, source); refresh the search index."""
+    _put_recognition(conn, region_id, content_hash_, source, text, latex, model)
+    conn.commit()
+
+
+def _put_recognition(
+    conn: sqlite3.Connection,
+    region_id: str,
+    content_hash_: str,
+    source: str,
+    text: str | None,
+    latex: str | None = None,
+    model: str | None = None,
+) -> None:
+    """save_recognition without the commit, so a scene save can write it in its transaction."""
     if source not in RECOGNITION_SOURCES:
         raise ValueError(f"source must be one of {RECOGNITION_SOURCES}, got {source!r}")
     conn.execute(
@@ -880,7 +913,6 @@ def save_recognition(
         (region_id, content_hash_, source, model, text, latex, text_hash(text, latex), _now()),
     )
     _reindex_region(conn, region_id)
-    conn.commit()
 
 
 def _fts_query(q: str) -> str | None:

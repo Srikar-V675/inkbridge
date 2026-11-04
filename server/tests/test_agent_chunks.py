@@ -114,3 +114,44 @@ def test_manual_pin_wins_over_agent_group():
 def test_custom_data_stays_out_of_the_content_hash():
     plain = {k: v for k, v in accepted(0, 0, 0).items() if k != "customData"}
     assert content_hash([plain]) == content_hash([accepted(0, 0, 0)])
+
+
+# --- Task 3: the agent reads its own chunk, no model call ----------------------------------------
+from inkbridge.recognition_worker import RecognitionWorker  # noqa: E402
+from tests.test_recognition_worker import FakeModel, upload  # noqa: E402
+from tests.test_search import recognise  # noqa: E402
+
+
+def agent_chunk(canvas):
+    return canvas.chunk_of("op1:0")
+
+
+def test_accepted_text_is_read_without_a_model_call(client):
+    canvas = Canvas(client, row("a", 5) + [text("op1:0", FAR, FAR, draft=True)])
+    accept(canvas, {"op1:0"})
+    chunk = agent_chunk(canvas)
+    assert (chunk["text"], chunk["source"]) == ("hello", "agent")
+    for c in canvas.chunks("active"):
+        upload(client, canvas, c["id"])
+    model = FakeModel()
+    assert RecognitionWorker(model, ("default",), clock=lambda: 10**10).run_once() == 1
+    assert len(model.calls) == 1  # the handwriting chunk only
+    assert canvas.chunk_of("a0")["source"] == "gemini" and agent_chunk(canvas)["source"] == "agent"
+
+
+def test_editing_the_agent_text_rereads_it(client):
+    canvas = Canvas(client, [text("op1:0", 0, 0, draft=True)])
+    accept(canvas, {"op1:0"})
+    canvas.el("op1:0")["text"] = "bye"
+    canvas.el("op1:0")["version"] += 1
+    canvas.put()
+    assert agent_chunk(canvas)["text"] == "bye"
+
+
+def test_shape_only_diagram_reads_empty_and_a_user_reading_wins(client):
+    shape = {**rect("op1:0", 0, 0), "customData": AGENT, "version": 1, "isDeleted": False}
+    canvas = Canvas(client, [shape])
+    chunk = agent_chunk(canvas)
+    assert (chunk["text"], chunk["source"]) == ("", "agent")
+    recognise(chunk, "mine", source="user")
+    assert agent_chunk(canvas)["text"] == "mine"
