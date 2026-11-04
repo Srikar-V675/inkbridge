@@ -7,6 +7,8 @@ from inkbridge.placement import (
     MIN_FONT,
     Box,
     estimate_size,
+    gap_for,
+    margin_for,
     font_size_for,
     overlaps,
     place,
@@ -119,3 +121,26 @@ def test_estimate_uses_payload_font_size():
         estimate_size("draw_diagram", {"font_size": 40})[0]
         == 2 * estimate_size("draw_diagram", {})[0]
     )
+
+
+def test_font_size_has_no_64_cap():
+    assert font_size_for([300.0] * 5) == 450 and font_size_for([300.0] * 5) > 64
+
+
+def test_font_size_scales_linearly():
+    assert abs(font_size_for([30] * 5) * 10 - font_size_for([300] * 5)) <= 1
+
+
+def test_gap_and_margin_scale_with_font():
+    anchor = _box(0, 0, 4000, 1000)
+    spot = place([anchor], (100, 100), anchor, 450)
+    assert spot["x"] == anchor["width"] + gap_for(450) and gap_for(450) > GAP
+    assert gap_for(28) == GAP and gap_for(20) == GAP
+    near = _box(0, 0, 100, 100)
+    other = _box(100 + 100, 0, 100, 100)  # 100 apart: clear at 1x margin, overlapping at 450 fs
+    assert not overlaps(near, other) and overlaps(near, other, margin_for(450))
+
+
+def test_estimate_wraps_long_lines():
+    w, h = estimate_size("write_text", {"text": "x" * 400, "font_size": 300, "wrap_chars": 50})
+    assert w == 50 * 0.6 * 300 and h == 8 * 1.25 * 300
