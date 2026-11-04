@@ -66,3 +66,51 @@ def test_accepted_diagram_is_one_chunk(client):
     assert sorted(canvas.chunk_of("op1:0")["element_ids"]) == [
         "op1:0", "op1:1", "op1:2", "op1:3",
     ]  # fmt: skip
+
+
+# --- Task 2: per-op groups in the pure chunker ---------------------------------------------------
+from inkbridge.chunker import chunk_scene  # noqa: E402
+from inkbridge.regions import content_hash  # noqa: E402
+from tests.test_chunker import stroke  # noqa: E402
+
+
+def accepted(i, x, y, op="op1", **extra):
+    return text(f"{op}:{i}", x, y, op=op, **extra)
+
+
+def test_agent_text_beside_handwriting_is_its_own_chunk():
+    els = [stroke(f"s{i}", 15 * i, 0) for i in range(5)] + [accepted(0, 90, 0)]
+    assert sorted(chunk_scene(els).chunks) == [["op1:0"], ["s0", "s1", "s2", "s3", "s4"]]
+
+
+def test_one_chunk_per_op_and_one_op_is_one_chunk():
+    els = [accepted(0, 0, 0), accepted(1, 90, 0), accepted(0, 200, 0, op="op2")]
+    assert chunk_scene(els).chunks == [["op1:0", "op1:1"], ["op2:0"]]
+
+
+def test_draft_still_yields_no_chunk():
+    assert chunk_scene([accepted(0, 0, 0, draft=True)]).chunks == []
+
+
+def test_forged_tag_with_wrong_id_prefix_is_user_ink():
+    forged = {**text("mine", 90, 0), "customData": AGENT}
+    els = [stroke(f"s{i}", 15 * i, 0) for i in range(5)] + [forged]
+    assert len(chunk_scene(els).chunks) == 1
+
+
+def test_agent_groups_are_not_pinned():
+    els = [stroke("s0", 0, 0), stroke("s1", 15, 0), accepted(0, 40, 0)]
+    c = chunk_scene(els)
+    assert c.pinned == [False, False] and len(c.chunks) == 2
+
+
+def test_manual_pin_wins_over_agent_group():
+    els = [stroke("s0", 0, 0), accepted(0, 40, 0), accepted(1, 400, 0)]
+    c = chunk_scene(els, pins=[["s0", "op1:0"]])
+    assert sorted(c.chunks) == [["op1:0", "s0"], ["op1:1"]]
+    assert sorted(c.pinned) == [False, True]
+
+
+def test_custom_data_stays_out_of_the_content_hash():
+    plain = {k: v for k, v in accepted(0, 0, 0).items() if k != "customData"}
+    assert content_hash([plain]) == content_hash([accepted(0, 0, 0)])
