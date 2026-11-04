@@ -39,7 +39,7 @@ Another tab saved first.
 ## Other files
 
 - `route.ts`: `readRoute()` parses `?canvas=` (default `"default"`) and `?chunk=`. This is the URL contract shared with vault notes.
-- `view.ts`: per-device memory of scroll/zoom per canvas in `localStorage` (`inkbridge-view-<canvas>`), tolerant of missing or blocked storage and clamped to zoom 0.1 to 30; `keepFittingFirstDrafts(armed, now, elements)` decides whether a canvas opened empty should keep fitting the first agent drafts (true only if the view did not change and nothing but drafts is drawn; decision 0019).
+- `view.ts`: per-device memory of scroll/zoom per canvas in `localStorage` (`inkbridge-view-<canvas>`), tolerant of missing or blocked storage and clamped to zoom 0.1 to 30. The first-draft fit was removed; new drafts are panned into view by `draftView.ts` (decision 0054).
 
 ## Testing
 

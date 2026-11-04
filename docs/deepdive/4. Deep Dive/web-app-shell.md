@@ -14,7 +14,7 @@
 
 1. Build `CropSync` and `SceneSync`. `exportPng` uses Excalidraw's `exportToBlob` on only the requested elements (white background, `maxWidthOrHeight: 2048`, padding 10).
 2. If `?chunk=` is present, `resolveChunk` runs beside the scene load and never holds the canvas back: the jump is applied on the first change event, or immediately if the scene is already up (`pendingJump`, `sceneReady`).
-3. `sync.load()` then `restoreElements(...)` **before** Excalidraw mounts, so freedraw `pressures` and `simulatePressure=false` survive. A link wins over the remembered view. `fitOnOpen` is set only for a canvas that has ink; `fitFirstDrafts` for an empty canvas with no remembered view (one an agent just created).
+3. `sync.load()` then `restoreElements(...)` **before** Excalidraw mounts, so freedraw `pressures` and `simulatePressure=false` survive. A link wins over the remembered view. `fitOnOpen` is set only for a canvas that has ink.
 4. Page lifecycle: `visibilitychange` hidden and `pagehide` call `flushNow()`; pointer events (capture phase) call `crops.setDrawing`; a `blur` clears the pointer set so a pointerup that never arrives cannot stall crop sync.
 5. Cleanup disposes both.
 
@@ -26,7 +26,7 @@ Starts once `canvasReady`. `onOp` defines `persist`: it `notify`s the scene, the
 
 ## `onChange` (`:339-388`)
 
-On every Excalidraw change: `sync.notify` (if it really changed, tell crop sync about activity), `cropRef.start()` (the first change means the canvas holds the loaded scene), cancel `fitFirstDrafts` when the user pans, zooms or draws (`keepFittingFirstDrafts`), mark `sceneReady`, apply a pending jump, fit all ink on first open, and otherwise save the view to `localStorage` after 500 ms.
+On every Excalidraw change: `sync.notify` (if it really changed, tell crop sync about activity), `cropRef.start()` (the first change means the canvas holds the loaded scene), mark `sceneReady`, apply a pending jump, fit all ink on first open, and otherwise save the view to `localStorage` after 500 ms.
 
 ## Not built
 
