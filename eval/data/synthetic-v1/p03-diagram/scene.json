@@ -1,0 +1,354 @@
+{
+  "elements": [
+    {
+      "id": "n0",
+      "type": "rectangle",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 50,
+      "angle": 0,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "id": "n0-t",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "id": "n0-t",
+      "type": "text",
+      "x": 10,
+      "y": 15,
+      "width": 80,
+      "height": 20,
+      "angle": 0,
+      "text": "Start",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "n0",
+      "isDeleted": false
+    },
+    {
+      "id": "n1",
+      "type": "rectangle",
+      "x": 160,
+      "y": 0,
+      "width": 100,
+      "height": 50,
+      "angle": 0,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "id": "n1-t",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "id": "n1-t",
+      "type": "text",
+      "x": 170,
+      "y": 15,
+      "width": 80,
+      "height": 20,
+      "angle": 0,
+      "text": "Check",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "n1",
+      "isDeleted": false
+    },
+    {
+      "id": "n2",
+      "type": "rectangle",
+      "x": 320,
+      "y": 0,
+      "width": 100,
+      "height": 50,
+      "angle": 0,
+      "isDeleted": false,
+      "boundElements": [
+        {
+          "id": "n2-t",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "id": "n2-t",
+      "type": "text",
+      "x": 330,
+      "y": 15,
+      "width": 80,
+      "height": 20,
+      "angle": 0,
+      "text": "End",
+      "fontSize": 16,
+      "fontFamily": 1,
+      "containerId": "n2",
+      "isDeleted": false
+    },
+    {
+      "id": "a0",
+      "type": "arrow",
+      "x": 101,
+      "y": 25,
+      "width": 58,
+      "height": 0,
+      "angle": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          58,
+          0
+        ]
+      ],
+      "startBinding": {
+        "elementId": "n0",
+        "focus": 0,
+        "gap": 1
+      },
+      "endBinding": {
+        "elementId": "n1",
+        "focus": 0,
+        "gap": 1
+      },
+      "isDeleted": false
+    },
+    {
+      "id": "a1",
+      "type": "arrow",
+      "x": 261,
+      "y": 25,
+      "width": 58,
+      "height": 0,
+      "angle": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          58,
+          0
+        ]
+      ],
+      "startBinding": {
+        "elementId": "n1",
+        "focus": 0,
+        "gap": 1
+      },
+      "endBinding": {
+        "elementId": "n2",
+        "focus": 0,
+        "gap": 1
+      },
+      "isDeleted": false
+    },
+    {
+      "id": "c2-s0",
+      "type": "freedraw",
+      "x": 0,
+      "y": 400,
+      "width": 20,
+      "height": 30,
+      "angle": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          5.0,
+          7.5
+        ],
+        [
+          10.0,
+          15.0
+        ],
+        [
+          15.0,
+          22.5
+        ],
+        [
+          20,
+          30
+        ]
+      ],
+      "pressures": [
+        0.6,
+        0.7,
+        0.3,
+        0.4,
+        0.5
+      ],
+      "simulatePressure": false,
+      "isDeleted": false
+    },
+    {
+      "id": "c2-s1",
+      "type": "freedraw",
+      "x": 28,
+      "y": 400,
+      "width": 20,
+      "height": 30,
+      "angle": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          5.0,
+          22.5
+        ],
+        [
+          10.0,
+          7.5
+        ],
+        [
+          15.0,
+          30.0
+        ],
+        [
+          20,
+          30
+        ]
+      ],
+      "pressures": [
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+        0.7
+      ],
+      "simulatePressure": false,
+      "isDeleted": false
+    },
+    {
+      "id": "c2-s2",
+      "type": "freedraw",
+      "x": 56,
+      "y": 400,
+      "width": 20,
+      "height": 30,
+      "angle": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          5.0,
+          30.0
+        ],
+        [
+          10.0,
+          22.5
+        ],
+        [
+          15.0,
+          15.0
+        ],
+        [
+          20,
+          30
+        ]
+      ],
+      "pressures": [
+        0.4,
+        0.5,
+        0.6,
+        0.7,
+        0.3
+      ],
+      "simulatePressure": false,
+      "isDeleted": false
+    },
+    {
+      "id": "c2-s3",
+      "type": "freedraw",
+      "x": 84,
+      "y": 400,
+      "width": 20,
+      "height": 30,
+      "angle": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          5.0,
+          0.0
+        ],
+        [
+          10.0,
+          0.0
+        ],
+        [
+          15.0,
+          0.0
+        ],
+        [
+          20,
+          30
+        ]
+      ],
+      "pressures": [
+        0.5,
+        0.6,
+        0.7,
+        0.3,
+        0.4
+      ],
+      "simulatePressure": false,
+      "isDeleted": false
+    },
+    {
+      "id": "c2-s4",
+      "type": "freedraw",
+      "x": 112,
+      "y": 400,
+      "width": 20,
+      "height": 30,
+      "angle": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          5.0,
+          7.5
+        ],
+        [
+          10.0,
+          15.0
+        ],
+        [
+          15.0,
+          22.5
+        ],
+        [
+          20,
+          30
+        ]
+      ],
+      "pressures": [
+        0.6,
+        0.7,
+        0.3,
+        0.4,
+        0.5
+      ],
+      "simulatePressure": false,
+      "isDeleted": false
+    }
+  ]
+}

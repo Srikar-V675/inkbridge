@@ -1,0 +1,194 @@
+{
+  "page_id": "p01-text",
+  "kind": "text",
+  "synthetic": true,
+  "chunks": [
+    {
+      "id": "c1",
+      "box": {
+        "x": -4,
+        "y": -4,
+        "width": 168,
+        "height": 38
+      },
+      "kind": "handwriting",
+      "text": "hello world",
+      "latex": null
+    },
+    {
+      "id": "c2",
+      "box": {
+        "x": 396,
+        "y": -4,
+        "width": 168,
+        "height": 38
+      },
+      "kind": "handwriting",
+      "text": "second line",
+      "latex": null
+    }
+  ],
+  "edits": [
+    {
+      "id": "e1",
+      "type": "move",
+      "chunk": "c1",
+      "meaning_changed": false,
+      "ops": [
+        {
+          "op": "translate",
+          "ids": [
+            "c1-s0",
+            "c1-s1",
+            "c1-s2",
+            "c1-s3",
+            "c1-s4",
+            "c1-s5"
+          ],
+          "dx": 0,
+          "dy": 300
+        }
+      ],
+      "text_after": "hello world"
+    },
+    {
+      "id": "e2",
+      "type": "nudge",
+      "chunk": "c1",
+      "meaning_changed": false,
+      "ops": [
+        {
+          "op": "translate",
+          "ids": [
+            "c1-s2"
+          ],
+          "dx": 2,
+          "dy": 0
+        }
+      ],
+      "text_after": "hello world"
+    },
+    {
+      "id": "e3",
+      "type": "redraw_identical",
+      "chunk": "c1",
+      "meaning_changed": false,
+      "ops": [
+        {
+          "op": "redraw",
+          "ids": [
+            "c1-s0",
+            "c1-s1",
+            "c1-s2",
+            "c1-s3",
+            "c1-s4",
+            "c1-s5"
+          ],
+          "id_suffix": "-r"
+        }
+      ],
+      "text_after": "hello world"
+    },
+    {
+      "id": "e4",
+      "type": "change_word",
+      "chunk": "c1",
+      "meaning_changed": true,
+      "ops": [
+        {
+          "op": "delete",
+          "ids": [
+            "c1-s3",
+            "c1-s4"
+          ]
+        },
+        {
+          "op": "add",
+          "elements": [
+            {
+              "id": "c1-s3b",
+              "type": "freedraw",
+              "x": 84,
+              "y": 0,
+              "width": 20,
+              "height": 30,
+              "angle": 0,
+              "points": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  5.0,
+                  7.5
+                ],
+                [
+                  10.0,
+                  15.0
+                ],
+                [
+                  15.0,
+                  22.5
+                ],
+                [
+                  20,
+                  30
+                ]
+              ],
+              "pressures": [
+                0.6,
+                0.7,
+                0.3,
+                0.4,
+                0.5
+              ],
+              "simulatePressure": false,
+              "isDeleted": false
+            },
+            {
+              "id": "c1-s4b",
+              "type": "freedraw",
+              "x": 112,
+              "y": 0,
+              "width": 20,
+              "height": 30,
+              "angle": 0,
+              "points": [
+                [
+                  0,
+                  0
+                ],
+                [
+                  5.0,
+                  0.0
+                ],
+                [
+                  10.0,
+                  0.0
+                ],
+                [
+                  15.0,
+                  0.0
+                ],
+                [
+                  20,
+                  30
+                ]
+              ],
+              "pressures": [
+                0.5,
+                0.6,
+                0.7,
+                0.3,
+                0.4
+              ],
+              "simulatePressure": false,
+              "isDeleted": false
+            }
+          ]
+        }
+      ],
+      "text_after": "hello there"
+    }
+  ]
+}

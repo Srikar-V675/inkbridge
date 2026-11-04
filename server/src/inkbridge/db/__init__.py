@@ -1,8 +1,10 @@
 """SQLite access. The only module that touches the database; the MCP server must not import it."""
 
 import json
+import logging
 import re
 import sqlite3
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +25,9 @@ from inkbridge.regions import (
     stroke_hash,
     text_hash,
 )
+
+log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
+SLOW_SAVE_S = 1.0  # a scene save slower than this is logged at warning (INK-072, decision 0027)
 
 DEFAULT_DOCUMENT_ID = "default"
 RECOGNITION_SOURCES = ("user", "agent", "gemini")
@@ -230,8 +235,15 @@ def put_scene(
     base_version: int,
     elements_json: str,
     chunker_config: ChunkerConfig | None = None,
+    delta: bool = False,
+    max_elements: int | None = None,
 ) -> int:
     """Store the scene if base_version is current; return the new version.
+
+    With `delta`, `elements_json` holds only the elements that changed since base_version: each
+    replaces the stored element with its id (in place) or is appended. Nothing is removed, because
+    Excalidraw keeps deleted elements (`isDeleted`) in the scene. base_version pins the stored
+    scene to what the client diffed against, so a stale client gets a conflict, never a bad merge.
 
     BEGIN IMMEDIATE takes the write lock before the old scene is read, and the UPDATE compares
     the version again, so two writers with the same base_version cannot both win even if one
@@ -248,6 +260,13 @@ def put_scene(
             raise DocumentNotFound(document_id)
         if old["version"] != base_version:
             raise VersionConflict(old["version"])
+        old_elements = json.loads(old["elements_json"])
+        if delta:
+            elements_json = json.dumps(
+                _apply_delta(old_elements, json.loads(elements_json)),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         cur = conn.execute(
             "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
             " WHERE document_id = ? AND version = ?",
@@ -255,17 +274,49 @@ def put_scene(
         )
         if cur.rowcount == 0:  # second guard: only reachable if the write lock was not held
             raise VersionConflict(get_scene(conn, document_id)[0])
+        t0 = time.perf_counter()
         elements = json.loads(elements_json)
+        if max_elements is not None and len(elements) > max_elements:
+            raise SceneTooLarge(len(elements))
         by_id = {e["id"]: e for e in elements}
-        changed = _changed_ids(json.loads(old["elements_json"]), by_id)
+        t1 = time.perf_counter()
+        changed = _changed_ids(old_elements, by_id)
+        t2 = time.perf_counter()
         _refresh_regions(conn, document_id, by_id, changed, now)
+        t3 = time.perf_counter()
         _sync_chunks(conn, document_id, elements, by_id, changed, now, chunker_config)
+        t4 = time.perf_counter()
         conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
+    total = time.perf_counter() - t0
+    log.log(
+        logging.WARNING if total > SLOW_SAVE_S else logging.INFO,
+        "put_scene doc=%s elements=%d changed=%d parse=%.0fms diff=%.0fms refresh=%.0fms"
+        " chunks=%.0fms total=%.0fms",
+        document_id,
+        len(elements),
+        len(changed),
+        (t1 - t0) * 1000,
+        (t2 - t1) * 1000,
+        (t3 - t2) * 1000,
+        (t4 - t3) * 1000,
+        total * 1000,
+    )
     return base_version + 1
+
+
+class SceneTooLarge(Exception):
+    def __init__(self, count: int):
+        super().__init__(f"too many elements: {count}")
+
+
+def _apply_delta(old_elements: list[dict], changed: list[dict]) -> list[dict]:
+    new_by_id = {e["id"]: e for e in changed}
+    merged = [new_by_id.pop(e["id"], e) for e in old_elements]
+    return merged + list(new_by_id.values())  # ids not stored yet, in the order sent
 
 
 def _changed_ids(old_elements: list[dict], new_by_id: dict[str, dict]) -> set[str]:
@@ -476,7 +527,7 @@ def _sync_chunks(
     is skipped without hashing. Chunks that lose their id become orphaned, keep their last
     element ids and hashes, and point successor_of at the cluster that took most of their ink.
     """
-    cfg = chunker_config or ChunkerConfig()
+    cfg = chunker_config or ChunkerConfig(match_containment=config.chunk_containment())
     rows = {
         r["id"]: r
         for r in conn.execute(
@@ -501,6 +552,7 @@ def _sync_chunks(
         active={rid for rid, r in rows.items() if r["status"] == "active"},
         threshold=cfg.match_threshold,
         ignore=connector_ids(elements),
+        containment=cfg.match_containment,
     )
     ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
 
