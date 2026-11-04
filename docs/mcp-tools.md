@@ -99,7 +99,7 @@ Errors are returned as tool errors with a next step (for example, "call list_reg
 
 ## Planned tools (spec v3)
 
-Not built yet; each ticket updates this file when it lands. All tools take an optional `document_id` (default `INKBRIDGE_DOCUMENT`).
+Not built yet; each ticket updates this file when it lands. (No tool is currently planned; the table is empty.) All tools take an optional `document_id` (default `INKBRIDGE_DOCUMENT`).
 
 | Tool | Ticket | Purpose | Mutates |
 |---|---|---|---|
