@@ -235,6 +235,10 @@ def get_scene(conn: sqlite3.Connection, document_id: str) -> tuple[int, str]:
     return row["version"], row["elements_json"]
 
 
+def was_applied(document_id: str, save_key: str) -> bool:
+    return (document_id, save_key) in _applied
+
+
 def put_scene(
     conn: sqlite3.Connection,
     document_id: str,
@@ -258,6 +262,7 @@ def put_scene(
     disagree with the stored scene; any error rolls the whole save back.
     """
     now = _now()
+    recorded = False
     conn.execute("BEGIN IMMEDIATE")  # read the old scene and replace it under one write lock
     try:
         old = conn.execute(
@@ -297,12 +302,15 @@ def put_scene(
         _sync_chunks(conn, document_id, elements, by_id, changed, now, chunker_config)
         t4 = time.perf_counter()
         conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
-        conn.commit()
-        if save_key is not None:
+        if save_key is not None:  # recorded under the write lock, so a blocked retry sees it
             _applied[(document_id, save_key)] = base_version + 1
+            recorded = True
             while len(_applied) > APPLIED_CAP:
                 _applied.popitem(last=False)
+        conn.commit()
     except BaseException:
+        if recorded:
+            _applied.pop((document_id, save_key), None)
         conn.rollback()
         raise
     total = time.perf_counter() - t0

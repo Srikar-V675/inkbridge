@@ -1,6 +1,7 @@
 import json
 import logging
 import math
+import re
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -137,7 +138,13 @@ def put_scene(
     request: Request,
     x_inkbridge_save: Annotated[str | None, Header()] = None,
 ) -> dict[str, int]:
-    tab = (x_inkbridge_save or "").split(":")[0] or "?"
+    key = (
+        x_inkbridge_save
+        if re.fullmatch(r"[a-z0-9]{1,16}:\d{1,9}", x_inkbridge_save or "")
+        else None
+    )
+    tab = key.split(":")[0] if key else "?"
+    replay = key is not None and db.was_applied(document_id, key)
     ip = request.client.host if request.client else "?"
     _log.info(
         "scene PUT doc=%s tab=%s ip=%s ua=%s key=%s",
@@ -155,7 +162,7 @@ def put_scene(
             json.dumps(body.elements, ensure_ascii=False, separators=(",", ":")),
             delta=body.delta,
             max_elements=MAX_ELEMENTS,
-            save_key=x_inkbridge_save,
+            save_key=key,
         )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
@@ -166,7 +173,9 @@ def put_scene(
         raise HTTPException(409, detail) from None
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
-    if x_inkbridge_save:
+    if replay:
+        return {"version": version}
+    if key:
         _last_writer[document_id] = (tab, ip)
     ws.hub.publish(
         document_id,
