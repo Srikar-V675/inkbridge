@@ -19,6 +19,7 @@ export interface PendingOp {
     mermaid?: string;
     anchor?: string;
     font_size?: number;
+    wrap_chars?: number;
     placement: Placement;
     id_prefix: string;
   };
@@ -27,7 +28,7 @@ export interface PendingOp {
 /** Font size the server computed from the handwriting; ops stored before it existed were 20. */
 export function opFontSize(payload: { font_size?: number }): number {
   const f = payload.font_size;
-  return typeof f === "number" && f > 0 ? Math.min(200, Math.round(f)) : 20;
+  return typeof f === "number" && f > 0 ? Math.min(2000, Math.round(f)) : 20;
 }
 
 export interface DraftElement {
@@ -141,4 +142,28 @@ export function rejectOp<T extends DraftElement>(elements: readonly T[], prefix:
       ? { ...e, isDeleted: true, version: (e.version ?? 0) + 1 }
       : e,
   );
+}
+
+/** Break `text` into lines of at most `maxChars` (spaces first, long words hard-split). */
+export function wrapText(text: string, maxChars?: number): string {
+  if (!maxChars || maxChars <= 0) return text;
+  return text
+    .split("\n")
+    .map((line) => {
+      const out: string[] = [];
+      let cur = "";
+      for (const word of line.split(" ")) {
+        let w = word;
+        while (w.length > maxChars) {
+          if (cur) out.push(cur), (cur = "");
+          out.push(w.slice(0, maxChars));
+          w = w.slice(maxChars);
+        }
+        if (cur && cur.length + 1 + w.length > maxChars) out.push(cur), (cur = w);
+        else cur = cur ? `${cur} ${w}` : w;
+      }
+      out.push(cur);
+      return out.join("\n");
+    })
+    .join("\n");
 }
