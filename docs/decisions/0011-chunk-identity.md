@@ -31,3 +31,4 @@ Status: accepted (INK-031). Refines tech ref 5.6 to 5.8 and gap 7.
   id (the old one is orphaned with the new one as successor). The alternative for INK-038 to switch to
   if real pages need it: keep the id when the old set holds at least 60% of the new one or the new set
   holds at least 60% of the old one (containment instead of Jaccard). Only `match_chunks` changes.
+  Containment is available behind INKBRIDGE_CHUNK_CONTAINMENT, off by default: see 0029.

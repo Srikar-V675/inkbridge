@@ -1,8 +1,10 @@
 """SQLite access. The only module that touches the database; the MCP server must not import it."""
 
 import json
+import logging
 import re
 import sqlite3
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,6 +25,9 @@ from inkbridge.regions import (
     stroke_hash,
     text_hash,
 )
+
+log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
+SLOW_SAVE_S = 1.0  # a scene save slower than this is logged at warning (INK-072, decision 0027)
 
 DEFAULT_DOCUMENT_ID = "default"
 RECOGNITION_SOURCES = ("user", "agent", "gemini")
@@ -255,16 +260,36 @@ def put_scene(
         )
         if cur.rowcount == 0:  # second guard: only reachable if the write lock was not held
             raise VersionConflict(get_scene(conn, document_id)[0])
+        t0 = time.perf_counter()
         elements = json.loads(elements_json)
         by_id = {e["id"]: e for e in elements}
-        changed = _changed_ids(json.loads(old["elements_json"]), by_id)
+        old_elements = json.loads(old["elements_json"])
+        t1 = time.perf_counter()
+        changed = _changed_ids(old_elements, by_id)
+        t2 = time.perf_counter()
         _refresh_regions(conn, document_id, by_id, changed, now)
+        t3 = time.perf_counter()
         _sync_chunks(conn, document_id, elements, by_id, changed, now, chunker_config)
+        t4 = time.perf_counter()
         conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
+    total = time.perf_counter() - t0
+    log.log(
+        logging.WARNING if total > SLOW_SAVE_S else logging.INFO,
+        "put_scene doc=%s elements=%d changed=%d parse=%.0fms diff=%.0fms refresh=%.0fms"
+        " chunks=%.0fms total=%.0fms",
+        document_id,
+        len(elements),
+        len(changed),
+        (t1 - t0) * 1000,
+        (t2 - t1) * 1000,
+        (t3 - t2) * 1000,
+        (t4 - t3) * 1000,
+        total * 1000,
+    )
     return base_version + 1
 
 
@@ -476,7 +501,7 @@ def _sync_chunks(
     is skipped without hashing. Chunks that lose their id become orphaned, keep their last
     element ids and hashes, and point successor_of at the cluster that took most of their ink.
     """
-    cfg = chunker_config or ChunkerConfig()
+    cfg = chunker_config or ChunkerConfig(match_containment=config.chunk_containment())
     rows = {
         r["id"]: r
         for r in conn.execute(
@@ -501,6 +526,7 @@ def _sync_chunks(
         active={rid for rid, r in rows.items() if r["status"] == "active"},
         threshold=cfg.match_threshold,
         ignore=connector_ids(elements),
+        containment=cfg.match_containment,
     )
     ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
 

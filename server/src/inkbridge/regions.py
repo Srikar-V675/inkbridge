@@ -1,4 +1,4 @@
-"""Pure region maths: bbox and stroke hash. No I/O, no SQLite."""
+"""Pure region maths: bbox, stroke hash, content hash and text hash. No I/O, no SQLite."""
 
 import hashlib
 import json

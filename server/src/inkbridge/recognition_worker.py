@@ -27,6 +27,7 @@ from inkbridge.recognizer import (
     Recognizer,
     RecognizerTimeout,
 )
+from inkbridge.timing import timed
 
 log = logging.getLogger(__name__)
 
@@ -126,7 +127,8 @@ class RecognitionWorker:
             return 0
         conn = db.connect()  # its own connection: never shares a request's transaction
         try:
-            return sum(self._read_document(conn, d) for d in self.documents)
+            with timed("recognition.pass", documents=len(self.documents)):
+                return sum(self._read_document(conn, d) for d in self.documents)
         finally:
             conn.close()
 
