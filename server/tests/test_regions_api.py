@@ -192,3 +192,33 @@ def test_failed_db_insert_leaves_no_orphan_file(client, tmp_path):
     assert post(client, ["a", "nope"]).status_code == 422
     crops = tmp_path / "crops"
     assert not crops.exists() or list(crops.iterdir()) == []
+
+
+def test_status_filter_runs_before_limit_so_orphans_cannot_hide_active_chunks(client):
+    # INK-089: the overlay lists ?chunks=true&status=active&limit=500. Seed 600 orphans newer than
+    # the two active chunks; the status filter must be applied in SQL before LIMIT.
+    import os
+    import sqlite3
+
+    from tests.test_chunk_persistence import row
+
+    client.put(SCENE, json={"base_version": 0, "elements": row("a", 3) + row("b", 3, y=500)})
+    active = client.get(REGIONS, params={"chunks": True, "limit": 500}).json()
+    assert len(active) == 2
+    active_ids = sorted(c["id"] for c in active)
+    conn = sqlite3.connect(os.environ["INKBRIDGE_DB"])
+    template = conn.execute("SELECT * FROM regions WHERE created_by = 'auto' LIMIT 1").fetchone()
+    cols = [d[1] for d in conn.execute("PRAGMA table_info(regions)")]
+    values = dict(zip(cols, template))
+    rows = []
+    for i in range(600):
+        values.update(id=f"orphan{i:04d}", status="orphaned", updated_at="2099-01-01T00:00:00+00:00")
+        rows.append(tuple(values[c] for c in cols))
+    conn.executemany(f"INSERT INTO regions ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", rows)
+    conn.commit()
+    conn.close()
+
+    listed = client.get(REGIONS, params={"chunks": True, "status": "active", "limit": 500}).json()
+    assert sorted(c["id"] for c in listed) == active_ids
+    unfiltered = client.get(REGIONS, params={"chunks": True, "limit": 500}).json()
+    assert not set(active_ids) & {c["id"] for c in unfiltered}  # the bug: active rows pushed past LIMIT
