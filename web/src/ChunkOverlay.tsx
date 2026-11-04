@@ -5,8 +5,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
 import { chunkMark, connectorIds, overrideUi, planOverride, sendOverride, toggleChunk } from "./overrides";
+import type { Refresh } from "./chunkRefresh";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
+
+// The refetch runs when the browser is idle, so it never competes with a pen stroke (INK-079).
+const whenIdle = (f: () => void) =>
+  typeof requestIdleCallback === "function" ? requestIdleCallback(f, { timeout: 2000 }) : setTimeout(f, 0);
 
 function currentView(api: ExcalidrawImperativeAPI): View {
   const s = api.getAppState();
@@ -39,7 +44,8 @@ function useSelection(api: ExcalidrawImperativeAPI): string[] {
 }
 
 /**
- * Active chunks while `on`, refetched after every save (the server re-derives chunks on save).
+ * Active chunks while `on`, refetched when `refresh` fires (after a save, a chunk push, a socket
+ * reconnect or the tablet waking up; the server re-derives chunks on save).
  * Rows are tagged with the `session` (one per time the overlay is turned on) they were fetched in,
  * so a reload keeps the old boxes until the new list arrives, but turning the overlay on again
  * never shows a list from before.
@@ -49,30 +55,36 @@ function useChunks(
   on: boolean,
   session: number,
   status: StatusStore,
+  refresh: Refresh,
 ): [Chunk[], () => void] {
   const [chunks, setChunks] = useState<{ session: number; rows: Chunk[] }>({ session: -1, rows: [] });
   const [generation, setGeneration] = useState(0);
   const reload = useCallback(() => setGeneration((g) => g + 1), []);
   useEffect(() => {
     if (!on) return;
-    // Saves can overlap the fetch: only the latest request may set the list.
+    // Saves can overlap the fetch: only the latest request may set the list. A deferred or
+    // in-flight load from an ended effect (canvas or session changed, unmounted) must not set it.
     let latest = 0;
+    let disposed = false;
     const load = () => {
+      if (disposed) return;
       const n = ++latest;
-      void listChunks(canvas).then((rows) => n === latest && setChunks({ session, rows }));
+      void listChunks(canvas).then((rows) => !disposed && n === latest && setChunks({ session, rows }));
     };
     load();
     let last = status.get().state;
     const unsubscribe = status.subscribe(() => {
       const now = status.get().state;
-      if (now === "saved" && last !== "saved") load();
+      if (now === "saved" && last !== "saved") refresh.fire();
       last = now;
     });
+    const offRefresh = refresh.subscribe(() => whenIdle(load));
     return () => {
-      latest = -1;
+      disposed = true;
       unsubscribe();
+      offRefresh();
     };
-  }, [canvas, on, session, status, generation]);
+  }, [canvas, on, session, status, generation, refresh]);
   return [on && chunks.session === session ? chunks.rows : [], reload];
 }
 
@@ -180,13 +192,14 @@ export function ChunkOverlay(props: {
   status: StatusStore;
   /** Old bounds of an orphaned deep-linked chunk, shown until the notice is dismissed. */
   ghost: Bounds | null;
+  refresh: Refresh;
 }) {
-  const { api, canvas, status, ghost } = props;
+  const { api, canvas, status, ghost, refresh } = props;
   const [on, setOn] = useState(false);
   const [session, setSession] = useState(0);
   const view = useView(api);
   const selected = useSelection(api);
-  const [chunks, reload] = useChunks(canvas, on, session, status);
+  const [chunks, reload] = useChunks(canvas, on, session, status, refresh);
   // Read the scene only when the selection or the list changes, never per stroke point.
   const connectors = useMemo(
     () => (on ? connectorIds(api.getSceneElements() as never) : new Set<string>()),

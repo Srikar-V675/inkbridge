@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from inkbridge import db
+from inkbridge import api, db
 from inkbridge.api import app
 from tests.fts_check import fts_problems
 from tests.integrity_check import successor_problems
@@ -13,6 +13,8 @@ from tests.integrity_check import successor_problems
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("INKBRIDGE_DB", str(tmp_path / "api.db"))
+    db._applied.clear()
+    api._last_writer.clear()
     with TestClient(app) as c:  # context manager runs the lifespan (DB init)
         yield c
 
