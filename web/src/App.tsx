@@ -185,6 +185,7 @@ export default function App() {
           appState: { exportBackground: true, viewBackgroundColor: "#ffffff" },
           files: api.getFiles(),
           mimeType: "image/png",
+          // CropSync skips chunks past 4096 units, so the scale here is never below 0.5 (INK-096).
           maxWidthOrHeight: 2048,
           exportPadding: 10,
         });

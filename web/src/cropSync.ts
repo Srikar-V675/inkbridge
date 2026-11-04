@@ -11,7 +11,26 @@ export interface StaleChunk {
   element_ids: string[];
   status: string;
   png_stale: boolean;
+  bounds?: { width: number; height: number };
 }
+
+// INK-096: the same limit as server/src/inkbridge/imaging.py (a test on each side pins it). The
+// export is capped at 2048 px, so 4096 units keeps the scale >= 0.5; the element cap bounds how
+// long one export blocks the main thread. A chunk past either is never exported or read.
+export const MAX_READ_UNITS = 4096;
+export const MAX_CROP_ELEMENTS = 1500;
+
+/** Why this chunk gets no crop, or null when it can be exported (recomputed every pass). */
+export function cropSkipReason(c: StaleChunk): string | null {
+  const side = c.bounds ? Math.max(c.bounds.width, c.bounds.height) : 0;
+  if (side > MAX_READ_UNITS || c.element_ids.length > MAX_CROP_ELEMENTS) {
+    return `too large to read (${Math.round(side)} units, ${c.element_ids.length} elements)`;
+  }
+  return null;
+}
+
+const BACKOFF_FIRST_MS = 30_000;
+const BACKOFF_MAX_MS = 600_000;
 
 export interface CropSyncOptions {
   documentId: string;
@@ -24,6 +43,8 @@ export interface CropSyncOptions {
   now?: () => number;
   /** Lets the browser handle input between exports (each export blocks the main thread). */
   yieldFn?: () => Promise<void>;
+  /** Gap between two chunk exports, so input is handled between them (default 250 ms). */
+  slotMs?: number;
 }
 
 // INK-033 adds GET /documents/{id}/chunks?png_stale=1; until then the regions list serves it.
@@ -36,6 +57,9 @@ export class CropSync {
   private readonly idleMs: number;
   private readonly now: () => number;
   private readonly yieldFn: () => Promise<void>;
+  private readonly slotMs: number;
+  private readonly skipped = new Set<string>(); // too-large chunks already recorded
+  private readonly failures = new Map<string, { n: number; at: number }>();
   private lastActivity = -Infinity;
   private drawing = false;
   private wanted = false;
@@ -53,6 +77,7 @@ export class CropSync {
     this.fetchFn = options.fetchFn ?? ((...a) => fetch(...a));
     this.idleMs = options.idleMs ?? 2000;
     this.now = options.now ?? (() => Date.now());
+    this.slotMs = options.slotMs ?? 250;
     this.yieldFn = options.yieldFn ?? (() => new Promise((r) => setTimeout(r, 0)));
   }
 
@@ -114,6 +139,13 @@ export class CropSync {
     }, ms);
   }
 
+  /** A chunk that failed is not retried for 30 s, doubling to 10 min; success clears it. */
+  private fail(id: string) {
+    const n = (this.failures.get(id)?.n ?? 0) + 1;
+    const delay = Math.min(BACKOFF_FIRST_MS * 2 ** (n - 1), BACKOFF_MAX_MS);
+    this.failures.set(id, { n, at: this.now() + delay });
+  }
+
   private async run() {
     if (this.disposed || this.running || !this.wanted) return;
     const wait = this.idleLeft();
@@ -136,18 +168,34 @@ export class CropSync {
         (c) => c.png_stale && c.status === "active",
       );
       listed = chunks.length;
-      for (const c of chunks) {
+      const listedIds = new Set(chunks.map((c) => c.id));
+      for (const id of [...this.failures.keys()]) if (!listedIds.has(id)) this.failures.delete(id);
+      const exportable = chunks.filter((c) => {
+        if (!cropSkipReason(c)) return true;
+        if (!this.skipped.has(c.id)) {
+          this.skipped.add(c.id);
+          record("crop.skipped", 0, { elements: c.element_ids.length });
+        }
+        return false;
+      });
+      const ready = () => exportable.filter((c) => this.now() >= (this.failures.get(c.id)?.at ?? 0));
+      for (const c of ready()) {
         await this.yieldFn(); // a pen-down queued during the last upload is handled first
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
         let png: Blob | null;
+        const e0 = performance.now();
         try {
           png = await this.o.exportPng(c.element_ids);
         } catch {
           png = null; // one chunk that cannot be rendered must not starve the chunks after it
         }
+        record("crop.export", performance.now() - e0, { elements: c.element_ids.length });
         // An edit during the export may be in the picture but not in the saved scene: drop it.
         if (this.busy(since, version)) return void (this.wanted = !this.disposed);
-        if (!png) continue;
+        if (!png) {
+          this.fail(c.id);
+          continue;
+        }
         const form = new FormData();
         form.append("image", png, `${c.id}.png`);
         form.append("scene_version", String(version));
@@ -159,13 +207,18 @@ export class CropSync {
         record("crop.upload", performance.now() - u0, { bytes: png.size });
         // 409: the stored scene moved on (another tab saved); wait for this tab's next save.
         if (put.status === 409) return void (this.refusedAt = version);
+        if (put.ok) this.failures.delete(c.id);
+        else this.fail(c.id);
+        // One chunk per idle slot: the rest follows after slotMs, if the canvas is still idle.
+        this.wanted = ready().some((o) => o.id !== c.id);
+        return;
       }
     } catch {
       // API unreachable: the crops stay stale and the next request or poll catches up.
     } finally {
       if (listed) record("crop.pass", performance.now() - t0, { chunks: listed });
       this.running = false;
-      if (this.wanted) this.schedule(this.idleLeft());
+      if (this.wanted) this.schedule(Math.max(this.idleLeft(), this.slotMs));
     }
   }
 }

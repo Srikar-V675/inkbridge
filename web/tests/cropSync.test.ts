@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { CropSync, type StaleChunk } from "../src/cropSync.ts";
+import { CropSync, MAX_CROP_ELEMENTS, MAX_READ_UNITS, type StaleChunk } from "../src/cropSync.ts";
+import { setTimingSink } from "../src/timing.ts";
 
 const settle = async () => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
@@ -22,13 +23,18 @@ function harness(
   const lists = opts.lists ?? [[chunk("c1"), chunk("c2")]];
   const putStatus = opts.putStatus ?? [];
   const calls: Call[] = [];
+  const uploaded = new Set<string>(); // the server clears png_stale once a crop is stored
   const exported: string[][] = [];
   const fetchFn = (async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const version = init?.body instanceof FormData ? (init.body.get("scene_version") as string) : undefined;
     calls.push({ url, method, version });
-    if (method === "GET") return json(200, lists.length > 1 ? lists.shift() : lists[0]);
-    return json(putStatus.shift() ?? 200, {});
+    if (method === "GET") {
+      return json(200, (lists.length > 1 ? lists.shift()! : lists[0]).filter((c) => !uploaded.has(c.id)));
+    }
+    const status = putStatus.shift() ?? 200;
+    if (status === 200) uploaded.add(String(url).split("/")[2]);
+    return json(status, {});
   }) as unknown as typeof fetch;
   const h = {
     calls,
@@ -68,6 +74,7 @@ describe("CropSync", () => {
     await h.advance(1900);
     assert.equal(h.calls.length, 0, "nothing before the canvas has been idle for 2 s");
     await h.advance(100);
+    await h.advance(250); // one chunk per idle slot
     assert.equal(h.gets()[0].url, "/documents/doc%201/regions?chunks=true&png_stale=true&status=active&limit=500");
     assert.deepEqual(h.exported, [["c1-e"], ["c2-e"]]);
     assert.deepEqual(
@@ -90,6 +97,7 @@ describe("CropSync", () => {
     await h.advance(1999);
     assert.equal(h.exported.length, 0, "the idle clock restarts when the pen lifts");
     await h.advance(1);
+    await h.advance(250);
     assert.equal(h.exported.length, 2);
   });
 
@@ -107,6 +115,7 @@ describe("CropSync", () => {
     h.onExport = () => {};
     h.sync.setDrawing(false);
     await h.advance(2000);
+    await h.advance(250);
     assert.deepEqual(h.puts().map((c) => c.url), ["/regions/c2/image", "/regions/c3/image"]);
   });
 
@@ -119,6 +128,7 @@ describe("CropSync", () => {
     version = 7;
     h.sync.request(); // App calls this on every "saved" state
     await h.advance(2000);
+    await h.advance(250);
     assert.deepEqual(h.puts().map((c) => c.version), ["7", "7"]);
   });
 
@@ -130,6 +140,7 @@ describe("CropSync", () => {
     assert.equal(h.calls.length, 0);
     version = 5; // the save finished, but no further "saved" state follows
     await h.advance(2000);
+    await h.advance(250);
     assert.deepEqual(h.puts().map((c) => c.version), ["5", "5"]);
   });
 
@@ -196,6 +207,7 @@ describe("CropSync", () => {
     version = 5; // this tab saved (or reloaded)
     h.sync.request();
     await h.advance(2000);
+    await h.advance(250);
     assert.deepEqual(h.puts().map((c) => c.version), ["4", "5", "5"]);
   });
 
@@ -239,5 +251,82 @@ describe("CropSync", () => {
     await h.advance(10);
     assert.equal(h.puts().length, 1);
     sync.dispose();
+  });
+
+  it("pins the limit that the server mirrors", () => {
+    assert.equal(MAX_READ_UNITS, 4096);
+    assert.equal(MAX_CROP_ELEMENTS, 1500);
+  });
+
+  const manyIds = (n: number) => Array.from({ length: n }, (_, i) => `e${i}`);
+  const big = (id: string): StaleChunk => ({ ...chunk(id), bounds: { width: 5000, height: 40 } });
+  const crowded = (id: string): StaleChunk => chunk(id, manyIds(MAX_CROP_ELEMENTS + 1));
+  const sized = (id: string): StaleChunk => ({
+    ...chunk(id),
+    bounds: { width: MAX_READ_UNITS, height: 10 },
+  });
+
+  it("never exports or uploads a too-large chunk, and does not retry it on later idle cycles", async () => {
+    const h = harness({ lists: [[big("huge"), crowded("busy"), sized("ok")]] });
+    h.sync.request();
+    await h.advance(2000);
+    assert.deepEqual(h.exported, [["ok-e"]], "only the readable chunk, 4096 units exactly");
+    assert.deepEqual(h.puts().map((c) => c.url), ["/regions/ok/image"]);
+    for (let i = 0; i < 2; i++) {
+      h.sync.request();
+      await h.advance(2000);
+    }
+    assert.deepEqual(h.exported, [["ok-e"]], "the big ones are never retried");
+    assert.equal(h.gets().length, 3, "each idle cycle costs one list call, no export");
+  });
+
+  it("exports one chunk per idle slot, slotMs apart", async () => {
+    const h = harness({ lists: [[chunk("c1"), chunk("c2")]] });
+    h.sync.request();
+    await h.advance(2000);
+    assert.equal(h.exported.length, 1);
+    await h.advance(249);
+    assert.equal(h.exported.length, 1);
+    await h.advance(1);
+    assert.equal(h.exported.length, 2);
+  });
+
+  it("a failed export is not retried until its backoff (30 s, doubling) has passed", async () => {
+    const h = harness({ lists: [[chunk("c1")]] });
+    let fail = true;
+    h.onExport = () => {
+      if (fail) throw new Error("render failed");
+    };
+    h.sync.request();
+    await h.advance(2000);
+    assert.equal(h.exported.length, 1);
+    h.sync.request();
+    await h.advance(29_000);
+    assert.equal(h.exported.length, 1, "inside the backoff");
+    h.sync.request();
+    await h.advance(2000);
+    assert.equal(h.exported.length, 2, "30 s later it is tried again");
+    h.sync.request();
+    await h.advance(31_000);
+    assert.equal(h.exported.length, 2, "the second failure waits 60 s");
+    fail = false;
+    h.sync.request();
+    await h.advance(30_000);
+    assert.equal(h.exported.length, 3);
+    assert.equal(h.puts().length, 1);
+  });
+
+  it("records crop.export and crop.skipped marks", async () => {
+    const marks: { name: string; counts: Record<string, number> }[] = [];
+    setTimingSink((m) => marks.push(m));
+    try {
+      const h = harness({ lists: [[big("huge"), chunk("c1", manyIds(3))]] });
+      h.sync.request();
+      await h.advance(2000);
+      assert.deepEqual(marks.find((m) => m.name === "crop.export")?.counts, { elements: 3 });
+      assert.ok(marks.some((m) => m.name === "crop.skipped"));
+    } finally {
+      setTimingSink(() => {});
+    }
   });
 });
