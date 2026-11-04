@@ -128,8 +128,16 @@ async function patchAccepted(opIds: string[], patch: typeof patchOp): Promise<Re
   return out;
 }
 
-/** Re-PATCH `accepted` for ops whose scene was already saved; never touches the scene. */
-export function retryAccept(opIds: string[], patch: typeof patchOp = patchOp): Promise<ResolveSummary> {
+/**
+ * Retry an accept whose save or PATCH failed. Re-saves first when `save` is given (the scene was
+ * already rewritten locally), then PATCHes `accepted`; a failed save PATCHes nothing.
+ */
+export async function retryAccept(
+  opIds: string[],
+  patch: typeof patchOp = patchOp,
+  save?: () => Promise<boolean>,
+): Promise<ResolveSummary> {
+  if (save && !(await save())) return { ...failAll(opIds, "could not save"), retry: opIds };
   return patchAccepted(opIds, patch);
 }
 
@@ -163,8 +171,8 @@ export async function applyVerdict(
     for (const id of ready) els = acceptOp(els, `${id}:`);
     p.setScene(els);
     if (!(await p.save())) {
-      const saveFailed = failAll(ready, "could not save");
-      return { ...saveFailed, failed: [...saveFailed.failed, ...notReady] };
+      const out = failAll(ready, "could not save");
+      return { ...out, failed: [...out.failed, ...notReady], retry: ready };
     }
     const out = await patchAccepted(ready, p.patch);
     out.failed.push(...notReady);
