@@ -62,11 +62,14 @@ function useChunks(
   const reload = useCallback(() => setGeneration((g) => g + 1), []);
   useEffect(() => {
     if (!on) return;
-    // Saves can overlap the fetch: only the latest request may set the list.
+    // Saves can overlap the fetch: only the latest request may set the list. A deferred or
+    // in-flight load from an ended effect (canvas or session changed, unmounted) must not set it.
     let latest = 0;
+    let disposed = false;
     const load = () => {
+      if (disposed) return;
       const n = ++latest;
-      void listChunks(canvas).then((rows) => n === latest && setChunks({ session, rows }));
+      void listChunks(canvas).then((rows) => !disposed && n === latest && setChunks({ session, rows }));
     };
     load();
     let last = status.get().state;
@@ -77,7 +80,7 @@ function useChunks(
     });
     const offRefresh = refresh.subscribe(() => whenIdle(load));
     return () => {
-      latest = -1;
+      disposed = true;
       unsubscribe();
       offRefresh();
     };

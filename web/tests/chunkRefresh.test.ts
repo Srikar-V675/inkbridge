@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createRefresh, onVisible } from "../src/chunkRefresh.ts";
+import { createRefresh, onVisible, wireRefresh, type Refresh } from "../src/chunkRefresh.ts";
 
 function fakeTimers() {
   const pending: Array<() => void> = [];
@@ -63,6 +63,63 @@ describe("createRefresh", () => {
     off();
     timers.runAll();
     assert.equal(calls, 0);
+  });
+});
+
+describe("createRefresh dispose", () => {
+  it("clears a pending burst, and the signal works again afterwards", () => {
+    const cleared: unknown[] = [];
+    const timers: Array<() => void> = [];
+    const r = createRefresh(800, (fn) => (timers.push(fn), timers.length), (h) => cleared.push(h));
+    let calls = 0;
+    r.subscribe(() => calls++);
+    r.fire();
+    r.dispose();
+    assert.deepEqual(cleared, [1]);
+    r.fire();
+    assert.equal(timers.length, 2);
+    timers[1]();
+    assert.equal(calls, 1);
+  });
+});
+
+function countingRefresh() {
+  let fires = 0;
+  const r: Refresh = { fire: () => void fires++, subscribe: () => () => {}, dispose: () => {} };
+  return { r, fires: () => fires };
+}
+
+describe("wireRefresh", () => {
+  it("fires on a chunk push", () => {
+    const c = countingRefresh();
+    const w = wireRefresh(c.r, fakeDoc("hidden"));
+    w.onChunksUpdated();
+    assert.equal(c.fires(), 1);
+    w.off();
+  });
+
+  it("fires on connect only, not on disconnect", () => {
+    const c = countingRefresh();
+    const w = wireRefresh(c.r, fakeDoc("hidden"));
+    w.onConnection(false);
+    assert.equal(c.fires(), 0);
+    w.onConnection(true);
+    assert.equal(c.fires(), 1);
+    w.off();
+  });
+
+  it("fires when the document becomes visible, and off() stops it", () => {
+    const c = countingRefresh();
+    const doc = fakeDoc("hidden");
+    const w = wireRefresh(c.r, doc);
+    doc.dispatch("visibilitychange");
+    assert.equal(c.fires(), 0);
+    doc.visibilityState = "visible";
+    doc.dispatch("visibilitychange");
+    assert.equal(c.fires(), 1);
+    w.off();
+    doc.dispatch("visibilitychange");
+    assert.equal(c.fires(), 1);
   });
 });
 

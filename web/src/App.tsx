@@ -3,7 +3,7 @@ import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "./ChunkOverlay";
-import { createRefresh, onVisible } from "./chunkRefresh";
+import { createRefresh, wireRefresh } from "./chunkRefresh";
 import { DraftBar } from "./DraftBar";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
 import { CropSync } from "./cropSync";
@@ -149,6 +149,7 @@ export default function App() {
   const route = useMemo(() => readRoute(), []);
   const status = useMemo(() => createStatusStore(), []);
   const refresh = useMemo(() => createRefresh(), []);
+  useEffect(() => () => refresh.dispose(), [refresh]); // drop a pending refetch on unmount
   const [initial, setInitial] = useState<Initial>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
@@ -292,6 +293,7 @@ export default function App() {
       api.updateScene({ elements: rejectOp(scene, prefix) as never });
     };
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    const wire = wireRefresh(refresh, document);
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}`,
       onOp: async (op) => {
@@ -325,12 +327,10 @@ export default function App() {
       // A save left chunks with stale crops: export them once the canvas is idle (INK-057).
       onChunksUpdated: () => {
         cropRef.current?.request();
-        refresh.fire();
+        wire.onChunksUpdated();
       },
-      // A push lost while the socket was down is gone, so refetch the chunk list on every connect.
-      onConnection: (connected) => {
-        if (connected) refresh.fire();
-      },
+      // A push lost while the socket was down is gone, so the chunk list refetches on every connect.
+      onConnection: wire.onConnection,
       // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
       onOpUpdated: (m) => {
         if (DEAD.includes(m.status)) sweep(m.op_id);
@@ -343,10 +343,9 @@ export default function App() {
       },
     });
     socket.start();
-    const offVisible = onVisible(document, () => refresh.fire());
     return () => {
       socket.dispose();
-      offVisible();
+      wire.off();
     };
   }, [canvasReady, route.canvas, apiReady, refresh]);
 
