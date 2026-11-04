@@ -211,6 +211,14 @@ describe("SceneSync", () => {
     assert.equal(mergeScenes([el("a", 5, { from: "server" })], [el("a", 5, { from: "local" })])[0].from, "server");
   });
 
+  it("mergeScenes breaks version ties by versionNonce the same way on both tabs", () => {
+    const a = el("x", 5, { versionNonce: 10, from: "A" });
+    const b = el("x", 5, { versionNonce: 20, from: "B" });
+    assert.equal(mergeScenes([b], [a])[0].from, "A"); // tab A: server holds B, lower nonce wins
+    assert.equal(mergeScenes([a], [b])[0].from, "A"); // tab B: server holds A, A still wins
+    assert.equal(mergeScenes([{ ...a, from: "S" }], [a])[0].from, "S"); // same nonce: server copy
+  });
+
   it("keeps edits in memory after a 4xx and says they are unsaved", async () => {
     const h = harness([
       json(200, { version: 1, elements: [] }),
@@ -474,5 +482,35 @@ describe("delta saves (INK-075)", () => {
     assert.equal(last.body?.base_version, 5);
     assert.deepEqual(last.body?.elements, [el("m")]);
     assert.equal((last.body as { delta?: boolean }).delta, true);
+  });
+
+  // Both tabs bumped x to version 6 from 5; the server copy (nonce 20) is the other tab's edit.
+  const tieHarness = () =>
+    harness([
+      json(200, { version: 5, elements: [el("x", 5, { versionNonce: 20 })] }),
+      json(409, { detail: { current_version: 6 } }),
+      json(200, { version: 6, elements: [el("x", 6, { versionNonce: 20, x: 100 })] }),
+      json(200, { version: 7 }),
+    ]);
+
+  it("a local delete that wins a version tie is saved", async () => {
+    const h = tieHarness();
+    await h.sync.load();
+    h.sync.notify([el("x", 6, { versionNonce: 10, isDeleted: true })]);
+    await h.sync.flushNow(); // 409, reload: the tie is won locally, so a save must follow
+    mock.timers.tick(2000);
+    await settle();
+    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
+    assert.equal(put.body?.base_version, 6);
+    assert.equal(put.body?.elements.find((e) => e.id === "x")?.isDeleted, true);
+  });
+
+  it("a local edit that loses a tie is reported, and the server copy is kept", async () => {
+    const h = tieHarness();
+    await h.sync.load();
+    h.sync.notify([el("x", 6, { versionNonce: 30, isDeleted: true })]);
+    await h.sync.flushNow();
+    assert.match(h.details.at(-1) ?? "", /1 of your edits/);
+    assert.equal(h.reloads.at(-1)?.find((e) => e.id === "x")?.x, 100);
   });
 });
