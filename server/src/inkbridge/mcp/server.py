@@ -114,6 +114,8 @@ def get_region(
 
     An orphaned (replaced or deleted) chunk returns only {id, status, live_successor, note}: its
     old ink is not served; read the live successor, or call read_canvas.
+    read_status `too_large` means the chunk is not readable at a useful scale: no image is sent;
+    ask the user to split it, do not guess its content.
     """
     client = get_client()
     try:
@@ -151,10 +153,16 @@ def get_region(
             meta["ink"] = client.get_ink(region_id)
         if include_sketch:
             meta["sketch"] = client.get_sketch(region_id)
+        why = imaging.unreadable_reason(r["bounds"], r["stroke_count"])
+        meta["read_status"] = "too_large" if why else "ok"
+        meta["read_note"] = why
         content: list = [_dump(meta)]
     except ApiError as e:
         raise ToolError(str(e)) from e
-    if include_image:
+    if why:
+        # A crop of this chunk would be downscaled past reading (INK-096): say so, send no image.
+        content.append(f"(no image: {why})")
+    elif include_image:
         try:
             content.append(Image(data=client.get_image(region_id), format="png"))
         except NotFound:
@@ -340,6 +348,8 @@ _OUTLINE_FIELDS = (
     "text_hash",
     "links",
     "deep_link",
+    "read_status",
+    "read_note",
 )
 
 
@@ -413,6 +423,8 @@ def read_canvas(
     chunk has not been read yet: call get_region with its id to look at its image instead. A very
     large canvas is cut at a size cap; the reply then says how many chunks were omitted and which
     offset continues it.
+    read_status `too_large` (with read_note) means the chunk is not readable at a useful scale:
+    ask the user to split it, do not guess.
     The overview images are for orientation only: a spread-out canvas is drawn in several images
     (at most three per call, in reading order), and the reply names the offset that continues
     them. Read a chunk's ink and reading with get_region.
