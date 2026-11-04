@@ -114,6 +114,16 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
         raise HTTPException(404, "document not found") from None
     except ops_db.ExistingElementIds as e:
         raise _existing(e.ids) from None
+    except ops_db.AnchorGone:
+        raise HTTPException(
+            422,
+            {
+                "code": "anchor_gone",
+                "anchor": payload.anchor,
+                "msg": f"chunk {payload.anchor!r} no longer exists on the canvas; "
+                "call read_canvas for current chunks",
+            },
+        ) from None
     except ops_db.AnchorNotFound:
         raise HTTPException(
             422,

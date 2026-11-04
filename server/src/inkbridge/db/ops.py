@@ -41,6 +41,10 @@ class AnchorNotFound(Exception):
     pass
 
 
+class AnchorGone(AnchorNotFound):
+    """The anchor chunk was deleted and no live successor remains (INK-084)."""
+
+
 class OpNotFound(Exception):
     pass
 
@@ -154,7 +158,8 @@ def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[f
 def _resolve_anchor(conn, document_id, region_id):
     """The anchor chunk, or its live successor when a re-chunk orphaned it (INK-081).
 
-    An orphan with no successor keeps its own last box. Read-only on regions.
+    An orphan with no live successor is refused (AnchorGone): its box is deleted ink.
+    Read-only on regions.
     """
     seen = set()
     while region_id not in seen:
@@ -166,10 +171,12 @@ def _resolve_anchor(conn, document_id, region_id):
         ).fetchone()
         if row is None or not row["bbox"]:
             raise AnchorNotFound(region_id)
-        if row["status"] == "active" or not row["successor_of"]:
+        if row["status"] == "active":
             return row
+        if not row["successor_of"]:
+            raise AnchorGone(region_id)
         region_id = row["successor_of"]
-    raise AnchorNotFound(region_id)  # successor cycle
+    raise AnchorGone(region_id)  # successor cycle
 
 
 def _create_op(conn, document_id, op_type, payload, op_id):
