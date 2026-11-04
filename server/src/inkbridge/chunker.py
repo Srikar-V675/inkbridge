@@ -312,6 +312,25 @@ def pin_groups(elements: list[dict[str, Any]], pins: Sequence[Collection[str]]) 
     return out
 
 
+def agent_op(e: dict[str, Any]) -> str | None:
+    """Op id of an accepted agent element, else None. The id prefix is the trust check."""
+    cd = e.get("customData") or {}
+    op = cd.get("op_id")
+    if cd.get("author") != "agent" or cd.get("draft") or not isinstance(op, str):
+        return None
+    return op if str(e.get("id", "")).startswith(f"{op}:") else None
+
+
+def agent_groups(elements: list[dict[str, Any]]) -> list[list[str]]:
+    """Each op's accepted elements, in op id order (INK-078, docs/decisions/0044)."""
+    by_op: dict[str, list[str]] = {}
+    for e in elements:
+        op = agent_op(e)
+        if op is not None:
+            by_op.setdefault(op, []).append(str(e["id"]))
+    return [by_op[k] for k in sorted(by_op)]
+
+
 def _live(element: dict[str, Any]) -> bool:
     return not element.get("isDeleted") and not is_draft(element)
 
@@ -347,10 +366,13 @@ def chunk_scene(
     links instead), and connectors still attach to it.
     """
     config = config or ChunkerConfig()
-    pinned_groups = pin_groups(elements, pins)
-    groups, median = _proximity(elements, config, exclude={i for g in pinned_groups for i in g})
+    manual = pin_groups(elements, pins)
+    taken = {i for g in manual for i in g}
+    # Accepted agent ink is one forced group per op, so it never merges into user chunks.
+    agent = pin_groups(elements, [[i for i in g if i not in taken] for g in agent_groups(elements)])
+    groups, median = _proximity(elements, config, exclude=taken | {i for g in agent for i in g})
     first_pinned = len(groups)
-    groups = groups + pinned_groups
+    groups = groups + manual + agent
     by_id = {str(e.get("id")): e for e in elements}
     owner = {eid: gi for gi, members in enumerate(groups) for eid in members}
     boxes = [bbox_of([by_id[i] for i in members]) for members in groups]
@@ -442,8 +464,9 @@ def chunk_scene(
     )
     index = {r: i for i, (_, r) in enumerate(final) if r is not None}
     links = sorted({(index[a], index[b]) for a, b in raw_links})
-    # Pinned groups never union, so each is its own root.
-    pinned = [r is not None and r >= first_pinned for _, r in final]
+    # Pinned and agent groups never union, so each is its own root; only manual ones are pins.
+    last_manual = first_pinned + len(manual)
+    pinned = [r is not None and first_pinned <= r < last_manual for _, r in final]
     return Chunking([m for m, _ in final], links, pinned)
 
 
