@@ -1043,7 +1043,7 @@ def recognition_candidates(conn: sqlite3.Connection, document_id: str) -> list[d
     ink keeps its content_hash and so its reading, and a user or agent reading needs no model call.
     """
     rows = conn.execute(
-        "SELECT r.id, r.content_hash, r.png_path FROM regions r"
+        "SELECT r.id, r.content_hash, r.png_path, r.bbox, r.element_ids_json FROM regions r"
         " WHERE r.document_id = ? AND r.status = 'active' AND r.png_stale = 0"
         " AND r.content_hash IS NOT NULL"
         " AND NOT EXISTS (SELECT 1 FROM recognitions c"
