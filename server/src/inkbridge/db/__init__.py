@@ -7,7 +7,7 @@ import sqlite3
 import time
 import uuid
 from collections import OrderedDict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from inkbridge import config
@@ -39,6 +39,8 @@ SLOW_SAVE_S = 1.0  # a scene save slower than this is logged at warning (INK-072
 DEFAULT_DOCUMENT_ID = "default"
 RECOGNITION_SOURCES = ("user", "agent", "gemini")
 AUTO = "auto"  # regions.created_by of chunks the chunker owns; anything else is a manual region
+ORPHAN_KEEP = 40  # newest orphaned chunks kept per canvas (undo, check_sync chains; INK-087)
+ORPHAN_MAX_AGE_DAYS = 14  # and none older than this (decision 0048)
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
@@ -264,6 +266,7 @@ def put_scene(
     """
     now = _now()
     recorded = False
+    crops: list[str] = []
     conn.execute("BEGIN IMMEDIATE")  # read the old scene and replace it under one write lock
     try:
         old = conn.execute(
@@ -301,6 +304,7 @@ def put_scene(
         _refresh_regions(conn, document_id, by_id, changed, now)
         t3 = time.perf_counter()
         _sync_chunks(conn, document_id, elements, by_id, changed, now, chunker_config)
+        crops = _gc_orphans(conn, document_id, now)
         t4 = time.perf_counter()
         conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
         if save_key is not None:  # recorded under the write lock, so a blocked retry sees it
@@ -309,6 +313,11 @@ def put_scene(
             while len(_applied) > APPLIED_CAP:
                 _applied.popitem(last=False)
         conn.commit()
+        for path in crops:  # after the commit: a rollback must not lose files
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                log.debug("could not remove crop %s", path)
     except BaseException:
         if recorded:
             _applied.pop((document_id, save_key), None)
@@ -532,6 +541,39 @@ def _refresh_regions(
         )
         if new_content != row["content_hash"]:
             _reindex_region(conn, row["id"])  # old reading no longer describes the ink
+
+
+def _gc_orphans(conn: sqlite3.Connection, document_id: str, now: str) -> list[str]:
+    """Delete auto orphans outside the retention window; returns crop paths to unlink after commit."""
+    cutoff = (datetime.fromisoformat(now) - timedelta(days=ORPHAN_MAX_AGE_DAYS)).isoformat()
+    rows = conn.execute(
+        "SELECT id, successor_of, updated_at, png_path FROM regions"
+        " WHERE document_id = ? AND created_by = ? AND status = 'orphaned'"
+        " ORDER BY updated_at DESC, id",
+        (document_id, AUTO),
+    ).fetchall()
+    if not rows:
+        return []
+    by_id = {r["id"]: r for r in rows}
+    keep = {r["id"] for r in rows[:ORPHAN_KEEP] if r["updated_at"] >= cutoff}
+    stack = list(keep)
+    while stack:  # successor chains of kept orphans stay intact
+        nxt = by_id[stack.pop()]["successor_of"]
+        if nxt in by_id and nxt not in keep:
+            keep.add(nxt)
+            stack.append(nxt)
+    doomed = [r for r in rows if r["id"] not in keep]
+    for i in range(0, len(doomed), 400):  # stay under SQLite's variable limit
+        ids = [r["id"] for r in doomed[i : i + 400]]
+        marks = ",".join("?" * len(ids))
+        conn.execute(f"DELETE FROM recognitions WHERE region_id IN ({marks})", ids)
+        conn.execute(f"DELETE FROM region_fts WHERE region_id IN ({marks})", ids)
+        conn.execute(
+            f"DELETE FROM links WHERE from_region IN ({marks}) OR to_region IN ({marks})",
+            ids + ids,
+        )
+        conn.execute(f"DELETE FROM regions WHERE id IN ({marks})", ids)
+    return [r["png_path"] for r in doomed if r["png_path"]]
 
 
 def _sync_chunks(
