@@ -14,6 +14,7 @@ from inkbridge import db
 from inkbridge.api import chunks, ops, overrides, questions, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
+from inkbridge.ask_runner import AskWorker
 from inkbridge.recognition_worker import RecognitionWorker
 from inkbridge.timing import RequestTiming, configure_logging
 
@@ -27,11 +28,19 @@ async def lifespan(app: FastAPI):
     if worker is not None:
         worker.start()
     app.state.recognition_worker = worker  # check_sync asks it for readings (INK-036)
+    ask = AskWorker.from_env()  # off unless INKBRIDGE_RUNNER is set (decision 0007)
+    if ask:
+        ask.start()
+    app.state.ask_worker = ask
     try:
         yield
     finally:
-        if worker is not None:
-            worker.stop()
+        try:
+            if worker is not None:
+                worker.stop()
+        finally:
+            if ask:
+                ask.stop()
 
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)

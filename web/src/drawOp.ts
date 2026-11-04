@@ -2,13 +2,13 @@
 import { convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { timed } from "./timing";
-import { opElements, opFontSize, toDrafts, type DraftElement, type PendingOp } from "./drafts";
+import { opElements, opFontSize, toDrafts, wrapText, type DraftElement, type PendingOp } from "./drafts";
 
 type Skeleton = Parameters<typeof convertToExcalidrawElements>[0];
 
 async function skeletonFor(op: PendingOp, fontSize: number): Promise<Skeleton> {
   if (op.op_type === "write_text") {
-    return [{ type: "text", x: 0, y: 0, text: op.payload.text ?? "", fontSize }] as Skeleton;
+    return [{ type: "text", x: 0, y: 0, text: wrapText(op.payload.text ?? "", op.payload.wrap_chars), fontSize }] as Skeleton;
   }
   // Mermaid conversion only runs in the browser; load it on first use.
   const { parseMermaidToExcalidraw } = await import("@excalidraw/mermaid-to-excalidraw");

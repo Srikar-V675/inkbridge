@@ -462,15 +462,62 @@ def test_empty_canvas_uses_the_default_font(client):
     assert _font(client) == DEFAULT_FONT
 
 
-def test_sparse_anchor_chunk_falls_back_to_the_page_sample(client):
+def test_sparse_anchor_falls_back_to_latest_strokes_not_default(client):
     from inkbridge.placement import DEFAULT_FONT
 
     shape = {"id": "box", "type": "rectangle", "x": 9000, "y": 9000, "width": 50, "height": 50}
-    seed(client, _strokes("t", 0, 0, 60) + [shape])
-    rid = _anchor_region(["box"])
-    page = _font(client)
-    assert page != DEFAULT_FONT
-    assert _font(client, anchor=rid) == page
+    seed(client, _strokes("o", 0, 0, 10, n=2) + _strokes("t", 5000, 0, 200, n=60) + [shape])
+    big = _font(client)
+    assert big > DEFAULT_FONT
+    assert _font(client, anchor=_anchor_region(["box"])) == big
+    assert _font(client, anchor=_anchor_region(["o0", "o1"])) == big  # 2 strokes < MIN_SAMPLES
+
+
+def test_font_size_at_10x_is_10x_of_1x(client):
+    seed(client, _strokes("s", 0, 0, 20))
+    one = _font(client)
+    seed(client, _strokes("s", 0, 0, 200))
+    ten = _font(client)
+    assert abs(ten - 10 * one) <= 1 and ten > 64
+
+
+def _gap(client, height, prefix, x):
+    seed(client, _strokes(prefix, x, 0, height))
+    rid = _anchor_region([f"{prefix}{i}" for i in range(5)])
+    conn = db.connect()
+    try:
+        bbox = json.loads(
+            conn.execute("SELECT bbox FROM regions WHERE id = ?", (rid,)).fetchone()[0]
+        )
+    finally:
+        conn.close()
+    op = client.post(
+        OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": rid}}
+    ).json()
+    return op["payload"]["placement"]["x"] - (bbox["x"] + bbox["width"])
+
+
+def test_placement_gap_scales_with_ink(client):
+    assert _gap(client, 20, "a", 0) == 40
+    assert _gap(client, 200, "b", 90000) >= 200
+
+
+def test_same_anchor_same_size_across_ops_and_after_accept(client):
+    seed(client, _strokes("s", 0, 0, 40))
+    rid = _anchor_region([f"s{i}" for i in range(5)])
+    first = client.post(
+        OPS, json={"type": "write_text", "payload": {"text": "a", "anchor": rid}}
+    ).json()
+    second = _font(client, anchor=rid)
+    assert second == first["payload"]["font_size"]
+    assert ack(client, first["id"], [own(first["id"])]).status_code == 200
+    assert client.patch(f"/ops/{first['id']}", json={"status": "accepted"}).status_code == 200
+    assert _font(client, anchor=rid) == second
+
+
+def test_client_cannot_set_wrap_chars(client):  # payload models forbid extras; keep it that way
+    r = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "wrap_chars": 5}})
+    assert r.status_code == 422
 
 
 def test_agent_drafts_do_not_feed_back_into_scale(client):

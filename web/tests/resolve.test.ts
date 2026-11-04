@@ -134,6 +134,14 @@ function makePorts(initial: DraftElement[], opts: { saveOk?: boolean; failIds?: 
   return { ports, log, get els() { return els; } };
 }
 
+describe("acceptOp", () => {
+  it("leaves the text size alone", () => {
+    const t = { id: "a:1", type: "text", x: 0, y: 0, fontSize: 450, width: 900, height: 560, version: 1, customData: { draft: true, op_id: "a" } } as DraftElement;
+    const [out] = acceptOp([t], "a:") as unknown as Record<string, unknown>[];
+    assert.deepEqual([out.fontSize, out.width, out.height], [450, 900, 560]);
+  });
+});
+
 describe("applyVerdict", () => {
   const user: DraftElement = { id: "user1", type: "freedraw", x: 0, y: 0, version: 1 };
 
