@@ -14,6 +14,7 @@ Lifecycle: pending -> delivered -> applied -> accepted | rejected, plus failed a
 import json
 import sqlite3
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from inkbridge import placement
@@ -51,10 +52,15 @@ class OpNotFound(Exception):
 
 
 MAX_OPEN_OPS = 200  # pending or delivered per canvas: an agent loop cannot queue drafts forever
+OP_TTL_S = 24 * 3600  # pending/delivered ops older than this are expired, never drawn (INK-088)
 
 
 class TooManyOpen(Exception):
     """The canvas already has MAX_OPEN_OPS ops that no browser has drawn yet."""
+
+    def __init__(self, document_id: str, count: int, since: str | None):
+        super().__init__(document_id)
+        self.count, self.since = count, since
 
 
 class OpConflict(Exception):
@@ -140,6 +146,19 @@ def create_op(
         raise
 
 
+def _expire_stale(conn: sqlite3.Connection, document_id: str) -> int:
+    """Caller owns the transaction. Returns how many ops were expired.
+
+    Applied ops are kept: their drafts are on the canvas awaiting Accept or Reject.
+    """
+    cutoff = (datetime.now(UTC) - timedelta(seconds=OP_TTL_S)).isoformat()
+    return conn.execute(
+        "UPDATE agent_ops SET status = 'expired' WHERE document_id = ?"
+        " AND status IN ('pending', 'delivered') AND created_at IS NOT NULL AND created_at < ?",
+        (document_id, cutoff),
+    ).rowcount
+
+
 def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[float]:
     """Heights of the user's live freedraw strokes (drafts and agent ink never count)."""
     out = []
@@ -211,12 +230,14 @@ def _create_op(conn, document_id, op_type, payload, op_id):
                 raise OpConflict(op_id)
             conn.rollback()
             return existing, False
-    open_ops = conn.execute(
-        "SELECT COUNT(*) FROM agent_ops WHERE document_id = ? AND status IN ('pending', 'delivered')",
+    _expire_stale(conn, document_id)  # an expired op must not hold a slot
+    open_ops, oldest = conn.execute(
+        "SELECT COUNT(*), MIN(created_at) FROM agent_ops WHERE document_id = ?"
+        " AND status IN ('pending', 'delivered')",
         (document_id,),
-    ).fetchone()[0]
+    ).fetchone()
     if open_ops >= MAX_OPEN_OPS:
-        raise TooManyOpen(document_id)
+        raise TooManyOpen(document_id, open_ops, oldest)
     elements = _scene_elements(conn, document_id)
     ids = referenced_existing_ids(payload, elements)
     oid = op_id or uuid.uuid4().hex[:12]
@@ -296,6 +317,14 @@ def get_op(conn: sqlite3.Connection, op_id: str) -> dict:
 def list_ops(
     conn: sqlite3.Connection, document_id: str, statuses: list[str] | None = None
 ) -> list[dict]:
+    if not conn.in_transaction:  # the sweep writes; a caller already in a transaction keeps its own
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _expire_stale(conn, document_id)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
     sql = "SELECT * FROM agent_ops WHERE document_id = ?"
     args: list = [document_id]
     if statuses:

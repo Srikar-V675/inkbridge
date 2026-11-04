@@ -237,3 +237,20 @@ def test_a_page_from_this_host_can_connect(client):
     op = write(client)
     with client.websocket_connect(WS, headers={"origin": "http://testserver"}) as ws:
         assert recv(ws)["op_id"] == op["id"]
+
+
+def test_expired_ops_are_not_replayed_but_fresh_ones_are(client):
+    from datetime import UTC, datetime, timedelta
+
+    old = write(client, "old")
+    fresh = write(client, "fresh")
+    ts = (datetime.now(UTC) - timedelta(hours=25)).isoformat()
+    conn = db.connect()
+    try:
+        conn.execute("UPDATE agent_ops SET created_at = ? WHERE id = ?", (ts, old["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    with client.websocket_connect(WS) as ws:
+        assert recv(ws)["op_id"] == fresh["id"]
+    assert status(client, old["id"]) == "expired"
