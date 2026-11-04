@@ -13,6 +13,8 @@ import { rejectOp, type DraftElement } from "./drafts";
 import { drawOp } from "./drawOp";
 import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
+import { createLoadClock } from "./loadClock";
+import { createStartupGate } from "./startupGate";
 import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
 import { createStatusStore } from "./status";
 import { loadView, saveView, type View } from "./view";
@@ -191,6 +193,8 @@ export default function App() {
   // Drafts that were off-screen and not yet looked at (the DraftBar chip).
   const unseen = useMemo(() => createUnseen(), []);
   const sceneReady = useRef(false);
+  const clock = useMemo(() => createLoadClock(), []);
+  const gate = useMemo(() => createStartupGate(), []);
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
@@ -222,6 +226,7 @@ export default function App() {
     cropRef.current = crops;
     const sync = new SceneSync({
       documentId: route.canvas,
+      clock,
       storage: window.localStorage,
       onState: (state, detail) => {
         status.set(state, detail);
@@ -260,6 +265,7 @@ export default function App() {
       // A link wins over the remembered view (it is fitted to all ink until the chunk arrives).
       const view = route.chunk ? null : loadView(window.localStorage, route.canvas);
       const restored = restoreElements(elements as never, null);
+      clock.mark("restore", { elements: restored.length });
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
       fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
       setInitial({ elements: restored, view });
@@ -296,7 +302,7 @@ export default function App() {
       sync.dispose();
       crops.dispose();
     };
-  }, [route.canvas, route.chunk, status]);
+  }, [route.canvas, route.chunk, status, clock]);
 
   // Resolves once Excalidraw hands over its API, so an op that arrives first waits instead of failing.
   const apiReady = useMemo(() => deferred<ExcalidrawImperativeAPI>(), []);
@@ -368,12 +374,16 @@ export default function App() {
         else console.warn("op refused by the server", m);
       },
     });
-    socket.start();
+    const cancel = gate.whenReady(() => socket.start());
+    // A missing first change event must never leave the socket off.
+    const fallback = window.setTimeout(() => gate.open(), 3000);
     return () => {
+      window.clearTimeout(fallback);
+      cancel();
       socket.dispose();
       wire.off();
     };
-  }, [canvasReady, route.canvas, apiReady, refresh, unseen]);
+  }, [canvasReady, route.canvas, apiReady, refresh, unseen, gate]);
 
   const onChange = useCallback(
     (
@@ -385,8 +395,14 @@ export default function App() {
       if (syncRef.current?.notify(elements as unknown as SceneElement[])) cropRef.current?.activity();
       // The first change event means the canvas holds the loaded scene, so crops can be exported;
       // a reopened tab then catches up on crops left stale while it was closed.
-      cropRef.current?.start();
       // Excalidraw holds onChange back while loading, so the first call carries the loaded scene.
+      if (!sceneReady.current) {
+        clock.mark("firstChange");
+        clock.total();
+        // Crop sync and the ops socket wait until the scene has painted and the browser is idle.
+        gate.whenReady(() => cropRef.current?.start());
+        gate.open();
+      }
       sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {
         const target = pendingJump.current;
@@ -418,7 +434,7 @@ export default function App() {
         500,
       );
     },
-    [route.canvas],
+    [route.canvas, clock, gate],
   );
 
   return (
