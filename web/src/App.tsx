@@ -3,6 +3,7 @@ import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "./ChunkOverlay";
+import { createRefresh, onVisible } from "./chunkRefresh";
 import { DraftBar } from "./DraftBar";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
 import { CropSync } from "./cropSync";
@@ -147,6 +148,7 @@ const Canvas = memo(function Canvas(props: {
 export default function App() {
   const route = useMemo(() => readRoute(), []);
   const status = useMemo(() => createStatusStore(), []);
+  const refresh = useMemo(() => createRefresh(), []);
   const [initial, setInitial] = useState<Initial>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
@@ -321,7 +323,14 @@ export default function App() {
         return ids;
       },
       // A save left chunks with stale crops: export them once the canvas is idle (INK-057).
-      onChunksUpdated: () => cropRef.current?.request(),
+      onChunksUpdated: () => {
+        cropRef.current?.request();
+        refresh.fire();
+      },
+      // A push lost while the socket was down is gone, so refetch the chunk list on every connect.
+      onConnection: (connected) => {
+        if (connected) refresh.fire();
+      },
       // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
       onOpUpdated: (m) => {
         if (DEAD.includes(m.status)) sweep(m.op_id);
@@ -334,8 +343,12 @@ export default function App() {
       },
     });
     socket.start();
-    return () => socket.dispose();
-  }, [canvasReady, route.canvas, apiReady]);
+    const offVisible = onVisible(document, () => refresh.fire());
+    return () => {
+      socket.dispose();
+      offVisible();
+    };
+  }, [canvasReady, route.canvas, apiReady, refresh]);
 
   const onChange = useCallback(
     (
@@ -397,6 +410,7 @@ export default function App() {
           canvas={route.canvas}
           status={status}
           ghost={noticeOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
+          refresh={refresh}
         />
       )}
       {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
