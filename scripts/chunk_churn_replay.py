@@ -52,5 +52,7 @@ if __name__ == "__main__":
     for label, elements in runs:
         for containment in (None, 0.6):
             per20, active, orphans = replay(elements, containment)
-            print(f"{label:16} containment={containment}: new ids per 20 = {per20} "
-                  f"max {max(per20)} active={active} orphaned={orphans}")
+            print(
+                f"{label:16} containment={containment}: new ids per 20 = {per20} "
+                f"max {max(per20)} active={active} orphaned={orphans}"
+            )
