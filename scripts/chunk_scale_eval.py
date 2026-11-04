@@ -1,4 +1,4 @@
-"""INK-081: chunk size on a mixed-zoom canvas (decision 0038).
+"""INK-081: chunk size on a mixed-zoom canvas (decision 0039).
 
     cd server && uv run python ../scripts/chunk_scale_eval.py
     INKBRIDGE_REAL_DB=/tmp/claude-1000/copy.db ...   # a COPY of the real DB, read-only

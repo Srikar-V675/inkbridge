@@ -134,7 +134,8 @@ def _cap(
     best, cut, reach = -math.inf, 1, boxes[order[0]][axis + 2]
     for n, i in enumerate(order[1:], 1):  # gap between the running far edge and the next near edge
         gap = boxes[i][axis] - reach
-        if gap > best:
+        # equal gaps (evenly spaced strokes): cut nearest the middle, not off the first stroke
+        if gap > best or (gap == best and abs(n - len(order) / 2) < abs(cut - len(order) / 2)):
             best, cut = gap, n
         reach = max(reach, boxes[i][axis + 2])
     return _cap(order[:cut], boxes, config) + _cap(order[cut:], boxes, config)

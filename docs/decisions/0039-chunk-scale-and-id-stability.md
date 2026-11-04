@@ -1,4 +1,4 @@
-# 0038: chunk scale cap, local scale, id churn and anchor successors (INK-081)
+# 0039: chunk scale cap, local scale, id churn and anchor successors (INK-081)
 
 Status: accepted. Real-canvas acceptance (hand-boxed groups, tablet overlay check) is open until INK-095 merges.
 
@@ -31,3 +31,9 @@ Not solved: a mixed replay (10x strokes arriving while 1x ink still sets the pag
 
 ## Consequences
 Cap and local scale move chunk boundaries on mixed-zoom canvases, so ids may change on the first save after deploy. Notes exported before this fix need a re-export (check_sync reports `replaced`, decision 0020); run the INK-055 export demo only after. Open until INK-095: hand-box comparison on the real `default` canvas, tablet check that Show chunks boxes match visible groups.
+
+## Review follow-ups
+- Appending to a distant 10x chunk leaves an unrelated 1x chunk's id and content_hash unchanged (the page median moves, but the local-scale trigger and the cap use only the group's own members; `test_appending_to_a_distant_zoomed_in_chunk_leaves_the_other_chunk_alone`). Guarded for this fixture, not proven in general: a group whose own median sits near half the page median could flip between re-clustered and not as the page median drifts.
+- Crossing the cap while appending (a 15 px pitch line near 106 strokes) costs one new id (`test_appending_past_the_extent_cap_costs_at_most_one_new_id`). Equal gaps now cut nearest the middle instead of off the first stroke.
+- The server strips a client-sent `anchor_resolved` from op payloads; it is server-set only.
+- Notes exported before this fix need a re-export (check_sync reports `replaced`, decision 0020).

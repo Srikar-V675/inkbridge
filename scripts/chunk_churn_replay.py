@@ -1,4 +1,4 @@
-"""INK-081: how many new chunk ids does appending strokes one save at a time create? (decision 0038)
+"""INK-081: how many new chunk ids does appending strokes one save at a time create? (decision 0039)
 
     cd server && uv run python ../scripts/chunk_churn_replay.py
 

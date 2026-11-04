@@ -575,3 +575,12 @@ def test_successor_cycle_does_not_hang(client):
     _link(b, status="orphaned", successor_of=a)
     op = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": a}})
     assert op.status_code == 422
+
+
+def test_client_sent_anchor_resolved_is_ignored(client):
+    seed(client)
+    op = client.post(
+        OPS, json={"type": "write_text", "payload": {"text": "x", "anchor_resolved": "forged"}}
+    )
+    # the payload schema rejects unknown keys; _create_op strips it as well
+    assert op.status_code == 422 or "anchor_resolved" not in op.json()["payload"]

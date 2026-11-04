@@ -356,3 +356,23 @@ def test_appending_strokes_keeps_chunk_id(client):
         canvas.put()
         assert [c["id"] for c in canvas.chunks("active")] == [first]
     assert canvas.chunks("orphaned") == []
+
+
+def test_appending_to_a_distant_zoomed_in_chunk_leaves_the_other_chunk_alone(client):
+    canvas = Canvas(client, row("a", 10))
+    before = canvas.chunk_of("a0")
+    for i in range(30):  # 10x strokes shift the page-wide median (INK-081)
+        canvas.elements.append(stroke(f"b{i}", 5000 + 150 * i, 0, w=120, h=200 + (i % 5) * 30))
+        canvas.put()
+        after = canvas.chunk_of("a0")
+        assert (after["id"], after["content_hash"]) == (before["id"], before["content_hash"])
+
+
+def test_appending_past_the_extent_cap_costs_at_most_one_new_id(client):
+    canvas = Canvas(client, row("a", 3))
+    seen = {canvas.chunk_of("a0")["id"]}
+    for i in range(3, 130):  # 15 px pitch: a line passes 80 * 20 px near stroke 106
+        canvas.elements.append(stroke(f"a{i}", 15 * i, 0))
+        canvas.put()
+        seen |= {c["id"] for c in canvas.chunks("active")}
+    assert len(seen) <= 3 and len(canvas.chunks("active")) == 2

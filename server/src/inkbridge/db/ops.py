@@ -173,6 +173,7 @@ def _resolve_anchor(conn, document_id, region_id):
 
 
 def _create_op(conn, document_id, op_type, payload, op_id):
+    payload = {k: v for k, v in payload.items() if k != "anchor_resolved"}  # server-set only
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
     if op_id is not None:
