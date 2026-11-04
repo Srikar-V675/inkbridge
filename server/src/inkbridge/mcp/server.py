@@ -148,6 +148,10 @@ def write_text(
         str | None,
         Field(description="Chunk id to place the text beside; omit for free space below the ink"),
     ] = None,
+    size: Annotated[
+        Literal["small", "normal", "large"] | None,
+        Field(description="Text size relative to the handwriting on the page; default matches it"),
+    ] = None,
     document_id: Annotated[
         str | None, Field(description="Defaults to the configured document")
     ] = None,
@@ -155,12 +159,17 @@ def write_text(
     """Add a text box to the canvas as a draft the user can accept or reject.
 
     The server picks the position: right of the anchor chunk (below it if that is taken), or
-    below all existing ink, never overlapping it. Never edits existing ink. The draft appears when
-    the canvas is open in a browser (now, or the next time it is opened). Returns
-    {op_id, status: "pending", placement}.
+    below all existing ink, never overlapping it. Text is sized from the median handwriting stroke
+    height of the anchor chunk (or the page) so it reads beside the ink. Never edits existing ink.
+    The draft appears when the canvas is open in a browser (now, or the next time it is opened).
+    Returns {op_id, status: "pending", placement, font_size}.
     """
     client = get_client()
-    payload = {"text": text, **({"anchor": anchor} if anchor else {})}
+    payload = {
+        "text": text,
+        **({"anchor": anchor} if anchor else {}),
+        **({"size": size} if size else {}),
+    }
     try:
         op = client.create_op(document_id or client.default_document, "write_text", payload)
     except NotFound as e:
@@ -168,7 +177,12 @@ def write_text(
     except ApiError as e:
         raise ToolError(str(e)) from e
     return _dump(
-        {"op_id": op["id"], "status": op["status"], "placement": op["payload"]["placement"]}
+        {
+            "op_id": op["id"],
+            "status": op["status"],
+            "placement": op["payload"]["placement"],
+            "font_size": op["payload"]["font_size"],
+        }
     )
 
 

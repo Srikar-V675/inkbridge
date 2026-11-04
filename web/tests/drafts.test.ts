@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   markDraft,
   opElements,
+  opFontSize,
   placeAt,
   prefixIds,
   rejectOp,
@@ -114,5 +115,14 @@ describe("drafts", () => {
     const out = rejectOp([draft, dup], "op1:");
     assert.equal(out[0].isDeleted, true);
     assert.equal(out[1], dup);
+  });
+});
+
+describe("opFontSize", () => {
+  it("uses the server value, clamped, else 20", () => {
+    assert.equal(opFontSize({ font_size: 36 }), 36);
+    assert.equal(opFontSize({}), 20);
+    assert.equal(opFontSize({ font_size: 5000 }), 200);
+    assert.equal(opFontSize({ font_size: -3 }), 20);
   });
 });
