@@ -13,7 +13,7 @@ CHUNK_KEYS = {
 REGION_KEYS = {
     "id", "document_id", "element_ids", "bounds", "stroke_count", "kind", "created_by",
     "stroke_hash", "content_hash", "status", "successor_of", "png_stale", "pinned", "updated_at",
-    "text", "latex", "source", "text_hash",
+    "text", "latex", "source", "text_hash", "live_successor",
 }  # fmt: skip
 OP_KEYS = {"id", "document_id", "type", "status", "payload", "result", "error", "created_at"}
 SYNC_KEYS = {"fresh", "fresh_after_reread", "changed", "replaced", "removed", "new"}

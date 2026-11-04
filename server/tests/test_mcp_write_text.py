@@ -135,3 +135,27 @@ def test_size_hint_changes_the_stored_font_size(mcp_client):
 def test_unknown_size_is_a_tool_error(mcp_client):
     with pytest.raises(ToolError):
         call("write_text", text="x", size="huge")
+
+
+def test_anchor_used_and_replacement_note(mcp_client):
+    from tests.test_ops_api import _anchor_region, _link
+
+    seed(mcp_client)
+    a, b = _anchor_region(["user-a"]), _anchor_region(["user-b"])
+    same = call("write_text", text="x", anchor=b)
+    assert same["anchor_used"] == b and "note" not in same
+    _link(a, status="orphaned", successor_of=b)
+    moved = call("write_text", text="x", anchor=a)
+    assert moved["anchor_used"] == b
+    assert moved["note"] == f"anchor {a} was replaced by {b}; use {b} from now on"
+    assert "anchor_used" not in call("write_text", text="x")
+
+
+def test_dead_anchor_is_a_tool_error_naming_read_canvas(mcp_client):
+    from tests.test_ops_api import _anchor_region, _link
+
+    seed(mcp_client)
+    a = _anchor_region(["user-a"])
+    _link(a, status="orphaned", successor_of=None)
+    with pytest.raises(ToolError, match="no longer exists.*read_canvas"):
+        call("write_text", text="x", anchor=a)

@@ -7,8 +7,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, Response, Uploa
 from fastapi.concurrency import run_in_threadpool
 
 from inkbridge import config, db, imaging, sketch, sketch_image
-from inkbridge.api.chunks import Out
+from inkbridge.api.chunks import Out, refuse_orphan
 from inkbridge.api.deps import Conn
+from inkbridge.db import sync
 
 router = APIRouter()
 
@@ -32,6 +33,7 @@ class RegionOut(Out):
     latex: str | None
     source: str | None
     text_hash: str | None
+    live_successor: str | None = None  # set for non-active chunks (INK-084)
 
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -118,6 +120,9 @@ def get_region(region_id: str, conn: Conn) -> dict:
     region = db.get_region(conn, region_id)
     if region is None:
         raise HTTPException(404, "region not found")
+    if region["status"] != "active":
+        live = sync._live_successor(conn, region, region["document_id"])
+        region["live_successor"] = live and live["id"]
     return region
 
 
@@ -177,8 +182,10 @@ def get_region_image(
     region_id: str,
     conn: Conn,
     max_width: Annotated[int, Query(ge=1, le=8192)] = imaging.MAX_IMAGE_WIDTH,
+    history: bool = False,
 ) -> Response:
     """The crop, downscaled to max_width (default 1024). The stored file is never modified."""
+    refuse_orphan(conn, region_id, history)
     path = db.get_region_png_path(conn, region_id)
     if path is None or not Path(path).exists():
         raise HTTPException(404, "image not found")
@@ -190,7 +197,9 @@ def get_region_ink(
     region_id: str,
     conn: Conn,
     max_points: Annotated[int, Query(ge=2, le=100_000)] = imaging.MAX_INK_POINTS,
+    history: bool = False,
 ) -> dict:
+    refuse_orphan(conn, region_id, history)
     ink = db.get_region_ink(conn, region_id)
     if ink is None:
         raise HTTPException(404, "region not found")
@@ -207,7 +216,8 @@ def get_region_ink(
 MAX_SKETCH_ELEMENTS = 2000  # a flowchart sketch, not a page of notes; keeps pass 1 cheap
 
 
-def _sketch(conn, region_id: str) -> tuple[list[dict], dict]:
+def _sketch(conn, region_id: str, history: bool) -> tuple[list[dict], dict]:
+    refuse_orphan(conn, region_id, history)
     elements = db.get_sketch_elements(conn, region_id)
     if elements is None:
         raise HTTPException(404, "region not found")
@@ -221,16 +231,16 @@ def _sketch(conn, region_id: str) -> tuple[list[dict], dict]:
 
 
 @router.get("/regions/{region_id}/sketch")
-def get_region_sketch(region_id: str, conn: Conn) -> dict:
+def get_region_sketch(region_id: str, conn: Conn, history: bool = False) -> dict:
     """Pass 1 of the two-pass sketch reading: guessed nodes and arrows with confidences, and
     where their N/A markers sit on `GET /regions/{id}/sketch.png`."""
-    elements, structure = _sketch(conn, region_id)
+    elements, structure = _sketch(conn, region_id, history)
     return {**structure, "markers": sketch_image.marker_positions(elements, structure)}
 
 
 @router.get("/regions/{region_id}/sketch.png")
-def get_region_sketch_png(region_id: str, conn: Conn) -> Response:
+def get_region_sketch_png(region_id: str, conn: Conn, history: bool = False) -> Response:
     """The region's ink drawn by the server with numbered node (red) and arrow (blue) markers."""
-    elements, structure = _sketch(conn, region_id)
+    elements, structure = _sketch(conn, region_id, history)
     png, _ = sketch_image.render_markers(elements, structure)
     return Response(png, media_type="image/png")

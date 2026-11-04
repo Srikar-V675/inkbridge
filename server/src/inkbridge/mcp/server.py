@@ -84,6 +84,17 @@ def list_regions(
     )
 
 
+def _anchor_info(op: dict, anchor: str | None) -> dict:
+    """Which chunk the server actually placed beside (INK-084); a note when it differs."""
+    used = (op.get("payload") or {}).get("anchor_resolved")
+    if not used:
+        return {}
+    info = {"anchor_used": used}
+    if used != anchor:
+        info["note"] = f"anchor {anchor} was replaced by {used}; use {used} from now on"
+    return info
+
+
 @mcp.tool()
 def get_region(
     region_id: str,
@@ -99,10 +110,29 @@ def get_region(
         ),
     ] = False,
 ) -> list:
-    """Get one region: transcription (text, latex), kind, bounds, optionally its PNG crop and ink."""
+    """Get one region: transcription (text, latex), kind, bounds, optionally its PNG crop and ink.
+
+    An orphaned (replaced or deleted) chunk returns only {id, status, live_successor, note}: its
+    old ink is not served; read the live successor, or call read_canvas.
+    """
     client = get_client()
     try:
         r = client.get_region(region_id)
+        if r["status"] != "active":
+            # Stale ink must not be read as current (INK-084): point at the live chunk instead.
+            live = r.get("live_successor")
+            return [
+                _dump(
+                    {
+                        "id": r["id"],
+                        "status": r["status"],
+                        "live_successor": live,
+                        "note": f"this chunk was replaced; read {live} instead"
+                        if live
+                        else "this chunk no longer exists; call read_canvas for current chunks",
+                    }
+                )
+            ]
         meta = {
             k: r[k]
             for k in (
@@ -146,7 +176,11 @@ def write_text(
     text: Annotated[str, Field(min_length=1, max_length=10_000, description="Plain text to add")],
     anchor: Annotated[
         str | None,
-        Field(description="Chunk id to place the text beside; omit for free space below the ink"),
+        Field(
+            description="Chunk id from read_canvas; a replaced chunk is followed to its "
+            "successor, a deleted one is refused. Ids change as the user writes, so re-read "
+            "before anchoring. Omit for free space below the ink"
+        ),
     ] = None,
     size: Annotated[
         Literal["small", "normal", "large"] | None,
@@ -162,7 +196,9 @@ def write_text(
     below all existing ink, never overlapping it. Text is sized from the median handwriting stroke
     height of the anchor chunk (or the page) so it reads beside the ink. Never edits existing ink.
     The draft appears when the canvas is open in a browser (now, or the next time it is opened).
-    Returns {op_id, status: "pending", placement, font_size}.
+    Returns {op_id, status: "pending", placement, font_size, anchor_used, note}; anchor_used and
+    note appear when an anchor was given (note when it was replaced by a successor). A deleted
+    anchor is refused with `anchor_gone`.
     """
     client = get_client()
     payload = {
@@ -182,6 +218,7 @@ def write_text(
             "status": op["status"],
             "placement": op["payload"]["placement"],
             "font_size": op["payload"]["font_size"],
+            **_anchor_info(op, anchor),
         }
     )
 
@@ -460,7 +497,11 @@ def draw_diagram(
     ],
     anchor: Annotated[
         str | None,
-        Field(description="Chunk id to place the diagram beside; omit for free space below"),
+        Field(
+            description="Chunk id from read_canvas; a replaced chunk is followed to its "
+            "successor, a deleted one is refused. Ids change as the user writes, so re-read "
+            "before anchoring. Omit for free space below"
+        ),
     ] = None,
     document_id: Annotated[
         str | None, Field(description="Defaults to the configured document")
@@ -474,7 +515,8 @@ def draw_diagram(
     Only flowcharts (`flowchart` / `graph`) are supported; sequence, class and other diagram
     types are refused. The canvas must be open in a browser: Mermaid is converted there, and this
     call waits (default 20 s) for the browser to draw it. Never edits existing ink; it only adds
-    new, dashed draft elements. Returns {op_id, status: "applied", element_count}.
+    new, dashed draft elements. Returns {op_id, status: "applied", element_count, anchor_used, note}
+    (the last two when an anchor was given; a replaced anchor is followed, a deleted one refused).
     """
     client = get_client()
     doc = document_id or client.default_document
@@ -494,7 +536,14 @@ def draw_diagram(
         raise ToolError(str(e)) from e
     if op["status"] == "applied":
         ids = (op.get("result") or {}).get("element_ids", [])
-        return _dump({"op_id": op["id"], "status": "applied", "element_count": len(ids)})
+        return _dump(
+            {
+                "op_id": op["id"],
+                "status": "applied",
+                "element_count": len(ids),
+                **_anchor_info(op, anchor),
+            }
+        )
     if op["status"] == "failed":
         raise ToolError(
             f"{op['error'] or 'The browser could not draw the diagram.'} "

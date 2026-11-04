@@ -213,3 +213,26 @@ def test_mcp_shutdown_closes_the_http_client_even_on_error(monkeypatch):
         assert client.http.is_closed
     finally:
         server.set_client(None)
+
+
+def _orphan(client, rid, successor=None):
+    from tests.test_regions_api import _orphan
+
+    _orphan(rid, successor)
+
+
+def test_get_region_of_an_orphan_is_only_a_pointer(seeded, client, monkeypatch):
+    live = post(client, ["a"]).json()["id"]
+    asked = []
+    real = ApiClient.get_image
+    monkeypatch.setattr(ApiClient, "get_image", lambda s, r: asked.append(r) or real(s, r))
+    _orphan(client, seeded, successor=live)
+    result = call("get_region", region_id=seeded, include_ink=True, include_sketch=True)
+    assert len(result.content) == 1
+    out = text_of(result)
+    assert set(out) == {"id", "status", "live_successor", "note"}
+    assert out["status"] == "orphaned" and out["live_successor"] == live and live in out["note"]
+    assert asked == []
+    _orphan(client, seeded)
+    out = text_of(call("get_region", region_id=seeded))
+    assert out["live_successor"] is None and "read_canvas" in out["note"]

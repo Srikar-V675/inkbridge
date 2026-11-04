@@ -128,3 +128,16 @@ def test_the_tool_is_registered_with_flowchart_only_in_its_description():
     assert "draw_diagram" in tools
     assert "FLOWCHART" in tools["draw_diagram"].description
     assert "browser" in tools["draw_diagram"].description
+
+
+def test_dead_anchor_is_refused_and_a_followed_one_is_reported(tool, client):
+    from tests.test_ops_api import USER_A, USER_B, _anchor_region, _link
+
+    client.put("/documents/default/scene", json={"base_version": 0, "elements": [USER_A, USER_B]})
+    a, b = _anchor_region(["user-a"]), _anchor_region(["user-b"])
+    _link(a, status="orphaned", successor_of=b)
+    out = json.loads(tool(apply, after=2, anchor=a).content[0].text)
+    assert out["anchor_used"] == b and f"replaced by {b}" in out["note"]
+    _link(a, successor_of=None)
+    with pytest.raises(ToolError, match="no longer exists.*read_canvas"):
+        tool(anchor=a)

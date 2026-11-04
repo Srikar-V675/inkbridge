@@ -222,3 +222,39 @@ def test_status_filter_runs_before_limit_so_orphans_cannot_hide_active_chunks(cl
     assert sorted(c["id"] for c in listed) == active_ids
     unfiltered = client.get(REGIONS, params={"chunks": True, "limit": 500}).json()
     assert not set(active_ids) & {c["id"] for c in unfiltered}  # the bug: active rows pushed past LIMIT
+
+
+def _orphan(rid, successor=None):
+    from inkbridge import db
+
+    conn = db.connect()
+    try:
+        conn.execute(
+            "UPDATE regions SET status='orphaned', successor_of=? WHERE id=?", (successor, rid)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_orphan_reads_point_to_live_successor_or_410(client):
+    seed(client)
+    old = post(client, ["a"]).json()["id"]
+    live = post(client, ["b"]).json()["id"]
+    assert client.get(f"/regions/{live}").json()["live_successor"] is None
+    _orphan(old, successor=live)
+    assert client.get(f"/regions/{old}").json()["live_successor"] == live
+    for path in ("image", "png", "ink", "sketch", "sketch.png"):
+        r = client.get(f"/regions/{old}/{path}")
+        assert r.status_code == 410 and live in r.json()["detail"], path
+    assert client.get(f"/regions/{old}/image", params={"history": "true"}).status_code == 200
+    assert client.get(f"/regions/{old}/ink", params={"history": "true"}).status_code == 200
+
+
+def test_orphan_without_successor_says_read_canvas(client):
+    seed(client)
+    old = post(client, ["a"]).json()["id"]
+    _orphan(old)
+    assert client.get(f"/regions/{old}").json()["live_successor"] is None
+    r = client.get(f"/regions/{old}/image")
+    assert r.status_code == 410 and "read_canvas" in r.json()["detail"]

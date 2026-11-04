@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from inkbridge import config, db, imaging
 from inkbridge.api.deps import Conn
-from inkbridge.db import outline
+from inkbridge.db import outline, sync
 
 router = APIRouter()
 
@@ -136,9 +136,24 @@ def get_overview(
     return Response(imaging.overview(chunks, load, max_width), media_type="image/png")
 
 
+def refuse_orphan(conn, region_id: str, history: bool) -> None:
+    """Orphaned chunks hold stale ink; point the caller at the live chunk (INK-084)."""
+    region = db.get_region(conn, region_id)
+    if region is None or history or region["status"] == "active":
+        return
+    live = sync._live_successor(conn, region, region["document_id"])
+    raise HTTPException(
+        410,
+        f"chunk {region_id} was replaced or deleted; "
+        + (f"read live_successor {live['id']}" if live else "call read_canvas")
+        + " (or pass ?history=true for the old ink)",
+    )
+
+
 @router.get("/regions/{region_id}/png")
-def get_region_png(region_id: str, conn: Conn) -> Response:
+def get_region_png(region_id: str, conn: Conn, history: bool = False) -> Response:
     """The stored crop byte for byte (full size); /image is the downscaled one."""
+    refuse_orphan(conn, region_id, history)
     path = db.get_region_png_path(conn, region_id)
     if path is None:
         raise HTTPException(404, "region not found; GET /documents/{id}/chunks lists chunk ids")
