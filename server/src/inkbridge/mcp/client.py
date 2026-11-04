@@ -134,10 +134,14 @@ class ApiClient:
         path = f"/documents/{self._document(document_id)}/chunks"
         return self._json(self._get(path, not_found=NO_CANVAS))
 
-    def get_overview(self, document_id: str | None, max_width: int | None = None) -> bytes:
-        """The overview PNG; the API's default width is the 0003 cap (1024 px)."""
+    def get_overview(
+        self, document_id: str | None, max_width: int | None = None, offset: int = 0
+    ) -> tuple[bytes, int | None]:
+        """One overview band as PNG, and the offset of the band after it (None on the last one)."""
         path = f"/documents/{self._document(document_id)}/overview"
-        return self._get(path, {"max_width": max_width}, not_found=NO_CANVAS).content
+        r = self._get(path, {"max_width": max_width, "offset": offset}, not_found=NO_CANVAS)
+        nxt = r.headers.get("X-Overview-Next")
+        return r.content, int(nxt) if nxt is not None else None
 
     def check_sync(self, document_id: str | None, chunks: list[dict], wait_s: float) -> dict:
         # The API may wait up to wait_s for readings: give the HTTP call room beyond that.
