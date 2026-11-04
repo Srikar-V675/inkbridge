@@ -39,6 +39,17 @@ export function draftOps(els: readonly DraftElement[]): { opId: string; count: n
   return [...counts].map(([opId, count]) => ({ opId, count }));
 }
 
+/**
+ * Drop the op's unresolved drafts (the server expired, failed or rejected the op). Only live,
+ * still-tagged drafts go: elements the user already accepted lost the tag and are kept, even
+ * though their ids still carry the op prefix. Same soft delete as a reject.
+ */
+export function dropDrafts<T extends DraftElement>(els: readonly T[], opId: string): T[] {
+  return els.map((e) =>
+    draftOpId(e) === opId ? { ...e, isDeleted: true, version: (e.version ?? 0) + 1 } : e,
+  );
+}
+
 export type Verdict = "accepted" | "rejected";
 export type ResolveResult = { ok: true } | { ok: false; message: string };
 export type ResolveSummary = {

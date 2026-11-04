@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { acceptOp, applyVerdict, draftOpId, draftOps, NOT_READY, fetchAppliedOps, patchOp, retryAccept, type Ports } from "../src/resolve.ts";
+import { acceptOp, applyVerdict, dropDrafts, draftOpId, draftOps, NOT_READY, fetchAppliedOps, patchOp, retryAccept, type Ports } from "../src/resolve.ts";
 import { markDraft, type DraftElement } from "../src/drafts.ts";
 
 const draftsOf = (opId: string, n: number): DraftElement[] =>
@@ -291,5 +291,22 @@ describe("patchEach order", () => {
     const r = await retryAccept(["a", "b", "c"], patch as never);
     assert.deepEqual(r.done, ["a", "c"]);
     assert.deepEqual(r.failed, [{ opId: "b", message: "x" }]);
+  });
+});
+
+describe("dropDrafts", () => {
+  it("deletes the op's unresolved drafts and leaves accepted ones, other ops and user ink", () => {
+    const [d1, d2] = draftsOf("opA", 2);
+    const accepted = acceptOp(draftsOf("opA", 3), "opA:")[2]; // same prefix, tag gone
+    const other = draftsOf("opB", 1)[0];
+    const user = { id: "u1", type: "freedraw", version: 1 } as DraftElement;
+    const forged = { ...d1, id: "random-id" }; // tag without the id prefix
+    const out = dropDrafts([d1, d2, accepted, other, user, forged], "opA");
+    assert.equal(out[0].isDeleted, true);
+    assert.equal(out[1].isDeleted, true);
+    assert.equal(out[2], accepted);
+    assert.equal(out[3], other);
+    assert.equal(out[4], user);
+    assert.equal(out[5], forged);
   });
 });

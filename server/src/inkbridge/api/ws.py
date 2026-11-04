@@ -185,7 +185,13 @@ async def ws_endpoint(ws: WebSocket, document: str = db.DEFAULT_DOCUMENT_ID) -> 
     try:
         # Replay after joining, so an op created in between is pushed at least once (the browser
         # ignores a second copy of an op it already drew).
-        for op in await run_in_threadpool(_with_conn, ops_db.list_ops, document, REPLAY_STATUSES):
+        swept: list[dict] = []
+        replay = await run_in_threadpool(
+            _with_conn, ops_db.list_ops, document, REPLAY_STATUSES, swept
+        )
+        for op in swept:  # this sweep expired them; sockets that already drew them must drop them
+            await hub.send(document, updated_message(op))
+        for op in replay:
             await ws.send_json(_pending_message(op))
             await run_in_threadpool(_with_conn, ops_db.mark_delivered, op["id"])
         while True:
