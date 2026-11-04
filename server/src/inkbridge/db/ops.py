@@ -135,6 +135,22 @@ def create_op(
         raise
 
 
+def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[float]:
+    """Heights of the user's live freedraw strokes (drafts and agent ink never count)."""
+    out = []
+    for e in elements:
+        if e.get("type") != "freedraw" or e.get("isDeleted") or not e.get("points"):
+            continue
+        cd = e.get("customData") or {}
+        if cd.get("draft") or cd.get("author") == "agent":
+            continue
+        if anchor_ids is not None and e["id"] not in anchor_ids:
+            continue
+        ys = [p[1] for p in e["points"]]
+        out.append(max(ys) - min(ys))
+    return out
+
+
 def _create_op(conn, document_id, op_type, payload, op_id):
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
@@ -143,7 +159,9 @@ def _create_op(conn, document_id, op_type, payload, op_id):
         if row is not None:
             existing = _row_dict(row)
             stored = {
-                k: v for k, v in existing["payload"].items() if k not in ("placement", "id_prefix")
+                k: v
+                for k, v in existing["payload"].items()
+                if k not in ("placement", "id_prefix", "font_size")
             }
             if (existing["document_id"], existing["type"], stored) != (
                 document_id,
@@ -167,14 +185,21 @@ def _create_op(conn, document_id, op_type, payload, op_id):
         raise ExistingElementIds(ids)
 
     anchor = None
+    anchor_ids = None
     if payload.get("anchor") is not None:
         region = conn.execute(
-            "SELECT bbox FROM regions WHERE id = ? AND document_id = ?",
+            "SELECT bbox, element_ids_json FROM regions WHERE id = ? AND document_id = ?",
             (payload["anchor"], document_id),
         ).fetchone()
         if region is None or not region["bbox"]:
             raise AnchorNotFound(payload["anchor"])
         anchor = json.loads(region["bbox"])
+        anchor_ids = set(json.loads(region["element_ids_json"] or "[]"))
+
+    heights = _stroke_heights(elements, anchor_ids)
+    if len(heights) < placement.MIN_SAMPLES:
+        heights = _stroke_heights(elements, None)
+    payload = {**payload, "font_size": placement.font_size_for(heights, payload.get("size"))}
 
     occupied = [
         placement.rotated_box(bbox_of([e]), e.get("angle") or 0)
