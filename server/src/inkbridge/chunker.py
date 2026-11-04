@@ -109,6 +109,15 @@ def cluster(elements: list[dict[str, Any]], config: ChunkerConfig | None = None)
     return _proximity(elements, config or ChunkerConfig())[0]
 
 
+def proximity_threshold(
+    elements: list[dict[str, Any]], config: ChunkerConfig | None = None
+) -> float:
+    """Distance under which the chunker joins two elements (k * median size); 0 on an empty page."""
+    config = config or ChunkerConfig()
+    clusters, median = _proximity(elements, config)
+    return config.k * median if clusters else 0.0
+
+
 def _box(e: dict[str, Any]) -> tuple[float, float, float, float]:
     b = bbox_of([e])
     return (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"])

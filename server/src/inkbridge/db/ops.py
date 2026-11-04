@@ -17,6 +17,7 @@ import uuid
 from typing import Any
 
 from inkbridge import placement
+from inkbridge.chunker import proximity_threshold
 from inkbridge.db import DocumentNotFound, _now, document_exists, get_scene
 from inkbridge.regions import bbox_of
 
@@ -239,16 +240,32 @@ def _create_op(conn, document_id, op_type, payload, op_id):
         for e in elements
         if not e.get("isDeleted")
     ]
+    recent: placement.Box | None = None
     for row in conn.execute(
-        f"SELECT type, payload_json FROM agent_ops WHERE document_id = ?"
-        f" AND status IN ({','.join('?' * len(_RESERVING))})",
+        "SELECT id, type, payload_json, status FROM agent_ops WHERE document_id = ?"
+        f" AND status IN ({','.join('?' * len(_RESERVING))}) ORDER BY created_at, rowid",
         (document_id, *_RESERVING),
     ):
         other = json.loads(row["payload_json"])
-        if "placement" in other:
-            w, h = placement.estimate_size(row["type"], other)
-            occupied.append({**other["placement"], "width": w, "height": h})
-    spot = placement.place(occupied, placement.estimate_size(op_type, payload), anchor, fs)
+        if "placement" not in other:
+            continue
+        w, h = placement.estimate_size(row["type"], other)
+        box: placement.Box = {**other["placement"], "width": w, "height": h}
+        if row["status"] == "applied":
+            # real elements are already in `occupied`; use their real box, not the estimate
+            prefix = id_prefix(row["id"])
+            real = [e for e in elements if e["id"].startswith(prefix) and not e.get("isDeleted")]
+            if real:
+                box = bbox_of(real)
+            else:  # ack raced the autosave: keep the estimate reserved
+                occupied.append(box)
+        else:
+            occupied.append(box)
+        recent = box
+    clear = proximity_threshold(elements)
+    spot = placement.place(
+        occupied, placement.estimate_size(op_type, payload), anchor, fs, clear, recent
+    )
 
     conn.execute(
         "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at)"

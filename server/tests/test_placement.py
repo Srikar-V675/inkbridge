@@ -1,5 +1,8 @@
 import random
 
+import pytest
+
+from inkbridge.chunker import proximity_threshold
 from inkbridge.placement import (
     DEFAULT_FONT,
     GAP,
@@ -71,7 +74,8 @@ def test_placement_never_overlaps_occupied_boxes():
         ]
         size = (rng.uniform(10, 600), rng.uniform(10, 400))
         anchor = rng.choice(occupied) if rng.random() < 0.7 else None
-        p = place(occupied, size, anchor)
+        recent = rng.choice(occupied) if rng.random() < 0.5 else None
+        p = place(occupied, size, anchor, clear=rng.choice([0, 0, 80]), recent=recent)
         assert not _hits(_box(p["x"], p["y"], *size), occupied)
 
 
@@ -144,3 +148,58 @@ def test_gap_and_margin_scale_with_font():
 def test_estimate_wraps_long_lines():
     w, h = estimate_size("write_text", {"text": "x" * 400, "font_size": 300, "wrap_chars": 50})
     assert w == 50 * 0.6 * 300 and h == 8 * 1.25 * 300
+
+
+def _stroke(eid, w, h, **extra):
+    return {"id": eid, "type": "freedraw", "x": 0, "y": 0, "points": [[0, 0], [w, h]], **extra}
+
+
+def test_proximity_threshold_is_k_times_median_of_live_non_draft_ink():
+    els = [_stroke(f"s{i}", 30, 40) for i in range(3)]
+    els.append(_stroke("d", 900, 900, customData={"draft": True}))
+    els.append(_stroke("x", 900, 900, isDeleted=True))
+    assert proximity_threshold(els) == pytest.approx(1.5 * 40)
+    assert proximity_threshold([]) == 0.0
+
+
+def test_clear_widens_gap_and_margin():
+    anchor = _box(0, 0, 100, 40)
+    assert place([anchor], (50, 20), anchor, fs=20, clear=300)["x"] >= 100 + 300
+    assert place([anchor], (50, 20), anchor, fs=20, clear=0)["x"] == 100 + gap_for(20)
+
+
+def test_second_op_stacks_below_recent_draft():
+    anchor = _box(0, 0, 100, 40)
+    d = _box(140, 0, 200, 50)
+    below = _box(0, 80, 100, 50)
+    far = _box(0, 5000, 10, 10)
+    p = place([anchor, d, below, far], (200, 50), anchor, recent=d)
+    assert abs(p["x"] - d["x"]) <= GAP
+    assert p["y"] <= d["y"] + d["height"] + GAP + 50
+
+
+def test_no_anchor_continues_the_column():
+    d = _box(30, 100, 200, 50)
+    far = _box(0, 5000, 10, 10)
+    assert place([d, far], (200, 50), recent=d) == {"x": 30, "y": 100 + 50 + GAP}
+
+
+@pytest.mark.parametrize("scale", [1, 10])
+@pytest.mark.parametrize("anchored", [False, True])
+def test_consecutive_placements_stay_close(scale, anchored):
+    fs, size = 20 * scale, (200 * scale, 50 * scale)
+    anchor = _box(0, 0, 100 * scale, 40 * scale)
+    occupied = [anchor, _box(0, 5000 * scale, 10, 10)]
+    recent, spots = None, []
+    for _ in range(5):
+        p = place(
+            occupied, size, anchor if anchored else None, fs, clear=1.5 * 40 * scale, recent=recent
+        )
+        recent = _box(p["x"], p["y"], *size)
+        occupied.append(recent)
+        spots.append(p)
+    gap = gap_for(fs)
+    bound = 5 * (size[1] + 2 * gap) + gap
+    first = spots[0]
+    for p in spots:
+        assert ((p["x"] - first["x"]) ** 2 + (p["y"] - first["y"]) ** 2) ** 0.5 <= bound

@@ -7,8 +7,9 @@ from fastapi.testclient import TestClient
 
 from inkbridge import db
 from inkbridge.api import app
+from inkbridge.chunker import proximity_threshold
 from inkbridge.db import ops as ops_db
-from inkbridge.placement import overlaps
+from inkbridge.placement import estimate_size, gap_for, overlaps
 from inkbridge.regions import bbox_of
 
 SCENE = "/documents/default/scene"
@@ -313,7 +314,10 @@ def test_anchored_op_goes_right_of_the_chunk(client):
     op = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": rid}})
     assert op.status_code == 201
     box = bbox_of([USER_A])
-    assert op.json()["payload"]["placement"] == {"x": box["x"] + box["width"] + 40, "y": box["y"]}
+    gap = max(
+        gap_for(op.json()["payload"]["font_size"]), 1.05 * proximity_threshold([USER_A, USER_B])
+    )
+    assert op.json()["payload"]["placement"] == {"x": box["x"] + box["width"] + gap, "y": box["y"]}
 
 
 def test_stacked_ops_never_overlap_live_ink_or_each_other(client):
@@ -367,7 +371,8 @@ def test_anchored_diagram_is_placed_beside_the_chunk_when_there_is_room(client):
     payload = {"mermaid": "flowchart TD\nA-->B", "anchor": rid}
     op = client.post(OPS, json={"type": "draw_diagram", "payload": payload}).json()
     box = bbox_of([USER_A])
-    assert op["payload"]["placement"] == {"x": box["x"] + box["width"] + 40, "y": box["y"]}
+    gap = max(gap_for(op["payload"]["font_size"]), 1.05 * proximity_threshold([USER_A]))
+    assert op["payload"]["placement"] == {"x": box["x"] + box["width"] + gap, "y": box["y"]}
 
 
 def test_reack_with_the_same_ids_in_another_order_is_idempotent(client):
@@ -611,7 +616,9 @@ def test_orphaned_anchor_resolves_to_successor(client):
     assert op.status_code == 201
     box = bbox_of([USER_B])
     assert op.json()["payload"]["anchor_resolved"] == b
-    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + 40
+    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + _clear_gap(
+        op.json(), [USER_A, USER_B]
+    )
 
 
 @pytest.mark.fts_unchecked
@@ -651,7 +658,9 @@ def test_chain_of_two_orphans_reaches_live(client, kind):
     assert r.status_code == 201, r.text
     assert r.json()["payload"]["anchor_resolved"] == c
     box = bbox_of([USER_B])
-    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + 40
+    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + _clear_gap(
+        r.json(), [USER_A, USER_B]
+    )
 
 
 @pytest.mark.parametrize("kind", ["write_text", "draw_diagram"])
@@ -683,3 +692,67 @@ def test_client_sent_anchor_resolved_is_ignored(client):
     )
     # the payload schema rejects unknown keys; _create_op strips it as well
     assert op.status_code == 422 or "anchor_resolved" not in op.json()["payload"]
+
+
+def _write_at(client, text, anchor):
+    payload = {"text": text, **({"anchor": anchor} if anchor else {})}
+    r = client.post(OPS, json={"type": "write_text", "payload": payload})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def _clear_gap(op, scene):
+    return max(gap_for(op["payload"]["font_size"]), 1.05 * proximity_threshold(scene))
+
+
+def _page(scale):
+    return [stroke(f"u{i}", 0, 1000 * scale * i, w=30 * scale, h=40 * scale) for i in range(3)]
+
+
+def _dist(a, b):
+    return ((a["x"] - b["x"]) ** 2 + (a["y"] - b["y"]) ** 2) ** 0.5
+
+
+@pytest.mark.parametrize("scale", [1, 10])
+def test_draft_is_farther_than_chunker_threshold_from_every_chunk(client, scale):
+    page = _page(scale)
+    seed(client, page)
+    threshold = proximity_threshold(page)
+    assert threshold == 1.5 * 40 * scale
+    op = _write_at(client, "x", _anchor_region(["u0"]))
+    box = _op_box(op, estimate_size("write_text", op["payload"]))
+    for e in page:
+        b = bbox_of([e])
+        dx = max(b["x"] - (box["x"] + box["width"]), box["x"] - (b["x"] + b["width"]), 0)
+        dy = max(b["y"] - (box["y"] + box["height"]), box["y"] - (b["y"] + b["height"]), 0)
+        assert (dx**2 + dy**2) ** 0.5 > threshold
+
+
+@pytest.mark.parametrize("anchored", [False, True])
+@pytest.mark.parametrize("scale", [1, 10])
+def test_five_ops_form_a_tight_column(client, scale, anchored):
+    page = _page(scale)
+    seed(client, page)
+    anchor = _anchor_region(["u0"]) if anchored else None
+    spots = []
+    for i in range(5):
+        op = _write_at(client, f"note {i}", anchor)
+        spots.append(op["payload"]["placement"])
+        est_h = estimate_size("write_text", op["payload"])[1]
+        gap = max(gap_for(op["payload"]["font_size"]), 1.05 * proximity_threshold(page))
+    bound = 5 * (est_h + 2 * gap)
+    assert max(_dist(a, b) for a in spots for b in spots) <= bound
+
+
+def test_applied_op_reserves_real_box_not_estimate(client):
+    seed(client, [stroke("u0", 0, 0), stroke("u1", 0, 20000), stroke("u2", 0, 40000)])
+    op = write(client, text="a\n" * 20).json()
+    est = estimate_size("write_text", op["payload"])
+    p = op["payload"]["placement"]
+    tag = {"author": "agent", "draft": True, "op_id": op["id"]}
+    small = stroke(own(op["id"]), p["x"], p["y"], w=10, h=10, customData=tag)
+    seed(client, [stroke("u0", 0, 0), stroke("u1", 0, 20000), stroke("u2", 0, 40000), small])
+    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
+    nxt = write(client, text="b").json()["payload"]["placement"]
+    assert nxt["y"] < p["y"] + est[1]  # old code stayed below the estimated box
+    assert nxt["y"] >= p["y"] + 10
