@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import load_fixture
 import make_real_scale
 import replay_fixture
+import snapshot_canvas
 
 
 def live(els):
@@ -213,3 +214,81 @@ def test_load_fixture_cli_creates_missing_canvas(client, capsys):
     assert len(client.get(f"/documents/{doc['id']}/scene").json()["elements"]) == len(
         make_real_scale.build()
     )
+
+
+# ---- Task 4: private snapshot helper (numbers only) and the privacy notes ----
+
+
+def test_gitignore_and_readme_privacy():
+    gitignore = (ROOT / ".gitignore").read_text().splitlines()
+    assert ".inkbridge-private/" in gitignore
+    readme = (ROOT / "README.md").read_text()
+    assert "inkbridge-private" in readme and "Gemini" in readme
+
+
+def test_stats_are_numbers_only():
+    s = snapshot_canvas.stats(make_real_scale.build())
+    assert set(s) == {
+        "elements",
+        "median_stroke_height",
+        "line_pitch",
+        "median_gap",
+        "extent_x",
+        "extent_y",
+    }
+    assert all(v is None or isinstance(v, int | float) for v in s.values())
+    assert s["elements"] == len(live(make_real_scale.build()))
+    assert 180 <= s["median_stroke_height"] <= 330
+    assert 380 <= s["line_pitch"] <= 460
+    assert 0 < s["median_gap"] < 300
+    assert s["extent_x"] > 15000
+
+
+def test_stats_of_empty_scene_has_no_text_or_ids():
+    s = snapshot_canvas.stats([])
+    assert s["elements"] == 0 and s["line_pitch"] is None
+    assert "text" not in json.dumps(s)
+
+
+def test_snapshot_refuses_output_inside_repo(capsys):
+    assert snapshot_canvas.main(["default", "--out", str(ROOT / "data"), "--db", "x.db"]) == 2
+    assert "inside the repo" in capsys.readouterr().err
+
+
+def test_snapshot_writes_private_copy_read_only(tmp_path):
+    db_path = tmp_path / "src.db"
+    scene = {"elements": make_real_scale.build()[:5]}
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE scenes (document_id TEXT PRIMARY KEY, version INTEGER, elements_json TEXT, updated_at TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO scenes VALUES ('default', 3, ?, '2026-01-01T00:00:00+00:00')",
+        (json.dumps(scene["elements"]),),
+    )
+    conn.commit()
+    conn.close()
+    out = tmp_path / "private"
+    assert snapshot_canvas.main(["default", "--db", str(db_path), "--out", str(out)]) == 0
+    (written,) = list(out.glob("default-*.scene.json"))
+    assert json.loads(written.read_text()) == {"version": 3, "elements": scene["elements"]}
+    assert oct(out.stat().st_mode & 0o777) == "0o700"
+    assert oct(written.stat().st_mode & 0o777) == "0o600"
+
+
+def test_snapshot_stats_flag_prints_numbers_only(tmp_path, capsys):
+    db_path = tmp_path / "src.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE scenes (document_id TEXT, version INTEGER, elements_json TEXT, updated_at TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO scenes VALUES ('default', 1, ?, 'x')",
+        (json.dumps(make_real_scale.build()),),
+    )
+    conn.commit()
+    conn.close()
+    assert snapshot_canvas.main(["default", "--db", str(db_path), "--stats"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert set(printed) == set(snapshot_canvas.stats([]))
+    assert list(tmp_path.glob("**/*.scene.json")) == []
