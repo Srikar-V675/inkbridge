@@ -52,7 +52,7 @@ def test_read_canvas_returns_the_outline_then_the_overview_image(api):
     assert second["text"] is None  # not read yet: the description says to open it with get_region
     assert set(first) == {
         "id", "order", "kind", "bounds", "text", "latex", "status", "png_stale",
-        "content_hash", "text_hash", "links", "deep_link",
+        "content_hash", "text_hash", "links", "deep_link", "read_status", "read_note",
     }  # fmt: skip
     image = result.content[1]
     assert image.type == "image" and image.mime_type == "image/png"
@@ -274,3 +274,23 @@ def test_read_canvas_doc_says_overview_is_orientation_only(api):
     tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
     description = tools["read_canvas"].description
     assert "orientation" in description and "get_region" in description
+
+
+def test_a_too_large_chunk_says_so_and_no_image_is_fetched(api, monkeypatch):
+    canvas = Canvas(api, row("a", 3) + [rect("big", 0, 2000, w=5000, h=50)])
+    chunks = {c["id"]: c for c in outline(call("read_canvas", include_overview=False))["chunks"]}
+    big_id, a_id = canvas.chunk_of("big")["id"], canvas.chunk_of("a0")["id"]
+    assert chunks[a_id]["read_status"] == "ok" and chunks[a_id]["read_note"] is None
+    assert chunks[big_id]["read_status"] == "too_large" and "split" in chunks[big_id]["read_note"]
+
+    def boom(self, region_id):
+        raise AssertionError("an unreadable crop must not be fetched")
+
+    monkeypatch.setattr(ApiClient, "get_image", boom)
+    result = call("get_region", region_id=canvas.chunk_of("big")["id"])
+    meta = json.loads(result.content[0].text)
+    assert meta["read_status"] == "too_large"
+    assert [c.type for c in result.content] == ["text", "text"]
+    assert "split" in result.content[1].text
+    ok = call("get_region", region_id=canvas.chunk_of("a0")["id"], include_image=False)
+    assert json.loads(ok.content[0].text)["read_status"] == "ok"

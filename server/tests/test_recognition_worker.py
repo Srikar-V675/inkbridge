@@ -546,3 +546,27 @@ def test_urgent_ids_expire_after_their_ttl(client):
     assert w.request("default", [rid], ttl_s=5) == {rid}
     t[0] += 6
     assert w._urgent_ids("default") == set()
+
+
+def big_and_small(client):
+    from tests.test_chunker import rect
+
+    canvas = Canvas(client, row("a", 3) + [rect("big", 0, 2000, w=5000, h=50)])
+    for c in canvas.chunks("active"):
+        upload(client, canvas, c["id"])
+    return canvas
+
+
+def test_a_too_large_chunk_is_never_sent_to_the_model(client, caplog):
+    canvas = big_and_small(client)
+    model = FakeModel()
+    w = worker(model)
+    big = canvas.chunk_of("big")["id"]
+    w._urgent["default"] = {big: LATER + 100}  # even when check_sync asks for it
+    with caplog.at_level("INFO", logger="inkbridge.recognition_worker"):
+        assert w.run_once() == 1  # only the normal chunk
+        assert w.run_once() == 0
+    assert len(model.calls) == 1
+    assert canvas.chunk_of("big")["text"] is None
+    assert canvas.chunk_of("a0")["text"] == "x squared"
+    assert len([r for r in caplog.records if "not reading" in r.getMessage()]) == 1

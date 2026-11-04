@@ -11,6 +11,7 @@ Privacy: the Gemini free tier may train on what it receives, so nothing is read 
 id is listed in INKBRIDGE_RECOGNIZE_DOCUMENTS (test and eval pages only).
 """
 
+import json
 import logging
 import os
 import sqlite3
@@ -19,7 +20,7 @@ import time
 from collections.abc import Callable, Iterable
 from datetime import datetime
 
-from inkbridge import db
+from inkbridge import db, imaging
 from inkbridge.recognizer import (
     PermanentError,
     RateLimited,
@@ -55,6 +56,7 @@ class RecognitionWorker:
         self._publish = publish
         Key = tuple[str, str]  # (region id, content hash)
         self._failures: dict[Key, tuple[int, float]] = {}  # -> (count, retry at)
+        self._skipped: set[Key] = set()  # too-large chunks already logged (INK-096)
         self._unsaved: dict[Key, Recognition] = {}  # readings whose save hit a locked database
         self._paused_until = 0.0  # after a 429 or timeout no chunk is read, not just that one
         self._stop = threading.Event()
@@ -192,6 +194,7 @@ class RecognitionWorker:
         for store in (self._failures, self._unsaved):
             for key in [k for k in store if k not in keys]:
                 del store[key]  # superseded ink or a gone chunk: forget it
+        self._skipped &= keys
         urgent = self._urgent_ids(document_id)
         candidates.sort(key=lambda c: c["id"] not in urgent)  # stable: asked-for chunks first
         try:
@@ -202,6 +205,13 @@ class RecognitionWorker:
                 if asked:
                     self._done_urgent(document_id, region["id"])
                 key = (region["id"], region["content_hash"])
+                bounds = json.loads(region["bbox"])
+                count = len(json.loads(region["element_ids_json"]))
+                if (why := imaging.unreadable_reason(bounds, count)) is not None:
+                    if key not in self._skipped:  # log once per (region, hash), not every pass
+                        self._skipped.add(key)
+                        log.info("not reading %s: %s", key[0], why)
+                    continue
                 failed = self._failures.get(key)
                 if failed and self._clock() < failed[1]:
                     continue

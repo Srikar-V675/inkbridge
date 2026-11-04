@@ -9,6 +9,7 @@ from tests.test_search import recognise
 CHUNK_KEYS = {
     "id", "order", "kind", "bounds", "element_ids", "text", "latex", "source", "status",
     "successor_of", "png_stale", "content_hash", "text_hash", "links", "deep_link",
+    "read_status", "read_note",
 }  # fmt: skip
 REGION_KEYS = {
     "id", "document_id", "element_ids", "bounds", "stroke_count", "kind", "created_by",

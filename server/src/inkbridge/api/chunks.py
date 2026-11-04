@@ -41,6 +41,8 @@ class ChunkOut(Out):
     content_hash: str | None
     text_hash: str | None
     links: list[Link]
+    read_status: str
+    read_note: str | None
     deep_link: str
 
 
