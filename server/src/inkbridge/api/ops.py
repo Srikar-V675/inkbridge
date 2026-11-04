@@ -79,6 +79,12 @@ def _existing(ids: list[str]) -> HTTPException:
     return HTTPException(422, {"code": "existing_element_id", "ids": ids})
 
 
+def _publish_expired(swept: list[dict]) -> None:
+    """Tell open browsers about ops the lazy sweep just expired, so they drop unresolved drafts."""
+    for op in swept:
+        hub.publish(op["document_id"], updated_message(op))
+
+
 def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     try:
         # Before the schema: an existing id must be refused whichever field carries it. A retry of
@@ -105,10 +111,11 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
                 "start the source with `flowchart TD` or `graph LR`",
             },
         )
+    swept: list[dict] = []
     try:
         with timed("ops.create", fields=len(body.payload)):  # includes server-side placement
             op, created = ops_db.create_op(
-                conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id
+                conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id, swept
             )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
@@ -149,6 +156,7 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
         ) from None
     except ops_db.OpConflict:
         raise HTTPException(409, {"code": "op_id_conflict", "op_id": body.op_id}) from None
+    _publish_expired(swept)
     response.status_code = 201 if created else 200
     if created:
         hub.publish(document_id, op=op)  # draw it now in any open browser
@@ -177,7 +185,10 @@ def list_ops(
         raise HTTPException(422, f"unknown status: {', '.join(bad)}")
     if not db.document_exists(conn, document_id):
         raise HTTPException(404, "document not found")
-    return {"ops": ops_db.list_ops(conn, document_id, statuses)}
+    swept: list[dict] = []
+    ops = ops_db.list_ops(conn, document_id, statuses, swept)
+    _publish_expired(swept)
+    return {"ops": ops}
 
 
 @router.get("/ops/{op_id}", response_model=OpOut)

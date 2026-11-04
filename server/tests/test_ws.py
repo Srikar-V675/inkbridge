@@ -252,5 +252,61 @@ def test_expired_ops_are_not_replayed_but_fresh_ones_are(client):
     finally:
         conn.close()
     with client.websocket_connect(WS) as ws:
+        first = recv(ws)  # the connect sweep expires the old op and says so
+        assert (first["type"], first["op_id"], first["status"]) == (
+            "op.updated",
+            old["id"],
+            "expired",
+        )
         assert recv(ws)["op_id"] == fresh["id"]
     assert status(client, old["id"]) == "expired"
+
+
+def _backdate(op_id, hours=25):
+    from datetime import UTC, datetime, timedelta
+
+    ts = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
+    conn = db.connect()
+    try:
+        conn.execute("UPDATE agent_ops SET created_at = ? WHERE id = ?", (ts, op_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_list_sweep_pushes_op_updated_expired(client):
+    with client.websocket_connect(WS) as ws:
+        old = write(client, "old")
+        assert recv(ws)["op_id"] == old["id"]  # drawn, so delivered
+        wait_status(client, old["id"], "delivered")
+        _backdate(old["id"])
+        client.get(OPS)  # the lazy sweep runs here
+        assert recv(ws) == {
+            "type": "op.updated",
+            "op_id": old["id"],
+            "status": "expired",
+            "error": None,
+        }
+        client.get(OPS)  # already expired: nothing more is sent
+        fresh = write(client, "fresh")
+        assert recv(ws)["op_id"] == fresh["id"]  # the next message is the new op, not a repeat
+
+
+def test_create_sweep_pushes_op_updated_expired(client):
+    with client.websocket_connect(WS) as ws:
+        old = write(client, "old")
+        recv(ws)
+        _backdate(old["id"])
+        fresh = write(client, "fresh")
+        got = [recv(ws), recv(ws)]
+        assert {"type": "op.updated", "op_id": old["id"], "status": "expired", "error": None} in got
+        assert any(m.get("op_id") == fresh["id"] and m["type"] == "op.pending" for m in got)
+
+
+def test_late_ack_for_expired_op_is_a_clean_409(client):
+    old = write(client, "old")
+    _backdate(old["id"])
+    client.get(OPS)
+    r = client.patch(f"/ops/{old['id']}", json={"status": "applied", "element_ids": [f"{old['id']}:a"]})
+    assert r.status_code == 409
+    assert r.json()["detail"]["code"] == "invalid_transition"

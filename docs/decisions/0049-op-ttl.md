@@ -20,7 +20,7 @@ An agent op that no browser ever draws stays `pending` (or `delivered`, if a soc
 
 ## Consequences
 
-- A browser that holds a draft for an op the server has since expired (tab open more than 24 h, op still `delivered`) gets the existing `InvalidTransition` path when it acks. The draft stays unresolved on the canvas. Browser handling of that `op.error` is unchanged (out of scope).
-- No `op.updated expired` push goes out on sweep. A browser learns of expiry only on its next fetch or replay.
+- Resolved by INK-097: the sweep pushes `op.updated` with status `expired` for each op it expires. `_expire_stale` returns the expired ops (`UPDATE ... RETURNING`); `create_op` and `list_ops` hand them back through an optional `expired` list, and the API layer (`POST` ops, `GET` ops, the WebSocket replay) publishes them. The db layer still does not import the hub. Nothing is pushed if the creating transaction rolls back.
+- The browser removes the op's unresolved drafts on `expired` (`dropDrafts` in `resolve.ts`): only live elements still tagged `customData.draft` whose id carries `<op_id>:`. Elements the user already accepted lost the tag and are kept. A late ack for an expired op stays a clean 409 `invalid_transition`.
 - `list_ops` now takes a write lock when it runs outside a transaction. Under heavy write contention a GET can wait for the busy timeout. A caller already in a transaction skips the sweep.
 - The 24 h constant is a module constant, not an env var, like the other op limits.

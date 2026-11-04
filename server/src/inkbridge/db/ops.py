@@ -130,8 +130,11 @@ def create_op(
     op_type: str,
     payload: dict[str, Any],
     op_id: str | None = None,
+    expired: list[dict] | None = None,
 ) -> tuple[dict, bool]:
     """Enqueue an op with a server-computed placement; return (op, created).
+
+    `expired`, if given, receives the stale ops the sweep expired (only when the call commits).
 
     The caller has validated the payload's shape. Runs under one write lock so two ops posted
     at once see each other's reserved spot.
@@ -140,23 +143,26 @@ def create_op(
         raise ValueError(f"unknown op type {op_type!r}")
     conn.execute("BEGIN IMMEDIATE")
     try:
-        return _create_op(conn, document_id, op_type, payload, op_id)
+        return _create_op(conn, document_id, op_type, payload, op_id, expired)
     except BaseException:
         conn.rollback()
         raise
 
 
-def _expire_stale(conn: sqlite3.Connection, document_id: str) -> int:
-    """Caller owns the transaction. Returns how many ops were expired.
+def _expire_stale(conn: sqlite3.Connection, document_id: str) -> list[dict]:
+    """Caller owns the transaction. Returns the ops it just expired (id, document_id, status, error).
 
-    Applied ops are kept: their drafts are on the canvas awaiting Accept or Reject.
+    Applied ops are kept: their drafts are on the canvas awaiting Accept or Reject. The db layer
+    only reports; the API layer pushes `op.updated` for each (it must not import the hub).
     """
     cutoff = (datetime.now(UTC) - timedelta(seconds=OP_TTL_S)).isoformat()
-    return conn.execute(
+    rows = conn.execute(
         "UPDATE agent_ops SET status = 'expired' WHERE document_id = ?"
-        " AND status IN ('pending', 'delivered') AND created_at IS NOT NULL AND created_at < ?",
+        " AND status IN ('pending', 'delivered') AND created_at IS NOT NULL AND created_at < ?"
+        " RETURNING id, document_id, status, error",
         (document_id, cutoff),
-    ).rowcount
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[float]:
@@ -209,7 +215,7 @@ def _resolve_anchor(conn, document_id, region_id):
     raise AnchorGone(region_id)  # successor cycle
 
 
-def _create_op(conn, document_id, op_type, payload, op_id):
+def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
     payload = {k: v for k, v in payload.items() if k != "anchor_resolved"}  # server-set only
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
@@ -230,7 +236,7 @@ def _create_op(conn, document_id, op_type, payload, op_id):
                 raise OpConflict(op_id)
             conn.rollback()
             return existing, False
-    _expire_stale(conn, document_id)  # an expired op must not hold a slot
+    swept = _expire_stale(conn, document_id)  # an expired op must not hold a slot
     open_ops, oldest = conn.execute(
         "SELECT COUNT(*), MIN(created_at) FROM agent_ops WHERE document_id = ?"
         " AND status IN ('pending', 'delivered')",
@@ -300,6 +306,8 @@ def _create_op(conn, document_id, op_type, payload, op_id):
         ),
     )
     conn.commit()
+    if expired is not None:
+        expired.extend(swept)
     return get_op(conn, oid), True
 
 
@@ -315,13 +323,19 @@ def get_op(conn: sqlite3.Connection, op_id: str) -> dict:
 
 
 def list_ops(
-    conn: sqlite3.Connection, document_id: str, statuses: list[str] | None = None
+    conn: sqlite3.Connection,
+    document_id: str,
+    statuses: list[str] | None = None,
+    expired: list[dict] | None = None,
 ) -> list[dict]:
+    """`expired`, if given, receives the stale ops this call's sweep expired."""
     if not conn.in_transaction:  # the sweep writes; a caller already in a transaction keeps its own
         conn.execute("BEGIN IMMEDIATE")
         try:
-            _expire_stale(conn, document_id)
+            swept = _expire_stale(conn, document_id)
             conn.commit()
+            if expired is not None:
+                expired.extend(swept)
         except BaseException:
             conn.rollback()
             raise

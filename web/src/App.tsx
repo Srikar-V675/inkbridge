@@ -9,7 +9,8 @@ import { DraftBar } from "./DraftBar";
 import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "./draftView";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
 import { CropSync } from "./cropSync";
-import { rejectOp, type DraftElement } from "./drafts";
+import { type DraftElement } from "./drafts";
+import { draftOpId, dropDrafts } from "./resolve";
 import { drawOp } from "./drawOp";
 import { OpsSocket } from "./opsSocket";
 import { readRoute } from "./route";
@@ -323,10 +324,9 @@ export default function App() {
     const sweep = (opId: string) => {
       const api = apiRef.current;
       if (!api) return;
-      const prefix = `${opId}:`;
       const scene = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
-      if (!scene.some((e) => e.id.startsWith(prefix) && !e.isDeleted)) return;
-      api.updateScene({ elements: rejectOp(scene, prefix) as never });
+      if (!scene.some((e) => draftOpId(e) === opId)) return; // accepted elements are never touched
+      api.updateScene({ elements: dropDrafts(scene, opId) as never });
     };
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
     const wire = wireRefresh(refresh, document);
