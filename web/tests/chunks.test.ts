@@ -249,7 +249,14 @@ describe("listChunks", () => {
     const { fetchFn, calls } = api({ a: chunk("a"), b: chunk("b", { status: "orphaned" }) });
     const rows = await listChunks("doc", fetchFn);
     assert.deepEqual(rows.map((c) => c.id), ["a"]);
-    assert.equal(calls[0], "/documents/doc/regions?chunks=true&limit=500");
+    assert.equal(calls[0], "/documents/doc/regions?chunks=true&status=active&limit=500");
+  });
+
+  it("keeps pinned chunks, which the chunks endpoint would drop", async () => {
+    const { fetchFn } = api({ p: chunk("p", { pinned: true }) });
+    const rows = await listChunks("doc", fetchFn);
+    assert.equal(rows[0]?.id, "p");
+    assert.equal(rows[0]?.pinned, true);
   });
 
   it("returns an empty list when the API fails", async () => {

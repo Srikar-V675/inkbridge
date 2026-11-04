@@ -127,17 +127,17 @@ export function jumpNotice(r: JumpResult): string | null {
 }
 
 /**
- * Active chunks of a canvas for the overlay. Uses `?chunks=true` on the regions list until INK-033
- * ships `GET /documents/{id}/chunks`; only this function changes then. Failures give an empty list.
- * Known limit: the server applies `limit` before this status filter and orders by recency, so a canvas
- * with more than 500 chunk rows (orphans included) can miss active ones; INK-033 removes this.
+ * Active chunks of a canvas for the overlay. Uses the regions list with `status=active`, which the
+ * server applies in SQL before `limit`, so orphans never crowd active chunks out. `/chunks` is not
+ * used because it omits `pinned`, which the overlay's manual style needs. Still capped at 500 active
+ * chunks by the API. Failures give an empty list.
  */
 export async function listChunks(
   canvas: string,
   fetchFn: typeof fetch = (...a) => fetch(...a),
 ): Promise<Chunk[]> {
   try {
-    const url = `/documents/${encodeURIComponent(canvas)}/regions?chunks=true&limit=500`;
+    const url = `/documents/${encodeURIComponent(canvas)}/regions?chunks=true&status=active&limit=500`;
     const rows = await timed(
       "chunks.list",
       () => fetchWithTimeout(fetchFn, url, async (res) => (res.ok ? ((await res.json()) as Chunk[]) : [])),

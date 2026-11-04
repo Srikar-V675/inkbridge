@@ -649,3 +649,49 @@ def test_connectors_do_not_count_towards_chunk_identity():
     # A chunk of nothing but connectors is matched on them, so it keeps its id too.
     m = match_chunks({"C": ["y0"]}, [["y0"]], [0], ignore=connector_ids(els))
     assert m.assigned == ["C"]
+
+
+def _extent(by_id, ids):
+    boxes = [bbox_of([by_id[i]]) for i in ids]
+    return (
+        max(b["x"] + b["width"] for b in boxes) - min(b["x"] for b in boxes),
+        max(b["y"] + b["height"] for b in boxes) - min(b["y"] for b in boxes),
+    )
+
+
+def test_mixed_zoom_canvas_has_no_mega_chunk():
+    from tests.chunk_scale_fixture import mixed_zoom_canvas
+
+    elements = mixed_zoom_canvas()
+    by_id = {e["id"]: e for e in elements}
+    chunks = cluster(elements)
+    for c in chunks:
+        # one zoom area and one paragraph per chunk
+        assert len({i.split("l")[0] for i in c if i.startswith("z")}) <= 1
+        w, h = _extent(by_id, c)
+        own = statistics.median(max(by_id[i]["width"], by_id[i]["height"]) for i in c)
+        assert max(w, h) <= ChunkerConfig().max_extent * own
+    assert len([c for c in chunks if c[0].startswith("z1p")]) == 2  # two 1x paragraphs, not one
+
+
+def test_cap_cuts_at_largest_gap():
+    a = [stroke(f"a{n}", n * 12, 0) for n in range(10)]
+    bridge = [stroke("br", 125, 0)]  # 7 from line A, 23 from line B
+    b = [stroke(f"b{n}", 158 + n * 12, 0) for n in range(10)]
+    elements = a + bridge + b
+    assert len(cluster(elements)) == 1
+    chunks = cluster(elements, ChunkerConfig(max_extent=10))
+    assert as_sets(chunks) == {
+        frozenset([e["id"] for e in a + bridge]),
+        frozenset(e["id"] for e in b),
+    }
+
+
+def test_cap_terminates_on_stacked_identical_boxes():
+    elements = [stroke(f"s{n}", 0, 0) for n in range(6)]
+    assert len(cluster(elements, ChunkerConfig(max_extent=0.5))) == 6
+
+
+def test_label_stays_with_container_after_cap():
+    elements = [rect("box", 0, 0, 200, 100), stroke("label", 80, 40, containerId="box")]
+    assert cluster(elements, ChunkerConfig(max_extent=0.5)) == [["box", "label"]]
