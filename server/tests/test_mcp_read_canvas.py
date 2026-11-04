@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import json
+import re
 
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -56,7 +57,7 @@ def test_read_canvas_returns_the_outline_then_the_overview_image(api):
     image = result.content[1]
     assert image.type == "image" and image.mime_type == "image/png"
     with Image.open(io.BytesIO(base64.b64decode(image.data))) as img:
-        assert img.width <= 1024
+        assert img.width <= 1568  # the read_canvas default width (INK-086)
 
 
 def test_read_canvas_without_overview_and_tool_guidance(api):
@@ -215,3 +216,61 @@ def test_read_canvas_lists_only_active_chunks(api):
     _orphan(gone)
     after = outline(call("read_canvas"))
     assert gone not in [c["id"] for c in after["chunks"]] and "version" in after
+
+
+def _spread(n_cols, n_rows):
+    # Far-apart 250 px boxes, one chunk each, in reading order: a canvas written while zoomed in.
+    return [
+        rect(f"r{r}_{c}", c * 4000, r * 3000, 250, 250)
+        for r in range(n_rows)
+        for c in range(n_cols)
+    ]
+
+
+def _images(result):
+    return [c for c in result.content if c.type == "image"]
+
+
+def _widths(result):
+    widths = []
+    for image in _images(result):
+        with Image.open(io.BytesIO(base64.b64decode(image.data))) as img:
+            widths.append(img.width)
+    return widths
+
+
+def test_read_canvas_splits_a_spread_canvas_into_several_overview_images(api):
+    canvas = Canvas(api, _spread(10, 6))  # 60 chunks
+    assert len(canvas.chunks()) == 60
+    result = call("read_canvas")
+    images = _images(result)
+    assert 1 < len(images) <= 3
+    assert all(w <= 1568 for w in _widths(result))
+    note = result.content[-1].text  # the continuation line comes after the images
+    shown_to = int(re.search(r"offset=(\d+)", note).group(1))
+    assert "of 60" in note and 0 < shown_to < 60
+    rest = outline(call("read_canvas", include_overview=False, offset=shown_to))
+    assert rest["chunks"][0]["order"] == shown_to + 1
+    more = call("read_canvas", offset=shown_to)
+    assert _images(more) and _widths(more)[0] <= 1568
+
+
+def test_read_canvas_max_width_is_passed_and_bounded(api):
+    Canvas(api, _spread(5, 4))
+    narrow = call("read_canvas", max_width=600)
+    assert narrow.content and all(w <= 600 for w in _widths(narrow))
+    with pytest.raises(Exception) as refused:  # the schema bound, before any API call
+        call("read_canvas", max_width=5000)
+    assert "less than or equal to 1568" in str(refused.value)
+
+
+def test_read_canvas_past_the_end_still_returns_one_blank_image(api):
+    Canvas(api, _spread(2, 2))
+    result = call("read_canvas", offset=999)
+    assert len(_images(result)) == 1 and _widths(result)[0] > 0
+
+
+def test_read_canvas_doc_says_overview_is_orientation_only(api):
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    description = tools["read_canvas"].description
+    assert "orientation" in description and "get_region" in description

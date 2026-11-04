@@ -121,19 +121,36 @@ def get_overview(
     document_id: str,
     conn: Conn,
     max_width: Annotated[int, Query(ge=64, le=4096)] = imaging.MAX_IMAGE_WIDTH,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Response:
-    """All active chunk crops placed at their bounds with ids; boxes where a crop is missing."""
+    """One band of active chunk crops, in reading order from chunk index `offset`.
+
+    A spread-out canvas is split into bands (see imaging.plan_bands) so each box stays readable.
+    Headers: X-Overview-From (offset), X-Overview-Count (chunks drawn), X-Overview-Total (active
+    chunks), and X-Overview-Next (the offset of the following band; absent on the last one).
+    """
     try:
         chunks = outline.chunk_crops(conn, document_id)
     except db.DocumentNotFound:
         raise HTTPException(404, NOT_FOUND) from None
-    paths = {c["id"]: Path(c.pop("png_path") or "") for c in chunks}
+    bands = imaging.plan_bands(chunks[offset:], max_width)
+    band = bands[0] if bands else []
+    paths = {c["id"]: Path(c.pop("png_path") or "") for c in band}
 
     def load(chunk_id: str) -> bytes | None:
         path = paths[chunk_id]
         return path.read_bytes() if path.is_file() else None
 
-    return Response(imaging.overview(chunks, load, max_width), media_type="image/png")
+    headers = {
+        "X-Overview-From": str(offset),
+        "X-Overview-Count": str(len(band)),
+        "X-Overview-Total": str(len(chunks)),
+    }
+    if len(bands) > 1:
+        headers["X-Overview-Next"] = str(offset + len(band))
+    return Response(
+        imaging.overview(band, load, max_width), media_type="image/png", headers=headers
+    )
 
 
 def refuse_orphan(conn, region_id: str, history: bool) -> None:

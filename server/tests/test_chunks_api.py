@@ -2,7 +2,8 @@
 
 import io
 
-from PIL import Image
+import pytest
+from PIL import Image, features
 
 from inkbridge import config, imaging
 from tests.test_chunk_persistence import Canvas, row
@@ -221,3 +222,122 @@ def test_overview_frames_stale_crops_and_flattens_transparency():
     colours_ = {c for _, c in img.getcolors(1 << 22)}
     assert imaging._STALE in colours_
     assert (0, 0, 0) not in colours_  # the transparent crop shows white, not black
+
+
+def _spread_tiles():
+    # 20 chunks over about 17000 x 11000 px, the shape of a canvas written while zoomed in.
+    tiles = [_tile(i, (i % 5) * 4250, (i // 5) * 3000, w=250, h=250) for i in range(19)]
+    return tiles + [_tile(19, 16750, 10750, w=250, h=250)]
+
+
+def _band_scale(band):
+    x0 = min(c["bounds"]["x"] for c in band) - imaging.OVERVIEW_PAD
+    x1 = max(c["bounds"]["x"] + c["bounds"]["width"] for c in band) + imaging.OVERVIEW_PAD
+    return x0, x1
+
+
+def test_plan_bands_keeps_every_box_at_least_24px():
+    tiles = _spread_tiles()
+    bands = imaging.plan_bands(tiles, 1568)
+    assert len(bands) > 1
+    assert sum(map(len, bands)) == 20
+    assert [c["id"] for band in bands for c in band] == [c["id"] for c in tiles]  # order kept
+    for band in bands:
+        img = _img(imaging.overview(band, lambda _: None, 1568))
+        x0, x1 = _band_scale(band)
+        scale = img.width / (x1 - x0)
+        assert scale * 250 >= imaging.MIN_BOX_PX - 1  # one px of rounding allowed
+
+
+def test_plan_bands_single_band_when_it_fits():
+    tiles = [_tile(i, i * 300, 0) for i in range(3)]
+    assert [len(b) for b in imaging.plan_bands(tiles, 1568)] == [3]
+
+
+def test_plan_bands_always_makes_progress():
+    # A chunk too wide to ever reach 24 px is shown alone, never upscaled, and never loops.
+    bands = imaging.plan_bands([_tile(0, 0, 0, w=5000, h=30), _tile(1, 0, 100)], 1568)
+    assert [[c["id"] for c in b] for b in bands] == [["c0"], ["c1"]]
+
+
+def _rect(text, pos, font):
+    x, y = pos
+    left, top, right, bottom = font.getbbox(text)
+    return (x + left, y + top, x + right, y + bottom)
+
+
+def test_label_positions_do_not_overlap():
+    font = imaging._font(1568)
+    anchors = [("a", (10, 40)), ("b", (14, 40)), ("c", (18, 40))]  # three boxes side by side
+    placed = imaging._place_labels(anchors, font)
+    assert [t for t, _ in placed] == ["a", "b", "c"]
+    rects = [_rect(t, p, font) for t, p in placed]
+    for i, a in enumerate(rects):
+        for b in rects[i + 1 :]:
+            overlap = a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+            assert not overlap, (a, b)
+    assert all(x >= 0 and y >= 0 for x, y in (p for _, p in placed))
+
+
+def test_overview_label_uses_a_sized_font():
+    if not features.check("freetype2"):
+        pytest.skip("Pillow without FreeType keeps the tiny bitmap font")
+    assert imaging._font(1568).size >= 20
+    img = _img(imaging.overview(_spread_tiles()[:2], lambda _: None, 1568))
+    assert img.width <= 1568
+
+
+def _spread_canvas(client, n=20):
+    # n far-apart rectangles: each is its own chunk, 250 px tall, in reading order.
+    els = [rect(f"r{i}", (i % 5) * 4250, (i // 5) * 3000, w=250, h=250) for i in range(n)]
+    return Canvas(client, els)
+
+
+def test_overview_pages_through_a_spread_canvas(client):
+    _spread_canvas(client)
+    first = client.get("/documents/default/overview", params={"max_width": 1568})
+    assert first.status_code == 200 and first.headers["content-type"] == "image/png"
+    assert first.headers["X-Overview-Total"] == "20" and first.headers["X-Overview-From"] == "0"
+    count = int(first.headers["X-Overview-Count"])
+    assert 0 < count < 20
+    assert first.headers["X-Overview-Next"] == str(count)
+    colours(first.content, max_width=1568)  # decodes as an image no wider than asked
+    shown, nxt = 0, 0
+    while True:
+        r = client.get("/documents/default/overview", params={"max_width": 1568, "offset": nxt})
+        assert r.headers["X-Overview-From"] == str(nxt)
+        n = int(r.headers["X-Overview-Count"])
+        assert n > 0
+        shown += n
+        if "X-Overview-Next" not in r.headers:
+            break
+        nxt = int(r.headers["X-Overview-Next"])
+    assert shown == 20 and nxt + n == 20
+
+
+def test_overview_offset_past_end_is_a_blank_image(client):
+    _spread_canvas(client)
+    r = client.get("/documents/default/overview", params={"offset": 99})
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert r.headers["X-Overview-Count"] == "0" and "X-Overview-Next" not in r.headers
+
+
+def test_small_canvas_overview_is_one_band_without_next(client):
+    page(client)
+    r = client.get("/documents/default/overview")
+    assert r.headers["X-Overview-Count"] == "5" and r.headers["X-Overview-Total"] == "5"
+    assert "X-Overview-Next" not in r.headers
+
+
+def test_tiny_chunks_do_not_split_their_neighbours_into_bands():
+    # A 10-unit dot after every 250-unit box is ignored for sizing: the page still groups.
+    tiles = _spread_tiles()
+    dotted = []
+    for tl in tiles:
+        b = tl["bounds"]
+        dotted += [tl, _tile(100 + int(tl["id"][1:]), b["x"] + 300, b["y"] + 40, w=10, h=10)]
+    baseline = imaging.plan_bands(tiles, 1568)
+    bands = imaging.plan_bands(dotted, 1568)
+    assert sum(map(len, bands)) == len(dotted)
+    assert [c["id"] for band in bands for c in band] == [c["id"] for c in dotted]
+    assert len(bands) <= len(baseline) + 1  # 8 without the dots; one band per chunk would be 40

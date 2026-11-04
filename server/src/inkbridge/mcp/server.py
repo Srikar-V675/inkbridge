@@ -14,7 +14,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 
-from inkbridge import config
+from inkbridge import config, imaging
 from inkbridge.mcp.client import ApiClient, ApiError, Conflict, NotFound
 from inkbridge.sketch_prompts import sketch_prompt
 
@@ -396,13 +396,16 @@ def read_canvas(
         str | None, Field(description="Canvas to read; defaults to the configured document")
     ] = None,
     include_overview: Annotated[
-        bool, Field(description="Attach one PNG of the whole canvas with chunk ids")
+        bool, Field(description="Attach PNGs of the canvas with chunk ids (a spread one in bands)")
     ] = True,
     offset: Annotated[
         int, Field(ge=0, description="Skip this many chunks (to continue a cut outline)")
     ] = 0,
+    max_width: Annotated[
+        int, Field(ge=256, le=1568, description="Width of each overview image in px")
+    ] = 1568,
 ) -> list:
-    """Read the whole canvas: its chunks in reading order, then an overview image.
+    """Read the whole canvas: its chunks in reading order, then overview images.
 
     Each chunk has order, kind, bounds, its reading (text, latex), status, png_stale, content_hash,
     text_hash (the reading's hash, what a vault note stores as `reading`),
@@ -410,6 +413,9 @@ def read_canvas(
     chunk has not been read yet: call get_region with its id to look at its image instead. A very
     large canvas is cut at a size cap; the reply then says how many chunks were omitted and which
     offset continues it.
+    The overview images are for orientation only: a spread-out canvas is drawn in several images
+    (at most three per call, in reading order), and the reply names the offset that continues
+    them. Read a chunk's ink and reading with get_region.
     """
     client = get_client()
     try:
@@ -420,10 +426,22 @@ def read_canvas(
     chunks = [_outline_chunk(c) for c in data["chunks"][offset:]]
     content: list = [_fit(head, chunks, offset)]
     if include_overview:
+        pos, nxt = offset, None
         try:
-            content.append(Image(data=client.get_overview(document_id), format="png"))
+            for _ in range(imaging.MAX_OVERVIEW_IMAGES):
+                png, nxt = client.get_overview(document_id, max_width, pos)
+                content.append(Image(data=png, format="png"))
+                if nxt is None:
+                    break
+                pos = nxt
         except ApiError as e:
             content.append(f"(overview unavailable: {e})")
+            nxt = None
+        if nxt is not None:
+            content.append(
+                f"Overview shows chunks {offset + 1}..{nxt} of {data['chunk_count']}; "
+                f"call read_canvas with offset={nxt} for the rest."
+            )
     return content
 
 
