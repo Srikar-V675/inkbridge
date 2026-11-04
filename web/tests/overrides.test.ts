@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Chunk } from "../src/chunks.ts";
-import { connectorIds, planOverride, sendOverride } from "../src/overrides.ts";
+import {
+  chunkMark,
+  connectorIds,
+  overrideUi,
+  planOverride,
+  sendOverride,
+  toggleChunk,
+} from "../src/overrides.ts";
 
 function chunk(id: string, element_ids: string[]): Chunk {
   return {
@@ -116,5 +123,87 @@ describe("sendOverride", () => {
     const r = await sendOverride("doc", { kind: "none", reason: "x" }, fetchFn);
     assert.equal(r.ok, false);
     assert.equal(calls.length, 0);
+  });
+});
+
+const fullScene = ["a1", "a2", "a3", "b1", "b2", "c1"].map((id) => ({ id }));
+
+describe("toggleChunk", () => {
+  it("selects all of a chunk's live ink, and a second tap adds another chunk", () => {
+    const a = chunks[0];
+    const b = chunks[1];
+    const one = toggleChunk([], a, fullScene);
+    assert.deepEqual([...one].sort(), ["a1", "a2", "a3"]);
+    const two = toggleChunk(one, b, fullScene);
+    assert.deepEqual([...two].sort(), ["a1", "a2", "a3", "b1", "b2"]);
+    const back = toggleChunk(two, a, fullScene);
+    assert.deepEqual([...back].sort(), ["b1", "b2"]);
+  });
+
+  it("ignores ids missing from the scene or deleted, and keeps unrelated selected ids", () => {
+    const scene = [{ id: "a1" }, { id: "a2" }, { id: "a3", isDeleted: true }];
+    assert.deepEqual([...toggleChunk(["draft-1"], chunks[0], scene)].sort(), ["a1", "a2", "draft-1"]);
+    const noA3 = [{ id: "a1" }, { id: "a2" }];
+    assert.deepEqual([...toggleChunk([], chunks[0], noA3)].sort(), ["a1", "a2"]);
+  });
+
+  it("leaves the selection alone for a chunk with no live ink", () => {
+    const gone = chunk("G", ["g1"]);
+    assert.deepEqual(toggleChunk(["a1"], gone, fullScene), ["a1"]);
+  });
+
+  it("feeds planOverride: two tapped chunks merge, one tapped chunk is a whole chunk", () => {
+    const both = toggleChunk(toggleChunk([], chunks[0], fullScene), chunks[1], fullScene);
+    assert.deepEqual(planOverride(both, chunks), { kind: "merge", chunkIds: ["A", "B"] });
+    const only = toggleChunk([], chunks[0], fullScene);
+    const plan = planOverride(only, chunks);
+    assert.equal(plan.kind, "none");
+    const ui = overrideUi(plan);
+    assert.equal(ui.canMerge, false);
+    assert.equal(ui.canSplit, false);
+  });
+});
+
+describe("chunkMark", () => {
+  it("is none, partial or full by the ink selected", () => {
+    assert.equal(chunkMark([], chunks[0]), "none");
+    assert.equal(chunkMark(["a1"], chunks[0]), "partial");
+    assert.equal(chunkMark(["a1", "a2", "a3"], chunks[0]), "full");
+  });
+
+  it("ignores connectors when deciding full", () => {
+    assert.equal(chunkMark(["a1", "a2"], chunks[0], new Set(["a3"])), "full");
+    assert.equal(chunkMark(["a1"], chunks[0], new Set(["a3"])), "partial");
+  });
+
+  it("a chunk with no ink (connectors only) is none", () => {
+    const arrows = chunk("R", ["ar"]);
+    assert.equal(chunkMark(["ar"], arrows, new Set(["ar"])), "none");
+  });
+});
+
+describe("overrideUi", () => {
+  it("offers Merge for a merge plan, with the chunk count", () => {
+    const ui = overrideUi({ kind: "merge", chunkIds: ["A", "B", "C"] });
+    assert.equal(ui.canMerge, true);
+    assert.equal(ui.canSplit, false);
+    assert.match(ui.hint, /3/);
+  });
+
+  it("offers Split for a split plan", () => {
+    const ui = overrideUi({ kind: "split", chunkId: "A", elementIds: ["a1"] });
+    assert.equal(ui.canMerge, false);
+    assert.equal(ui.canSplit, true);
+    assert.ok(ui.hint.length > 0);
+  });
+
+  it("offers neither for none, with a hint; whole-chunk reason is kept", () => {
+    const empty = overrideUi({ kind: "none", reason: "Select ink that belongs to a chunk." });
+    assert.equal(empty.canMerge, false);
+    assert.equal(empty.canSplit, false);
+    assert.match(empty.hint, /Tap chunk tabs/);
+    const whole = overrideUi({ kind: "none", reason: "The selection already is a whole chunk." });
+    assert.equal(whole.canSplit, false);
+    assert.match(whole.hint, /already is a whole chunk/);
   });
 });

@@ -3,6 +3,7 @@ import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "./ChunkOverlay";
+import { DraftBar } from "./DraftBar";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
 import { CropSync } from "./cropSync";
 import { rejectOp, type DraftElement } from "./drafts";
@@ -399,6 +400,7 @@ export default function App() {
         />
       )}
       {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
+      {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} />}
       <SaveBadge store={status} />
     </div>
   );

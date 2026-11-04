@@ -94,3 +94,41 @@ def test_element_count_is_capped(client, monkeypatch):
     els = [{"id": str(i), "type": "rectangle"} for i in range(3)]
     assert client.put(SCENE, json={"base_version": 0, "elements": els}).status_code == 422
     assert client.put(SCENE, json={"base_version": 0, "elements": els[:2]}).status_code == 200
+
+
+def _el(id, version=1, **extra):
+    return {"id": id, "type": "rectangle", "x": 0, "y": 0, "version": version, **extra}
+
+
+def test_delta_replaces_in_place_and_appends_new(client):
+    a, b = _el("a"), _el("b")
+    client.put(SCENE, json={"base_version": 0, "elements": [a, b]})
+    a2, c = _el("a", version=2, x=5), _el("c")
+    r = client.put(SCENE, json={"base_version": 1, "elements": [c, a2], "delta": True})
+    assert r.status_code == 200 and r.json() == {"version": 2}
+    assert client.get(SCENE).json()["elements"] == [a2, b, c]
+
+
+def test_delta_keeps_deleted_flag_and_never_drops_untouched_ink(client):
+    ink = _el("ink", type="freedraw", points=[[0, 0], [1, 1]], pressures=[0.2, 0.9])
+    client.put(SCENE, json={"base_version": 0, "elements": [ink, _el("b")]})
+    gone = _el("b", version=2, isDeleted=True)
+    client.put(SCENE, json={"base_version": 1, "elements": [gone], "delta": True})
+    assert client.get(SCENE).json()["elements"] == [ink, gone]
+
+
+def test_delta_on_stale_base_version_is_a_conflict_and_changes_nothing(client):
+    client.put(SCENE, json={"base_version": 0, "elements": [_el("a")]})
+    r = client.put(SCENE, json={"base_version": 0, "elements": [_el("b")], "delta": True})
+    assert r.status_code == 409
+    assert [e["id"] for e in client.get(SCENE).json()["elements"]] == ["a"]
+
+
+def test_delta_cannot_grow_the_scene_past_the_cap(client, monkeypatch):
+    from inkbridge import api
+
+    monkeypatch.setattr(api, "MAX_ELEMENTS", 2)
+    client.put(SCENE, json={"base_version": 0, "elements": [_el("a"), _el("b")]})
+    r = client.put(SCENE, json={"base_version": 1, "elements": [_el("c")], "delta": True})
+    assert r.status_code == 422
+    assert len(client.get(SCENE).json()["elements"]) == 2
