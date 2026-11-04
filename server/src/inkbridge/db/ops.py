@@ -155,6 +155,16 @@ def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[f
     return out
 
 
+LATEST_STROKES = 50  # scale sample when the anchor has too few strokes
+
+
+def _sample_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[float]:
+    heights = _stroke_heights(elements, anchor_ids) if anchor_ids else []
+    if len(heights) < placement.MIN_SAMPLES:
+        heights = _stroke_heights(elements, None)[-LATEST_STROKES:]  # scene order = write order
+    return heights
+
+
 def _resolve_anchor(conn, document_id, region_id):
     """The anchor chunk, or its live successor when a re-chunk orphaned it (INK-081).
 
@@ -190,7 +200,7 @@ def _create_op(conn, document_id, op_type, payload, op_id):
             stored = {
                 k: v
                 for k, v in existing["payload"].items()
-                if k not in ("placement", "id_prefix", "font_size", "anchor_resolved")
+                if k not in ("placement", "id_prefix", "font_size", "wrap_chars", "anchor_resolved")
             }
             if (existing["document_id"], existing["type"], stored) != (
                 document_id,
@@ -221,10 +231,8 @@ def _create_op(conn, document_id, op_type, payload, op_id):
         anchor = json.loads(region["bbox"])
         anchor_ids = set(json.loads(region["element_ids_json"] or "[]"))
 
-    heights = _stroke_heights(elements, anchor_ids)
-    if len(heights) < placement.MIN_SAMPLES:
-        heights = _stroke_heights(elements, None)
-    payload = {**payload, "font_size": placement.font_size_for(heights, payload.get("size"))}
+    fs = placement.font_size_for(_sample_heights(elements, anchor_ids), payload.get("size"))
+    payload = {**payload, "font_size": fs, "wrap_chars": placement.WRAP_CHARS}
 
     occupied = [
         placement.rotated_box(bbox_of([e]), e.get("angle") or 0)
@@ -240,7 +248,7 @@ def _create_op(conn, document_id, op_type, payload, op_id):
         if "placement" in other:
             w, h = placement.estimate_size(row["type"], other)
             occupied.append({**other["placement"], "width": w, "height": h})
-    spot = placement.place(occupied, placement.estimate_size(op_type, payload), anchor)
+    spot = placement.place(occupied, placement.estimate_size(op_type, payload), anchor, fs)
 
     conn.execute(
         "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at)"
