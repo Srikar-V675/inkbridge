@@ -155,12 +155,17 @@ export function wrapText(text: string, maxChars?: number): string {
       for (const word of line.split(" ")) {
         let w = word;
         while (w.length > maxChars) {
-          if (cur) out.push(cur), (cur = "");
+          if (cur) {
+            out.push(cur);
+            cur = "";
+          }
           out.push(w.slice(0, maxChars));
           w = w.slice(maxChars);
         }
-        if (cur && cur.length + 1 + w.length > maxChars) out.push(cur), (cur = w);
-        else cur = cur ? `${cur} ${w}` : w;
+        if (cur && cur.length + 1 + w.length > maxChars) {
+          out.push(cur);
+          cur = w;
+        } else cur = cur ? `${cur} ${w}` : w;
       }
       out.push(cur);
       return out.join("\n");

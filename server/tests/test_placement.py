@@ -7,9 +7,9 @@ from inkbridge.placement import (
     MIN_FONT,
     Box,
     estimate_size,
+    font_size_for,
     gap_for,
     margin_for,
-    font_size_for,
     overlaps,
     place,
 )
