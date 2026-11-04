@@ -36,9 +36,11 @@ class ChunkerConfig:
     # None = off. A fraction in (0, 1]: also keep the id when that share of the old chunk survives
     # in the new cluster, or of the new cluster comes from the old chunk (INK-072).
     match_containment: float | None = None
+    # A chunk is at most this * its own median stroke size wide or tall (INK-081, decision 0038).
+    max_extent: float = 80.0
 
     def __post_init__(self) -> None:
-        for name in ("k", "arrow_merge", "link_reach", "min_median"):
+        for name in ("k", "arrow_merge", "link_reach", "min_median", "max_extent"):
             if not getattr(self, name) > 0:
                 raise ValueError(f"ChunkerConfig.{name} must be positive")
         if not 0 <= self.match_threshold < 1:
@@ -112,8 +114,37 @@ def _box(e: dict[str, Any]) -> tuple[float, float, float, float]:
     return (b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"])
 
 
+def _own_scale(boxes: Sequence[tuple[float, float, float, float]], config: ChunkerConfig) -> float:
+    sizes = [max(b[2] - b[0], b[3] - b[1]) for b in boxes]
+    return max(statistics.median(sizes), config.min_median)
+
+
+def _cap(
+    ids: list[str], boxes: Mapping[str, tuple[float, float, float, float]], config: ChunkerConfig
+):
+    """Cut a group wider or taller than max_extent * its own median at its largest gap, recursively."""
+    xs = [boxes[i] for i in ids]
+    limit = config.max_extent * _own_scale(xs, config)
+    w = max(b[2] for b in xs) - min(b[0] for b in xs)
+    h = max(b[3] for b in xs) - min(b[1] for b in xs)
+    if len(ids) < 2 or (w <= limit and h <= limit):
+        return [sorted(ids)]
+    axis = 0 if w >= h else 1  # cut across the longer side
+    order = sorted(ids, key=lambda i: (boxes[i][axis], i))
+    best, cut, reach = -math.inf, 1, boxes[order[0]][axis + 2]
+    for n, i in enumerate(order[1:], 1):  # gap between the running far edge and the next near edge
+        gap = boxes[i][axis] - reach
+        if gap > best:
+            best, cut = gap, n
+        reach = max(reach, boxes[i][axis + 2])
+    return _cap(order[:cut], boxes, config) + _cap(order[cut:], boxes, config)
+
+
 def _proximity(
-    elements: list[dict[str, Any]], config: ChunkerConfig, exclude: Collection[str] = ()
+    elements: list[dict[str, Any]],
+    config: ChunkerConfig,
+    exclude: Collection[str] = (),
+    scale: float | None = None,
 ) -> tuple[list[list[str]], float]:
     """Proximity clusters and the median element size they were measured with.
 
@@ -124,7 +155,7 @@ def _proximity(
     if not every:
         return [], config.min_median
     sizes = [max(b[2] - b[0], b[3] - b[1]) for b in map(_box, every)]
-    median = max(statistics.median(sizes), config.min_median)
+    median = max(statistics.median(sizes), config.min_median) if scale is None else scale
     threshold = config.k * median
     live = [e for e in every if str(e["id"]) not in exclude] if exclude else every
     if not live:
@@ -216,10 +247,35 @@ def _proximity(
                 if rep is None and all(uf.find(m) == root for m in members):
                     single[level][key] = members[0]
 
-    groups: dict[int, list[str]] = {}
+    found: dict[int, list[str]] = {}
     for i, e in enumerate(live):
-        groups.setdefault(uf.find(i), []).append(str(e["id"]))
-    return sorted((sorted(g) for g in groups.values()), key=lambda g: g[0]), median
+        found.setdefault(uf.find(i), []).append(str(e["id"]))
+
+    # Local scale (INK-081): a group of small writing that the page-wide median glued together
+    # (zoomed-out and zoomed-in text on one canvas) is re-clustered with its own median.
+    by_id = {str(e["id"]): e for e in live}
+    box_of = {str(e["id"]): b for e, b in zip(live, boxes)}
+    groups: list[list[str]] = []
+    pending = list(found.values())
+    while pending:
+        g = pending.pop()
+        own = _own_scale([box_of[i] for i in g], config)
+        if len(g) > 1 and own < 0.5 * median:
+            sub = _proximity([by_id[i] for i in g], config, scale=own)[0]
+            if len(sub) > 1:
+                pending += sub
+                continue
+        groups += _cap(g, box_of, config)
+
+    # The cap may cut a label from its container: bound text goes back to its container's group.
+    home = {i: gi for gi, g in enumerate(groups) for i in g}
+    for i, e in by_id.items():
+        c = e.get("containerId")
+        if c is not None and str(c) in home and home[str(c)] != home[i]:
+            groups[home[i]].remove(i)
+            groups[home[str(c)]].append(i)
+            home[i] = home[str(c)]
+    return sorted((sorted(g) for g in groups if g), key=lambda g: g[0]), median
 
 
 @dataclass(frozen=True)
