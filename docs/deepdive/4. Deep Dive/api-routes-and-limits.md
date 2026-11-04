@@ -13,7 +13,7 @@ FastAPI app in `api/__init__.py` (143 lines). Routers: `chunks`, `ops`, `overrid
 
 ## Scene routes
 
-`GET /documents/{id}/scene` returns `{version, elements}` (404 on unknown document). `PUT` takes `SceneIn {base_version >= 0, elements}` (`:90-105`). Validation (`_elements_valid`):
+`GET /documents/{id}/scene` returns `{version, elements}` (404 on unknown document). `PUT` takes `SceneIn {base_version >= 0, elements, delta=False}`. With `delta: true` the elements are only those changed since `base_version`, merged by id in `put_scene` ([scene-delta-saves](scene-delta-saves.md)); the 50,000 cap applies to the merged scene (422). `RequestTiming` middleware logs every request; questions routes are in [questions-api](questions-api.md). Validation (`_elements_valid`):
 - at most `MAX_ELEMENTS = 50_000`;
 - every element has a string `id`;
 - no NaN or Infinity anywhere (`_all_finite`, recursive);

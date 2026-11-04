@@ -8,6 +8,16 @@
 4. The browser (`opsSocket.ts`, `drawOp.ts`, `drafts.ts`) draws dashed elements tagged `customData {author:"agent", draft:true, op_id}` and replies `op.applied {op_id, element_ids}`. Mermaid is converted in the browser; a parse error comes back as `op.failed`.
 5. `draw_diagram` polls until the ack (default 20 s). With no browser it marks the op `expired` and returns an error naming the canvas URL.
 6. Drafts are saved with the scene but ignored by chunking, recognition and export.
-7. Accept / Reject / Accept all: **planned (INK-045)**. `PATCH /ops/{id}` already accepts `accepted`/`rejected`.
+7. The draft bar (`DraftBar.tsx`) shows the draft count with Accept / Reject for the selected draft and Accept all / Reject all.
+   - Accept: rewrite the elements locally (solid, no draft flag), save the scene, then `PATCH accepted`. If the save fails nothing is patched.
+   - Reject: `PATCH rejected` first, then remove elements whose id starts with `<op_id>:`.
+   - If the PATCH fails after a successful accept save, a "Retry accept" button re-sends it.
 
-Invariant: acks must carry the op's `id_prefix`; agent ops can only add elements (`tests/test_ops_api.py`). Decisions 0009, 0012, 0019, 0023.
+```text
+draft (applied) --Accept--> save scene --> PATCH accepted --> ordinary content
+draft (applied) --Reject--> PATCH rejected --> sweep <op_id>: elements
+```
+
+Text is sized from the handwriting (median stroke height x 1.5, clamped 18..64, default 28); `write_text` takes `size` small/normal/large.
+
+Invariant: acks must carry the op's `id_prefix`; agent ops can only add elements (`tests/test_ops_api.py`). Decisions 0009, 0012, 0019, 0023, 0026, 0032. Known issues: drafts can land far apart and agent text can still be small (see roadmap).

@@ -15,10 +15,14 @@
 | Early cutoff | A cosmetic redraw changes `content_hash` but not `text_hash`, so the note is not stale |
 | Crop | PNG of a chunk rendered by the browser; `png_stale` means ink changed since |
 | Overview | Downscaled whole-canvas image returned by `read_canvas` |
-| Op | Row in `agent_ops`: a queued agent write (`write_text`, `draw_diagram`) |
+| Op | Row in `agent_ops`: a queued agent write (`write_text`, `draw_diagram`); carries a server-computed `font_size` |
 | Draft | Dashed agent-drawn element awaiting Accept/Reject |
 | Marker block | `<!-- ink:ID hash:H -->` ... `<!-- /ink -->` region of a vault note owned by the export skill |
 | Deep link | `?canvas=<id>&chunk=<id>` URL that opens a chunk on the canvas |
-| Pull path | Ask AI via `list_questions`/`answer_question` from any MCP client (planned) |
+| Pull path | Ask AI via `list_questions`/`answer_question` from any MCP client (built, INK-047) |
+| Delta save | `PUT /scene` with `delta: true`: only elements changed since `base_version` |
+| Accept / Reject | Resolving a draft op from the draft bar; accept makes it ordinary scene content, reject removes its elements |
+| Timing log | One-line `name ms= counts` records from server and browser; never content |
+| Eval harness | `eval/`: offline scoring of reading, chunking, staleness on a page set |
 | Runner | Optional `AgentRunner` adapter that starts an agent on a new question (planned) |
 | Two-pass reading | Sketch to diagram: find nodes/arrow ends and draw numbered markers, then ask for Mermaid |

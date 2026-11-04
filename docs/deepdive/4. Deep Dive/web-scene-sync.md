@@ -20,8 +20,8 @@ Framework-free load and autosave for one canvas. `App.tsx` wires it to Excalidra
 ## Save (`doSave`, `:154-198`)
 
 1. The signature of what is sent is taken **before** the request, because Excalidraw mutates element objects in place: recomputed after the response it would include edits made during the request.
-2. `PUT {base_version, elements}` as JSON.
-3. `200`: update `version`, set `lastSig`, `savedIds`, reset the failure count; clear `pending` only if its signature equals what was sent, otherwise emit `dirty` and reschedule (the user kept drawing).
+2. `PUT` as JSON: `{base_version, elements: changed, delta: true}` when `deltaFor(baseline, sent)` finds a smaller set of changed elements, otherwise `{base_version, elements}` in full. See [scene-delta-saves](scene-delta-saves.md).
+3. `200`: update `version`, set `lastSig`, `savedIds`, `baseline` (id to version of what was sent), record `scene.save` timing, reset the failure count; clear `pending` only if its signature equals what was sent, otherwise emit `dirty` and reschedule (the user kept drawing).
 4. `409`: `resolveConflict`.
 5. Other `4xx`: stop retrying until the next real edit (the same body would be rejected again) but keep the ink in memory; state `error` "Save rejected (n); changes are not saved yet".
 6. `5xx` or network failure: `retryLater` with backoff 2, 4, 8, 16, 30 s (state `retry`).
@@ -47,4 +47,4 @@ Another tab saved first.
 
 ## Potential improvements
 
-INK-063 (backlog): server push of `scene.updated` so open tabs sync without reloading. INK-062: pen pressure and lag are Excalidraw rendering constants, not this layer.
+INK-063 (backlog): server push of `scene.updated` so open tabs sync without reloading. INK-083/090: a conflict notice can appear without another tab, and a version tie can drop a local edit in `mergeScenes` (open). INK-080: slow load on the tablet (open).

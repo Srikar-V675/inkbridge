@@ -27,7 +27,9 @@ A stdio MCP server built on the MCP Python SDK 2.x (`MCPServer`, imported from `
 | `read_canvas(document_id?, include_overview=True, offset=0)` | Chunks in reading order as compact JSON + overview PNG |
 | `search(query, limit=10, document_id?)` | Prefix FTS results |
 | `check_sync(chunks[{id, hash, reading?}], document_id?, wait_s=15)` | Pass-through to the API; `NotFound` -> "Unknown canvas ..." |
-| `write_text(text, anchor?, document_id?)` | Enqueues a `write_text` op; returns `{op_id, status, placement}`; does not wait |
+| `write_text(text, anchor?, size?, document_id?)` | Enqueues a `write_text` op; `size` is `small`/`normal`/`large`; returns `{op_id, status, placement, font_size}`; does not wait |
+| `list_questions(status="pending", document_id?, limit=20)` | Questions oldest first, with `focus_chunk_ids` and `history` ([questions-api](questions-api.md)) |
+| `answer_question(question_id, answer_md, sources=[])` | Stores an answer; `{id, status}` |
 | `create_canvas(title)` | Returns `{document_id, url}` |
 | `draw_diagram(mermaid, anchor?, document_id?, wait_seconds=20)` | Enqueue, poll until applied, expire on give-up |
 | prompt `sketch_to_diagram(region_id, mode="two_pass")` | Text from `sketch_prompts.sketch_prompt` |
@@ -54,8 +56,8 @@ Claude Code: `claude mcp add inkbridge -- uv run --directory /path/to/inkbridge/
 
 ## Testing
 
-`test_mcp_tools.py`, `test_mcp_read_canvas.py`, `test_mcp_write_text.py`, `test_mcp_draw_diagram.py`, `test_mcp_sketch.py`, `test_mcp_smoke.py`, `test_mcp_boundary.py`.
+`test_mcp_tools.py`, `test_mcp_read_canvas.py`, `test_mcp_write_text.py`, `test_mcp_draw_diagram.py`, `test_mcp_sketch.py`, `test_mcp_questions.py`, `test_mcp_smoke.py`, `test_mcp_boundary.py`.
 
 ## Potential improvements
 
-`list_regions` lists only manual regions, which can surprise a caller expecting chunks (`read_canvas` is the chunk listing). `list_questions`/`answer_question` are planned (INK-047).
+`list_regions` lists only manual regions, which can surprise a caller expecting chunks (`read_canvas` is the chunk listing).

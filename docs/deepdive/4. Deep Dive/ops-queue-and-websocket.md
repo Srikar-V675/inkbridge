@@ -45,8 +45,10 @@ Under `BEGIN IMMEDIATE` so two ops posted at once see each other's reserved spot
 ## Placement (`placement.py`)
 
 Pure. Sizes are estimates because the browser lays out text and Mermaid:
-- text: `max line length x 12 px` wide (0.6 em at 20 px), `lines x 25 px` tall;
-- diagram: fixed 600 x 400.
+- text: `max line length x 0.6 x font_size` wide, `lines x 1.25 x font_size` tall;
+- diagram: 600 x 400 scaled by `font_size / 20`.
+
+**Font size** (decision 0032, `placement.font_size_for`, `db/ops.py` `_stroke_heights`): the median height of the user's freedraw strokes in the anchor chunk (all live strokes if fewer than 3 there), times `INK_TO_FONT = 1.5`, times the `size` hint (0.75 / 1 / 1.5), clamped to 18..64; fewer than 3 strokes gives 28. Stored as `payload.font_size`; clients cannot send it. Ops without it count as 20. Known issue: the 64 clamp can still make text small beside large handwriting (INK-082).
 `place(occupied, size, anchor)`: try **right of the anchor** (`anchor.x + width + GAP(40)`, same top), then **below it**; use the first spot that does not overlap any occupied box within `MARGIN = 16`. Otherwise (and when there is no anchor) the fallback is the left edge of everything, below the lowest box plus `GAP` (the one position that can never overlap whatever the real size); an empty canvas gets `(0, 0)`. `rotated_box` expands a rotated element to its axis-aligned bound.
 
 ## Mermaid gate (`mermaid.py`)
@@ -71,7 +73,7 @@ Schemas are strict (`extra="forbid"`): `WriteTextPayload` (1 to 10,000 character
 - **Join then replay**: the socket joins the hub, then replays every `pending` and `delivered` op as `op.pending` and marks it delivered, so an op created in between is pushed at least once. The browser ignores a second copy of an op it already drew (ids carry the op prefix).
 - **Incoming messages**: `op.applied {op_id, element_ids}` (1 to 10,000 ids of 1 to 256 characters, duplicates removed) and `op.failed {op_id, error}` (cut to 2,000). Errors reply `op.error` with `not_found`, `bad_ack`, `existing_element_id`, or `invalid_transition`; malformed frames reply `error`. An op from another document is `not_found`.
 - **Hub** (`Hub`): sockets per document. `publish` is thread-safe: HTTP routes run in the threadpool, so it schedules the send on the event loop that owns the sockets with `run_coroutine_threadsafe`, and returns `None` if nobody is connected. `push_op` re-reads the op first (a PATCH may have made it `failed` or `expired` since) and marks it delivered once one socket got it. Dead sockets are dropped on send errors.
-- Outgoing types: `op.pending`, `op.updated`, `op.error`, `chunks.updated` (from the worker), `question.update` (planned).
+- Outgoing types: `op.pending`, `op.updated`, `op.error`, `chunks.updated` (from the worker), `question.update` (from the questions routes).
 
 ## Sequence: `draw_diagram`
 
@@ -100,4 +102,4 @@ sequenceDiagram
 
 ## Potential improvements
 
-Accept/Reject has a server contract (`accepted`/`rejected` transitions) but no UI yet (INK-045). The 600 x 400 diagram estimate can overlap if Mermaid renders bigger; the below-everything fallback is only used when the right/below spots are taken.
+Accept/Reject is built in the browser ([web-ops-and-drafts](web-ops-and-drafts.md)); the server contract is unchanged. Open: undelivered `write_text` ops never expire (INK-088), drafts can land far apart (INK-077), agents can anchor to orphaned chunks (INK-084). `ops.create` is timed (`inkbridge.timing`). The 600 x 400 diagram estimate can overlap if Mermaid renders bigger; the below-everything fallback is only used when the right/below spots are taken.

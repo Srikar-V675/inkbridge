@@ -30,8 +30,8 @@ On every Excalidraw change: `sync.notify` (if it really changed, tell crop sync 
 
 ## Not built
 
-Accept/Reject buttons and the Ask AI panel (INK-045, INK-049). `rejectOp` is wired only for ops that die elsewhere.
+The Ask AI panel (INK-049). `DraftBar` (Accept / Reject) is mounted here; `rejectOp` also sweeps ops that die elsewhere.
 
 ## Potential improvements
 
-INK-062 (pen pressure and lag) cannot be fixed in this layer; Excalidraw hardcodes `thinning 0.6`, `smoothing 0.5`, `streamline 0.5`.
+Pen feel: `patch-package` changes Excalidraw's freedraw constants to `thinning 0.3`, `streamline 0.2` (`web/patches`, decision 0031; tablet tuning pending). Timing: `timing.ts` records go to the dev-only `devLog.ts` sink. LAN lag (INK-074) is open.

@@ -1,6 +1,6 @@
 # Deep Dive: database layer (`server/src/inkbridge/db/` and `regions.py`)
 
-`db/__init__.py` (947 lines) is the only module that touches SQLite; the MCP server must not import it (boundary test `test_mcp_boundary.py`). `regions.py` holds the pure maths (bbox and the three hashes). `db/ops.py`, `db/sync.py` and `db/outline.py` are covered in their own pages.
+`db/__init__.py` (about 1,000 lines; splitting it is INK-068, backlog) is the only module that touches SQLite; the MCP server must not import it (boundary test `test_mcp_boundary.py`). `regions.py` holds the pure maths (bbox and the three hashes). `db/ops.py`, `db/sync.py` and `db/outline.py` are covered in their own pages.
 
 ## Connection and migrations
 
@@ -19,9 +19,11 @@
 | `recognitions` | PK `(region_id, content_hash, source)` |
 | `region_fts` | FTS5 (`text`, `latex`) holding the best reading for the current content hash |
 | `links` | Arrow links between chunks, rebuilt on every save |
-| `agent_ops`, `questions` | See ops page; questions has no API yet |
+| `agent_ops`, `questions` | See the ops page; questions are served by [questions-api](questions-api.md) (`db/questions.py`) |
 
-## Saving a scene (`put_scene`, `:227-268`)
+## Saving a scene (`put_scene`)
+
+`put_scene` takes `delta=` and `max_elements=`; in delta mode it merges changed elements by id under the same lock ([scene-delta-saves](scene-delta-saves.md)). It logs phase timings under `inkbridge.scene`. Orphaned chunks are never deleted (decision 0028) and `successor_of` has no foreign key yet (decision 0027; guarded by `tests/integrity_check.py`).
 
 ```mermaid
 sequenceDiagram

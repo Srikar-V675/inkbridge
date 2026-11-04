@@ -24,11 +24,11 @@
 
 Architecture type: **modular monolith** (one API process) plus a browser client and a stdio MCP adapter.
 
-## What is built vs planned (as of branch `review/all-latest`)
+## What is built vs planned (as of `main`)
 
-Built: scenes with optimistic versioning, manual regions, chunker with stable ids and arrow links, manual merge/split, chunks API, `read_canvas` / `search` / `check_sync` / `write_text` / `create_canvas` / `draw_diagram` / sketch-to-diagram, Gemini recognizer and worker, ops queue with WebSocket push and draft rendering, deep links and overlay, crop sync, vault export skill.
+Built: scenes with optimistic versioning and delta saves, manual regions, chunker with stable ids and arrow links, manual merge/split (tap a chunk label to select), chunks API, `read_canvas` / `search` / `check_sync` / `write_text` / `create_canvas` / `draw_diagram` / sketch-to-diagram, `list_questions` / `answer_question` and the questions API, Gemini recognizer and worker, ops queue with WebSocket push, dashed drafts with Accept / Reject / Accept all, deep links and overlay, crop sync, vault export skill, timing logs, pen-feel patch, offline eval harness (E1 input representation, E4, E5 on synthetic data).
 
-Planned: Accept/Reject UI (INK-045), Ask AI (INK-046..049), eval (INK-050..053, 061), README and demo (INK-054/055), pen-feel fix (INK-062). See [roadmap.md](roadmap.md).
+Planned: Ask AI runner and side panel (INK-048, 049), remaining eval (INK-052, 053, 061 and the real page set), README and demo (INK-054/055), live scene sync (INK-063), restructuring (INK-068..071). Open bugs are listed under "Known issues" in [roadmap.md](roadmap.md).
 
 ## Read next
 [architecture.md](architecture.md) · [user-flows/index.md](user-flows/index.md) · [api-reference.md](api-reference.md) · [data-models.md](data-models.md) · [frontend-map.md](frontend-map.md) · [commands.md](commands.md) · [env-vars.md](env-vars.md) · [glossary.md](glossary.md) · [roadmap.md](roadmap.md)

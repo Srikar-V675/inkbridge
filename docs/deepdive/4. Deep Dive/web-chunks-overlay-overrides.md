@@ -28,6 +28,8 @@ Viewport maths: `viewForBounds(b, viewport)` centres the bounds with a 10% margi
 - touching two or more chunks: `merge` of those chunks (whole);
 - touching part of one chunk: `split` of that part; if the selection is that whole chunk's ink: `none` ("already is a whole chunk").
 
+**Tap selection (decision 0037).** `toggleChunk(selected, chunk, scene)` adds a chunk's live ink to the selection, or removes it if all of it is already selected; `chunkMark` returns `none`/`partial`/`full` for the highlight (thick orange border for full, dashed for partial). The label chip (at least 44x32 css px) is the only overlay part that takes pointer input; box bodies keep `pointer-events: none` so drawing and lasso reach Excalidraw. The selection is Excalidraw's own (`updateScene({appState})`), so nothing is saved. `overrideUi(plan)` supplies button labels, enabled state and a visible one-line hint (no hover on tablets); buttons are at least 44 px tall.
+
 `sendOverride(canvas, plan)` POSTs to `/documents/{id}/chunks/merge|split` with an 8 s timeout and returns `{ok, ids}` (ids from `chunk` or `chunks`) or `{ok: false, message}` using the API's `detail` string, or "Could not reach the server; try again." on network failure. The server owns overrides (pinned chunks; see [database.md](database.md)); nothing here touches the scene.
 
 ## Overlay (`ChunkOverlay.tsx`)

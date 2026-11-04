@@ -29,14 +29,22 @@ No Excalidraw import, so they run under Node's test runner. Rules: drafts only e
 `drawOp(api, op, persist)`:
 1. If elements with the op's prefix already exist (replay after a reload or reconnect), `await persist(scene)` again and return their ids: the first ack may have been lost before the drafts were saved.
 2. `skeletonFor(op)`: for `write_text` a text skeleton; for `draw_diagram` dynamic-import `@excalidraw/mermaid-to-excalidraw` and `parseMermaidToExcalidraw`. A parse error throws "Mermaid could not be parsed: ...". If any parsed element is an `image` (a non-flowchart diagram) it throws "Only Mermaid flowcharts are supported".
-3. Wait for `document.fonts.load("20px Excalifont")`; measuring text before the hand-drawn font loads makes boxes too narrow and clips text.
+3. Wait for `document.fonts.load("20px Excalifont")`; the text size drawn is the op's server-computed `font_size` (20 for ops stored before INK-066); measuring text before the hand-drawn font loads makes boxes too narrow and clips text.
 4. `convertToExcalidrawElements(skeleton, {regenerateIds: true})`, then `toDrafts`; no elements throws "the op produced no elements".
 5. `api.updateScene` appends the drafts, then `await persist(...)` (the caller acks only after the scene containing the drafts is saved, because an applied op is never replayed, so an unsaved draft lost to a reload would never come back). Returns the draft ids.
 
-## Where the Accept/Reject UI will plug in
+## Accept / Reject (`resolve.ts`, `DraftBar.tsx`, decision 0026)
 
-`rejectOp` exists and is tested; the Accept action (strip dashed style and the draft flag, keep `author: "agent"`), the buttons and `PATCH /ops/{id}` calls are INK-045 (not built).
+| Piece | Behaviour |
+|---|---|
+| `draftOpId(e)` | The op id of a live draft, or null. Requires `customData.draft`, a string `op_id`, and an element id starting `<op_id>:` (customData is client-writable) |
+| `draftOps(els)` | Ops with live drafts and their element counts |
+| `acceptOp(els, prefix)` | Drops the `draft` flag (keeps `author`, `op_id`), solid stroke, text opacity 100, `version + 1` |
+| `applyVerdict(ids, verdict, ports)` | Accept: check the server holds the ops as `applied` (`GET /documents/{id}/ops?status=applied`), rewrite locally, save and confirm settled, then `PATCH accepted`. Reject: `PATCH rejected` first, then `rejectOp` for the ops the server accepted |
+| `retryAccept(ids)` | Re-sends `PATCH accepted` when the scene was saved but the PATCH failed (INK-091 notes a stuck case when the save itself fails) |
+
+`DraftBar` is plain DOM at the bottom right: "N drafts (M elements)", Accept / Reject for the selected draft(s), Accept all / Reject all, a status line (for example "2 not ready"), and "Retry accept (n)". Each PATCH has an 8 s timeout. Ports are injected so the order is unit-tested without Excalidraw.
 
 ## Testing
 
-`web/tests/opsSocket.test.ts`, `web/tests/drafts.test.ts`; server `tests/test_ws.py`.
+`web/tests/opsSocket.test.ts`, `web/tests/drafts.test.ts`, `web/tests/resolve.test.ts`; server `tests/test_ws.py`.
