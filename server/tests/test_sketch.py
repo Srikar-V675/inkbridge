@@ -1,6 +1,13 @@
 """Pass 1 of the sketch reading on synthetic hand-drawn diagrams (no model)."""
 
 from inkbridge.sketch import read_sketch
+from inkbridge.sketch_image import (
+    MIN_RADIUS,
+    RADIUS,
+    marker_positions,
+    marker_radius,
+    render_markers,
+)
 
 
 def stroke(eid, pts, **extra):
@@ -292,3 +299,125 @@ def test_marker_image_is_capped_in_height_for_tall_thin_ink():
     w, h = Image.open(io.BytesIO(png)).size
     assert h <= MAX_HEIGHT and w <= 1024
     assert marker_positions(els, structure) == markers
+
+
+def scaled(els, k):
+    out = []
+    for e in els:
+        e = dict(e)
+        e["x"], e["y"] = e["x"] * k, e["y"] * k
+        e["points"] = [[p[0] * k, p[1] * k] for p in e["points"]]
+        out.append(e)
+    return out
+
+
+def letter_page(n_words=12, k=1.0):
+    """print-like text: each letter an 'o' loop or an open stroke, in rows."""
+    els = []
+    for w in range(n_words):
+        for c in range(5):
+            x, y = (w % 4) * 70 * k + c * 12 * k, (w // 4) * 30 * k
+            els.append(loop(f"o{w}_{c}", x, y, 8 * k, 8 * k, gap=1 * k))
+            els.append(
+                stroke(
+                    f"t{w}_{c}", [(x, y + 12 * k), (x + 4 * k, y + 20 * k), (x + 8 * k, y + 12 * k)]
+                )
+            )
+    return els
+
+
+def three_box_chart():
+    return [
+        loop("b1", 0, 0, 100, 60),
+        loop("b2", 300, 0, 100, 60),
+        loop("b3", 600, 0, 100, 60),
+        line("s1", (105, 30), (295, 30)),
+        v_head("h1", (295, 30)),
+        line("s2", (405, 30), (595, 30)),
+        v_head("h2", (595, 30)),
+    ]
+
+
+def test_node_count_is_scale_invariant():
+    counts = {k: len(read_sketch(scaled(three_box_chart(), k))["nodes"]) for k in (1, 10)}
+    assert counts == {1: 3, 10: 3}
+
+
+def test_handwriting_page_has_no_nodes():
+    for k in (1, 10):
+        els = letter_page(k=k)
+        els.append(loop("l", 300 * k, 0, 14 * k, 14 * k, gap=2 * k))  # larger cursive loop
+        assert read_sketch(els)["nodes"] == []
+
+
+def test_a_box_among_handwriting_is_still_a_node():
+    els = letter_page() + [loop("box", 0, 100, 300, 120)]
+    assert [n["element_ids"] for n in read_sketch(els)["nodes"]] == [["box"]]
+
+
+def test_a_large_flowchart_keeps_all_nodes():
+    els = [loop(f"g{r}_{c}", c * 200, r * 120, 100, 60) for r in range(4) for c in range(6)]
+    assert len(read_sketch(els)["nodes"]) == 24
+
+
+def test_unattached_is_capped_and_reported():
+    els = [loop("box", 0, 0, 100, 60)]
+    for i in range(60):
+        y = 100 + i * 4
+        els.append(line(f"u{i:02d}", (300, y), (300 + 40 + i * 0.5, y)))
+    out = read_sketch(els)
+    assert len(out["unattached"]) == 30
+    assert out["unattached_total"] == 60
+    assert "30 of 60" in out["unattached_note"]
+    assert out["unattached"] == sorted(f"u{i:02d}" for i in range(30, 60))
+
+
+def test_no_note_when_under_cap():
+    out = read_sketch([loop("box1", 0, 0, 100, 60), line("dangling", (105, 30), (250, 200))])
+    assert out["unattached_note"] is None and out["unattached_total"] == 1
+
+
+def test_capped_unattached_gets_exactly_that_many_markers():
+    els = [loop("box", 0, 0, 100, 60)]
+    for i in range(60):
+        y = 100 + i * 4
+        els.append(line(f"u{i:02d}", (300, y), (300 + 40 + i * 0.5, y)))
+    out = read_sketch(els)
+    markers = marker_positions(els, out)
+    assert len([m for m in markers if m["id"].startswith("U")]) == 30
+
+
+def test_marker_radius_shrinks_for_wide_sketches():
+    assert marker_radius(2.0) == RADIUS == 12
+    assert marker_radius(0.2) == MIN_RADIUS == 6
+    rs = [marker_radius(s / 10) for s in range(1, 21)]
+    assert rs == sorted(rs)
+    els = [loop("b", 0, 0, 5000, 60)]
+    png, markers = render_markers(els, read_sketch(els))
+    from io import BytesIO
+
+    from PIL import Image
+
+    img = Image.open(BytesIO(png)).convert("RGB")
+    m = markers[0]
+    assert img.getpixel((round(m["x"]) + 5, round(m["y"]) + 2)) == (220, 38, 38)
+
+
+def test_short_handwriting_chunk_has_no_nodes():
+    # "hello": five closed letter loops, fewer strokes than the median test needs
+    els = [loop(f"l{c}", c * 12, 0, 8, 8, gap=1) for c in range(5)]
+    assert read_sketch(els)["nodes"] == []
+
+
+def test_a_single_small_loop_is_not_a_node():
+    assert read_sketch([loop("o", 0, 0, 8, 8, gap=1)])["nodes"] == []
+
+
+def test_boxes_with_many_label_strokes_stay_nodes():
+    els = [loop(f"b{i}", i * 300, 0, 200, 120) for i in range(3)]
+    for i in range(3):
+        for j in range(5):
+            els.append(
+                line(f"t{i}{j}", (i * 300 + 20 + j * 30, 50), (i * 300 + 35 + j * 30, 70), n=3)
+            )
+    assert len(read_sketch(els)["nodes"]) == 3

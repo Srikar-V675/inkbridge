@@ -83,9 +83,9 @@ Errors are returned as tool errors with a next step (for example, "call list_reg
 
 **Sketch to diagram** (two-pass reading, INK-058, decision [0025](decisions/0025-sketch-two-pass.md)):
 - `get_region(include_sketch=true)` adds a `sketch` field, the server's pass-1 guess from the ink alone with no model call:
-  - `nodes`: `[{id: N1.., box, element_ids, label_element_ids, label_text, confidence}]`
+  - `nodes`: closed shapes; freehand loops count only when big relative to the sketch (not an absolute size), so zoom does not matter. `[{id: N1.., box, element_ids, label_element_ids, label_text, confidence}]`
   - `arrows`: `[{id: A1.., from, to, head: "end"|"both"|null, tip, tail, element_ids, confidence}]`
-  - `unattached`: strokes that touch fewer than two nodes
+  - `unattached`: strokes that touch fewer than two nodes (at most 30, longest first; `unattached_total` and `unattached_note` say when some were left out)
   - `markers`: pixel positions on the marker image
 
   It also adds a second image: the ink redrawn with red node markers on node centres, blue arrow markers on arrow tips, and grey markers (U1..) on unattached strokes.

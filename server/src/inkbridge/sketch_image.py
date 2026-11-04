@@ -21,6 +21,7 @@ MAX_WIDTH = 1024
 MAX_HEIGHT = 2048
 MAX_SCALE = 2.0
 RADIUS = 12
+MIN_RADIUS = 6
 NODE_COLOUR = (220, 38, 38)
 ARROW_COLOUR = (37, 99, 235)
 UNATTACHED_COLOUR = (115, 115, 115)
@@ -29,7 +30,12 @@ INK = (60, 60, 60)
 Transform = Callable[[float, float], tuple[float, float]]
 
 
-def _layout(live: list[dict[str, Any]], max_width: int) -> tuple[Transform, int, int]:
+def marker_radius(scale: float) -> int:
+    """Badge radius: full size at the largest scale, smaller (down to MIN_RADIUS) when zoomed out."""
+    return max(MIN_RADIUS, min(RADIUS, round(RADIUS * scale / MAX_SCALE)))
+
+
+def _layout(live: list[dict[str, Any]], max_width: int) -> tuple[Transform, int, int, float]:
     if not live:
         raise ValueError("no live elements to draw")
     box = bbox_of(live)
@@ -44,7 +50,7 @@ def _layout(live: list[dict[str, Any]], max_width: int) -> tuple[Transform, int,
     def px(x: float, y: float) -> tuple[float, float]:
         return (PAD + (x - box["x"]) * scale, PAD + (y - box["y"]) * scale)
 
-    return px, width, height
+    return px, width, height, scale
 
 
 def _markers(live, structure, px: Transform) -> list[dict[str, Any]]:
@@ -77,7 +83,7 @@ def marker_positions(
 ) -> list[dict[str, Any]]:
     """Where each marker sits on the image `render_markers` would draw, without drawing it."""
     live = _live(elements)
-    px, _, _ = _layout(live, max_width)
+    px, _, _, _ = _layout(live, max_width)
     return [{k: v for k, v in m.items() if k != "_c"} for m in _markers(live, structure, px)]
 
 
@@ -86,10 +92,12 @@ def render_markers(
 ) -> tuple[bytes, list[dict[str, Any]]]:
     """PNG of the ink with numbered markers, and each marker's pixel position."""
     live = _live(elements)
-    px, width, height = _layout(live, max_width)
+    px, width, height, scale = _layout(live, max_width)
     img = Image.new("RGB", (width, height), "white")
     draw = ImageDraw.Draw(img)
+    r = marker_radius(scale)
     font = ImageFont.load_default(size=14)
+    marker_font = ImageFont.load_default(size=round(14 * r / RADIUS))
     for e in live:
         x, y = e.get("x", 0), e.get("y", 0)
         if e.get("points"):
@@ -111,8 +119,8 @@ def render_markers(
     markers = _markers(live, structure, px)
     for m in markers:
         cx, cy = m["x"], m["y"]
-        draw.ellipse([cx - RADIUS, cy - RADIUS, cx + RADIUS, cy + RADIUS], fill=m.pop("_c"))
-        draw.text((cx, cy), m["id"], fill="white", font=font, anchor="mm")
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=m.pop("_c"))
+        draw.text((cx, cy), m["id"], fill="white", font=marker_font, anchor="mm")
     out = io.BytesIO()
     img.save(out, "PNG")
     return out.getvalue(), markers
