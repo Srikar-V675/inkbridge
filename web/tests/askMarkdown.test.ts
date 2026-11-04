@@ -19,6 +19,10 @@ describe("AnswerMarkdown", () => {
     const o = render("![a](http://evil/p.png)");
     assert.ok(!o.includes("<img") && !o.includes("evil"));
   });
+  it("blocks reference images and autolink images", () => {
+    assert.ok(!render("![a][r]\n\n[r]: http://evil/x.png").includes("<img"));
+    assert.ok(!render("<http://x>").includes("<img"));
+  });
   it("keeps safe links with rel", () => {
     const o = render("[ok](https://example.com)");
     assert.ok(o.includes('href="https://example.com"') && o.includes('rel="noopener noreferrer"'));

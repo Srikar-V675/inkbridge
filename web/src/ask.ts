@@ -42,7 +42,7 @@ export function fileName(path: string): string {
 export function plainText(md: string, cap = KEEP_CAP): string {
   return md
     .replace(/```[^\n]*\n?/g, "")
-    .replace(/<[^>]*>?/g, "")
+    .replace(/<\/?[a-zA-Z][^>]*>/g, "")
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+\.)\s+/gm, "")
@@ -114,9 +114,12 @@ export async function keepOnCanvas(q: Question, canvas: string, f: Fetch = defau
   }
   const url = `/documents/${encodeURIComponent(canvas)}/ops`;
   try {
-    let r = await call<unknown>(f, url, post(keepOp(q, anchor)));
-    if (r.status === 422 && anchor) r = await call<unknown>(f, url, post(keepOp(q, null))); // anchor_gone
-    return r.status === 200 || r.status === 201 ? { ok: true } : { ok: false, reason: String(r.status) };
+    let r = await call<{ status?: string; detail?: { code?: string } }>(f, url, post(keepOp(q, anchor)));
+    if (r.status === 422 && anchor && r.body?.detail?.code === "anchor_gone") r = await call(f, url, post(keepOp(q, null)));
+    if (r.status !== 200 && r.status !== 201) return { ok: false, reason: String(r.status) };
+    // A replay (200) returns the stored op: say so if the user already resolved that draft.
+    const st = (r.body as { status?: string } | null)?.status;
+    return st === "accepted" || st === "rejected" ? { ok: false, reason: `draft already ${st}` } : { ok: true };
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : "failed" };
   }

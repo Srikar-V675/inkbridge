@@ -33,6 +33,10 @@ describe("plainText", () => {
     for (const bad of ["javascript", "onerror", "evil", "<img", "]("]) assert.ok(!t.includes(bad), bad);
     assert.ok(t.includes("b"));
   });
+  it("keeps a lone < and comparisons", () => {
+    assert.equal(plainText("a < b and c"), "a < b and c");
+    assert.equal(plainText("x<5 and y>3"), "x<5 and y>3");
+  });
   it("caps length", () => assert.equal(plainText("a".repeat(20000)).length, 2000));
 });
 
@@ -45,14 +49,14 @@ describe("keepOp", () => {
   });
 });
 
-function mock(chunks: Record<string, object>, opStatus = 201) {
+function mock(chunks: Record<string, object>, opStatus = 201, detail = "anchor_gone", opState = "pending") {
   const posts: { anchor?: string }[] = [];
   const f = (async (url: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       const body = JSON.parse(init.body as string);
       posts.push(body.payload);
       const st = body.payload.anchor && opStatus === 422 ? 422 : opStatus === 422 ? 201 : opStatus;
-      return new Response("{}", { status: st });
+      return new Response(JSON.stringify(st === 422 ? { detail: { code: detail } } : { status: opState }), { status: st });
     }
     const id = url.split("/").pop()!;
     return chunks[id] ? new Response(JSON.stringify(chunks[id])) : new Response("{}", { status: 404 });
@@ -76,6 +80,17 @@ describe("keepOnCanvas", () => {
   it("counts a replayed 200 as ok", async () => {
     const { f } = mock({}, 200);
     assert.ok((await keepOnCanvas(q(), "c", f)).ok);
+  });
+  it("does not retry other 422s", async () => {
+    const { f, posts } = mock({ live: ch("live", "active") }, 422, "invalid");
+    const r = await keepOnCanvas(q({ focus_chunk_ids: ["live"] }), "c", f);
+    assert.ok(!r.ok);
+    assert.equal(posts.length, 1);
+  });
+  it("reports an already resolved draft honestly", async () => {
+    const { f } = mock({}, 200, "x", "rejected");
+    const r = await keepOnCanvas(q(), "c", f);
+    assert.ok(!r.ok && r.reason?.includes("rejected"));
   });
   it("retries once without anchor on 422", async () => {
     const { f, posts } = mock({ live: ch("live", "active") }, 422);
