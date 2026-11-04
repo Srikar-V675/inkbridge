@@ -1,6 +1,16 @@
 import random
 
-from inkbridge.placement import GAP, Box, estimate_size, overlaps, place
+from inkbridge.placement import (
+    DEFAULT_FONT,
+    GAP,
+    MAX_FONT,
+    MIN_FONT,
+    Box,
+    estimate_size,
+    font_size_for,
+    overlaps,
+    place,
+)
 
 
 def _box(x, y, w, h) -> Box:
@@ -74,3 +84,38 @@ def test_rotated_box_covers_the_turned_shape():
     assert math.isclose(r["width"], 10) and math.isclose(r["height"], 100)
     r = rotated_box(_box(0, 0, 100, 100), math.pi / 4)
     assert math.isclose(r["width"], 100 * math.sqrt(2))
+
+
+def test_font_scales_with_ink_height():
+    assert font_size_for([20] * 5) < font_size_for([30] * 5)
+
+
+def test_font_is_clamped():
+    assert font_size_for([1] * 5) == MIN_FONT
+    assert font_size_for([10_000] * 5) == MAX_FONT
+
+
+def test_too_little_ink_uses_default():
+    assert font_size_for([]) == DEFAULT_FONT
+    assert font_size_for([30, 30]) == DEFAULT_FONT
+
+
+def test_median_ignores_outliers():
+    assert font_size_for([20, 20, 20, 20, 5000]) == font_size_for([20] * 5)
+
+
+def test_size_hint_changes_and_clamps():
+    h = [24] * 5
+    assert font_size_for(h, "small") < font_size_for(h) < font_size_for(h, "large")
+    assert font_size_for([1] * 5, "small") == MIN_FONT
+
+
+def test_estimate_uses_payload_font_size():
+    w1, h1 = estimate_size("write_text", {"text": "hello", "font_size": 20})
+    w2, h2 = estimate_size("write_text", {"text": "hello", "font_size": 40})
+    assert w2 == 2 * w1 and h2 == 2 * h1
+    assert estimate_size("write_text", {"text": "hello"}) == (w1, h1)
+    assert (
+        estimate_size("draw_diagram", {"font_size": 40})[0]
+        == 2 * estimate_size("draw_diagram", {})[0]
+    )

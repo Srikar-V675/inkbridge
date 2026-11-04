@@ -18,9 +18,16 @@ export interface PendingOp {
     text?: string;
     mermaid?: string;
     anchor?: string;
+    font_size?: number;
     placement: Placement;
     id_prefix: string;
   };
+}
+
+/** Font size the server computed from the handwriting; ops stored before it existed were 20. */
+export function opFontSize(payload: { font_size?: number }): number {
+  const f = payload.font_size;
+  return typeof f === "number" && f > 0 ? Math.min(200, Math.round(f)) : 20;
 }
 
 export interface DraftElement {

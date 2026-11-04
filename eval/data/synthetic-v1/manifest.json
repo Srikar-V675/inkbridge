@@ -1,0 +1,10 @@
+{
+  "set": "synthetic-v1",
+  "synthetic": true,
+  "test_pages_only": true,
+  "pages": [
+    "p01-text",
+    "p02-equation",
+    "p03-diagram"
+  ]
+}

@@ -327,10 +327,10 @@ def test_stacked_ops_never_overlap_live_ink_or_each_other(client):
         if i % 2:
             payload["anchor"] = rid
         op = client.post(OPS, json={"type": "write_text", "payload": payload}).json()
-        placed.append(_op_box(op, estimate_size("write_text", payload)))
+        placed.append(_op_box(op, estimate_size("write_text", op["payload"])))
     diagram = {"mermaid": "flowchart TD\nA-->B"}
     op = client.post(OPS, json={"type": "draw_diagram", "payload": diagram}).json()
-    placed.append(_op_box(op, estimate_size("draw_diagram", diagram)))
+    placed.append(_op_box(op, estimate_size("draw_diagram", op["payload"])))
     ink = [bbox_of([e]) for e in (USER_A, USER_B)]
     for i, box in enumerate(placed):
         assert not any(overlaps(box, o) for o in ink), box
@@ -397,7 +397,7 @@ def test_placement_avoids_the_corners_of_rotated_ink(client):
     seed(client, [bar])
     payload = {"text": "hello world, a longer note"}
     op = client.post(OPS, json={"type": "write_text", "payload": payload}).json()
-    box = _op_box(op, estimate_size("write_text", payload))
+    box = _op_box(op, estimate_size("write_text", op["payload"]))
     cx, cy = bar["x"] + bar["width"] / 2, bar["y"] + bar["height"] / 2
     c, s = math.cos(bar["angle"]), math.sin(bar["angle"])
     corners = [
@@ -432,6 +432,73 @@ def test_draw_diagram_accepts_graph_and_flowchart_headers(client):
     for source in ("graph LR\n  A-->B", "%%{init: {}}%%\nflowchart TD\n  A-->B"):
         r = client.post(OPS, json={"type": "draw_diagram", "payload": {"mermaid": source}})
         assert r.status_code == 201, r.json()
+
+
+# --- font size from the handwriting (INK-066) ---------------------------------------------------
+
+
+def _strokes(prefix, x, y, height, n=5, **extra):
+    return [{**stroke(f"{prefix}{i}", x + i * 5, y, w=4, h=height), **extra} for i in range(n)]
+
+
+def _font(client, **payload):
+    r = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", **payload}})
+    assert r.status_code == 201, r.text
+    return r.json()["payload"]["font_size"]
+
+
+def test_font_size_follows_the_anchor_chunks_strokes(client):
+    from inkbridge.placement import MAX_FONT, MIN_FONT
+
+    seed(client, _strokes("s", 0, 0, 20) + _strokes("t", 5000, 5000, 60))
+    small = _font(client, anchor=_anchor_region([f"s{i}" for i in range(5)]))
+    big = _font(client, anchor=_anchor_region([f"t{i}" for i in range(5)]))
+    assert MIN_FONT <= small < big <= MAX_FONT
+
+
+def test_empty_canvas_uses_the_default_font(client):
+    from inkbridge.placement import DEFAULT_FONT
+
+    assert _font(client) == DEFAULT_FONT
+
+
+def test_sparse_anchor_chunk_falls_back_to_the_page_sample(client):
+    from inkbridge.placement import DEFAULT_FONT
+
+    shape = {"id": "box", "type": "rectangle", "x": 9000, "y": 9000, "width": 50, "height": 50}
+    seed(client, _strokes("t", 0, 0, 60) + [shape])
+    rid = _anchor_region(["box"])
+    page = _font(client)
+    assert page != DEFAULT_FONT
+    assert _font(client, anchor=rid) == page
+
+
+def test_agent_drafts_do_not_feed_back_into_scale(client):
+    draft = {"customData": {"draft": True, "author": "agent"}}
+    seed(client, _strokes("s", 0, 0, 20))
+    before = _font(client)
+    seed(client, _strokes("s", 0, 0, 20) + _strokes("d", 3000, 3000, 200, **draft))
+    assert _font(client) == before
+
+
+def test_size_hint_scales_and_unknown_hint_is_422(client):
+    seed(client, _strokes("s", 0, 0, 20))
+    assert _font(client, size="large") > _font(client, size="normal")
+    r = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "size": "huge"}})
+    assert r.status_code == 422
+
+
+def test_client_cannot_set_font_size(client):
+    r = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "font_size": 99}})
+    assert r.status_code == 422
+
+
+def test_idempotent_retry_with_computed_font_size_is_not_a_conflict(client):
+    seed(client, _strokes("s", 0, 0, 20))
+    body = {"type": "write_text", "payload": {"text": "x", "size": "large"}, "op_id": "op-fs"}
+    r1, r2 = client.post(OPS, json=body), client.post(OPS, json=body)
+    assert (r1.status_code, r2.status_code) == (201, 200)
+    assert r1.json() == r2.json() and "font_size" in r1.json()["payload"]
 
 
 # --- INK-045: resolving drafts (Accept / Reject) ------------------------------------------------

@@ -1,7 +1,7 @@
 // Manual chunk merge and split (INK-059, docs/decisions/0024). Framework-free: what the current
 // selection means for the chunks, and the request that applies it. The server owns overrides;
 // nothing here touches the scene.
-import type { Chunk } from "./chunks";
+import { liveIds, type Chunk } from "./chunks.ts";
 
 export type OverridePlan =
   | { kind: "merge"; chunkIds: string[] }
@@ -34,6 +34,62 @@ export function planOverride(
     return { kind: "none", reason: "The selection already is a whole chunk." };
   }
   return { kind: "split", chunkId: c.id, elementIds: part };
+}
+
+/** Selection after tapping `chunk`: toggles all its live ink; other selected ids are kept. */
+export function toggleChunk(
+  selected: readonly string[],
+  chunk: Chunk,
+  scene: readonly { id: string; isDeleted?: boolean }[],
+): string[] {
+  const live = liveIds(chunk, scene);
+  if (live.length === 0) return [...selected];
+  const have = new Set(selected);
+  if (live.every((id) => have.has(id))) {
+    const drop = new Set(live);
+    return selected.filter((id) => !drop.has(id));
+  }
+  return [...new Set([...selected, ...live])];
+}
+
+export type ChunkMark = "none" | "partial" | "full";
+
+/** How much of the chunk's ink (connectors ignored) is in the selection, for the highlight. */
+export function chunkMark(
+  selected: readonly string[],
+  chunk: Chunk,
+  connectors: ReadonlySet<string> = new Set(),
+): ChunkMark {
+  const ink = chunk.element_ids.filter((id) => !connectors.has(id));
+  if (ink.length === 0) return "none";
+  const have = new Set(selected);
+  const picked = ink.filter((id) => have.has(id)).length;
+  if (picked === 0) return "none";
+  return picked === ink.length ? "full" : "partial";
+}
+
+export interface OverrideUi {
+  canMerge: boolean;
+  canSplit: boolean;
+  hint: string;
+}
+
+const DEFAULT_HINT = "Tap chunk tabs to select; Merge joins 2 or more, lasso part of one chunk to Split it.";
+
+/** Button state and the one-line hint for a plan. */
+export function overrideUi(plan: OverridePlan): OverrideUi {
+  if (plan.kind === "merge") {
+    return {
+      canMerge: true,
+      canSplit: false,
+      hint: `Merge joins the ${plan.chunkIds.length} selected chunks into one.`,
+    };
+  }
+  if (plan.kind === "split") {
+    return { canMerge: false, canSplit: true, hint: "Split makes the selected strokes their own chunk." };
+  }
+  const whole = plan.reason === "The selection already is a whole chunk.";
+  return { canMerge: false, canSplit: false, hint: whole ? plan.reason : DEFAULT_HINT };
 }
 
 /** Arrows, lines and the text bound to them: they follow their ends and are never split or merged. */

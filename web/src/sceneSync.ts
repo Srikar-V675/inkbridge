@@ -20,6 +20,22 @@ export interface SyncOptions {
   onReload: (elements: SceneElement[]) => void;
 }
 
+const versions = (els: readonly SceneElement[]) => new Map(els.map((e) => [e.id, e.version]));
+
+/** The elements to send for a save: only those changed since `baseline`, or null for a full
+ *  save (no baseline, or an element the server holds is gone from the list, which a delta
+ *  cannot express, or nothing would be saved by sending less). */
+export function deltaFor(
+  baseline: ReadonlyMap<string, number> | null,
+  els: readonly SceneElement[],
+): SceneElement[] | null {
+  if (!baseline) return null;
+  const ids = new Set(els.map((e) => e.id));
+  for (const id of baseline.keys()) if (!ids.has(id)) return null;
+  const changed = els.filter((e) => baseline.get(e.id) !== e.version);
+  return changed.length < els.length ? changed : null;
+}
+
 const KEEPALIVE_MAX = 60_000;
 const RETRY_MS = [2000, 4000, 8000, 16000, 30000];
 
@@ -60,6 +76,9 @@ export class SceneSync {
   private latest: readonly SceneElement[] | null = null;
   // Ids of the live elements in the last scene the server confirmed (loaded or saved).
   private savedIds = new Set<string>();
+  // id -> version of every element in the scene the server confirmed (INK-075); null until known.
+  // Saves send only elements whose version differs, so a save costs the edit, not the page.
+  private baseline: Map<string, number> | null = null;
 
   constructor(options: SyncOptions) {
     this.o = options;
@@ -89,6 +108,7 @@ export class SceneSync {
       this.version = body.version;
       this.lastSig = signature(body.elements);
       this.savedIds = liveIds(body.elements);
+      this.baseline = versions(body.elements);
       this.pending = null;
       this.loaded = true;
       record("scene.load", performance.now() - t0, { elements: body.elements.length });
@@ -161,11 +181,17 @@ export class SceneSync {
     // Excalidraw mutates element objects in place, so the signature of what was sent must be taken
     // now: recomputed after the response it would include edits made during the request.
     const sentSig = signature(sent);
+    const sentVersions = versions(sent);
+    const changed = deltaFor(this.baseline, sent);
     this.saving = true;
     this.emit("saving");
     const t0 = performance.now();
     try {
-      const body = JSON.stringify({ base_version: this.version, elements: sent });
+      const body = JSON.stringify(
+        changed
+          ? { base_version: this.version, elements: changed, delta: true }
+          : { base_version: this.version, elements: sent },
+      );
       const r = await this.fetchFn(this.url(), {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -178,9 +204,14 @@ export class SceneSync {
         this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
         this.lastSig = sentSig;
         this.savedIds = liveIds(sent);
+        this.baseline = sentVersions;
         this.failures = 0;
         const ms = Math.round(performance.now() - t0);
-        record("scene.save", ms, { elements: sent.length, bytes: body.length });
+        record("scene.save", ms, {
+          elements: sent.length,
+          sent: changed?.length ?? sent.length,
+          bytes: body.length,
+        });
         if (this.pendingSig === sentSig) this.pending = null;
         if (this.pending) {
           this.emit("dirty");

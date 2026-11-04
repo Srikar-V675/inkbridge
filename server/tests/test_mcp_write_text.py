@@ -25,7 +25,7 @@ def call(name, **args):
 
 
 def box_of(out, text):
-    w, h = estimate_size("write_text", {"text": text})
+    w, h = estimate_size("write_text", {"text": text, "font_size": out["font_size"]})
     return {**out["placement"], "width": w, "height": h}
 
 
@@ -121,3 +121,17 @@ def test_canvases_are_capped(mcp_client, monkeypatch):
     call("create_canvas", title="last one")
     with pytest.raises(ToolError, match="already .* canvases; write into an existing one"):
         call("create_canvas", title="too many")
+
+
+def test_size_hint_changes_the_stored_font_size(mcp_client):
+    small = call("write_text", text="x", size="small")["font_size"]
+    plain = call("write_text", text="x")["font_size"]
+    large = call("write_text", text="x", size="large")
+    assert small < plain < large["font_size"]
+    op = mcp_client.get(f"/ops/{large['op_id']}").json()
+    assert op["payload"]["font_size"] == large["font_size"]
+
+
+def test_unknown_size_is_a_tool_error(mcp_client):
+    with pytest.raises(ToolError):
+        call("write_text", text="x", size="huge")
