@@ -21,9 +21,10 @@ GAP = 40  # space left between an op and the ink it is placed beside
 MARGIN = 16  # boxes closer than this count as overlapping
 
 FONT_SIZE = 20  # legacy: ops stored before INK-066 carry no font_size
-DEFAULT_FONT, MIN_FONT, MAX_FONT = 28, 18, 64
+DEFAULT_FONT, MIN_FONT, MAX_FONT = 28, 18, 2000  # MAX is a sanity cap; size is relative to the ink
 INK_TO_FONT = 1.5  # text size per px of median handwritten stroke height; tune on the tablet
 MIN_SAMPLES = 3
+WRAP_CHARS = 50  # server-set wrap width in characters; relative to the font by construction
 SIZE_HINTS = {"small": 0.75, "normal": 1.0, "large": 1.5}
 # Mermaid is laid out in the browser; reserve a generous box for a typical small flowchart.
 DIAGRAM_SIZE = (600.0, 400.0)
@@ -36,11 +37,22 @@ def font_size_for(stroke_heights: list[float], hint: str | None = None) -> int:
     return round(max(MIN_FONT, min(MAX_FONT, base * SIZE_HINTS.get(hint or "normal", 1.0))))
 
 
+def gap_for(fs: float) -> float:
+    return max(GAP, fs * 1.0)
+
+
+def margin_for(fs: float) -> float:
+    return max(MARGIN, fs * 0.4)
+
+
 def estimate_size(op_type: str, payload: dict[str, Any]) -> tuple[float, float]:
     fs = payload.get("font_size") or FONT_SIZE
     if op_type == "write_text":
+        wrap = payload.get("wrap_chars") or 0  # legacy ops carry none: no wrapping
         lines = str(payload.get("text", "")).split("\n")
-        return (max(1, max(len(line) for line in lines)) * 0.6 * fs, len(lines) * 1.25 * fs)
+        visual = sum(max(1, math.ceil(len(line) / wrap)) if wrap else 1 for line in lines)
+        cols = max(len(line) for line in lines)
+        return (max(1, min(cols, wrap) if wrap else cols) * 0.6 * fs, visual * 1.25 * fs)
     return (DIAGRAM_SIZE[0] * fs / FONT_SIZE, DIAGRAM_SIZE[1] * fs / FONT_SIZE)
 
 
@@ -69,19 +81,23 @@ def overlaps(a: Box, b: Box, margin: float = MARGIN) -> bool:
 
 
 def place(
-    occupied: list[Box], size: tuple[float, float], anchor: Box | None = None
+    occupied: list[Box],
+    size: tuple[float, float],
+    anchor: Box | None = None,
+    fs: float = FONT_SIZE,
 ) -> dict[str, float]:
     """Top-left corner for a box of `size`: right of the anchor, below it, or below everything."""
     w, h = size
+    gap = gap_for(fs)
 
     def free(x: float, y: float) -> bool:
         box: Box = {"x": x, "y": y, "width": w, "height": h}
-        return not any(overlaps(box, o) for o in occupied)
+        return not any(overlaps(box, o, margin_for(fs)) for o in occupied)
 
     if anchor is not None:
         for x, y in (
-            (anchor["x"] + anchor["width"] + GAP, anchor["y"]),
-            (anchor["x"], anchor["y"] + anchor["height"] + GAP),
+            (anchor["x"] + anchor["width"] + gap, anchor["y"]),
+            (anchor["x"], anchor["y"] + anchor["height"] + gap),
         ):
             if free(x, y):
                 return {"x": x, "y": y}
@@ -89,5 +105,5 @@ def place(
         return {"x": 0, "y": 0}
     return {
         "x": min(o["x"] for o in occupied),
-        "y": max(o["y"] + o["height"] for o in occupied) + GAP,
+        "y": max(o["y"] + o["height"] for o in occupied) + gap,
     }

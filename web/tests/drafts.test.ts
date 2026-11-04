@@ -4,6 +4,7 @@ import {
   markDraft,
   opElements,
   opFontSize,
+  wrapText,
   placeAt,
   prefixIds,
   rejectOp,
@@ -122,7 +123,21 @@ describe("opFontSize", () => {
   it("uses the server value, clamped, else 20", () => {
     assert.equal(opFontSize({ font_size: 36 }), 36);
     assert.equal(opFontSize({}), 20);
-    assert.equal(opFontSize({ font_size: 5000 }), 200);
+    assert.equal(opFontSize({ font_size: 5000 }), 2000);
+    assert.equal(opFontSize({ font_size: 450 }), 450);
     assert.equal(opFontSize({ font_size: -3 }), 20);
+  });
+});
+
+describe("wrapText", () => {
+  it("breaks at spaces within maxChars and keeps newlines", () => {
+    const text = Array.from({ length: 30 }, () => "word").join(" ");
+    assert.ok(wrapText(text, 50).split("\n").every((l) => l.length <= 50));
+    assert.equal(wrapText("a b\nc d", 50), "a b\nc d");
+  });
+  it("hard-breaks long words and ignores a missing width", () => {
+    assert.deepEqual(wrapText("x".repeat(70), 50).split("\n").map((l) => l.length), [50, 20]);
+    assert.equal(wrapText("x".repeat(70), undefined), "x".repeat(70));
+    assert.equal(wrapText("x".repeat(70), 0), "x".repeat(70));
   });
 });
