@@ -173,3 +173,17 @@ def test_graph_routes_do_not_write(client):
 def test_depth_validation(client, depth):
     _, (a, *_) = chain(client)
     assert sub(client, a, depth=depth).status_code == 422
+
+
+def test_path_route_404_and_410(client):
+    _, (a, *_) = chain(client)
+    r = client.get(f"{G}/path", params={"from_chunk": a, "to_chunk": "nope"})
+    assert r.status_code == 404 and r.json()["detail"]["code"] == "chunk_not_found"
+    canvas = Canvas(client, row("a", 3) + row("b", 3, y=500))
+    gone = canvas.chunk_of("a0")["id"]
+    for i in range(3):
+        canvas.el(f"a{i}")["isDeleted"] = True
+    canvas.put()
+    other = canvas.chunk_of("b0")["id"]
+    r = client.get(f"{G}/path", params={"from_chunk": other, "to_chunk": gone})
+    assert r.status_code == 410 and r.json()["detail"]["code"] == "chunk_gone"

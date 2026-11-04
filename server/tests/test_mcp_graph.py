@@ -70,3 +70,35 @@ def test_canvas_components_lists_groups(api):
     chain(api)
     body = call("canvas_components")
     assert body["chunk_count"] == 4 and [c["size"] for c in body["components"]] == [4]
+
+
+def test_max_nodes_is_passed_through(api):
+    _, (_a, b, *_) = chain(api)
+    body = call("get_subgraph", chunk_id=b, depth=3, max_nodes=2)
+    assert len(body["nodes"]) == 2 and body["omitted_nodes"] == 2
+
+
+def test_path_errors_are_tool_errors(api):
+    _, (a, *_) = chain(api)
+    with pytest.raises(ToolError, match="not on this canvas"):
+        call("get_subgraph", chunk_id=a, to_chunk_id="nope")
+    canvas = Canvas(api, row("a", 3) + row("b", 3, y=500))
+    gone = canvas.chunk_of("a0")["id"]
+    other = canvas.chunk_of("b0")["id"]
+    for i in range(3):
+        canvas.el(f"a{i}")["isDeleted"] = True
+    canvas.put()
+    with pytest.raises(ToolError, match="read_canvas"):
+        call("get_subgraph", chunk_id=other, to_chunk_id=gone)
+
+
+def test_non_dict_error_bodies_do_not_crash():
+    import httpx
+
+    from inkbridge.mcp.client import _coded_detail, _detail_text
+
+    for body in ([1, 2], "x", {"detail": "Not Found"}):
+        r = httpx.Response(404, json=body)
+        assert _coded_detail(r) == ""
+        _detail_text(r)
+    assert _coded_detail(httpx.Response(404, json={"detail": {"code": "c", "msg": "m"}})) == "m"

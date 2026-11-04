@@ -1,6 +1,7 @@
 """In-memory chunk graph (INK-060, decision 0056). Built per request from outline chunks, never stored."""
 
 import re
+from itertools import pairwise
 from typing import Literal
 
 import networkx as nx
@@ -89,9 +90,17 @@ def path(g, source, target, direction="both", max_nodes=100) -> dict:
             "nodes": [],
             "edges": [],
             "omitted_nodes": 0,
+            "omitted_edges": 0,
         }
     shown = ids[:max_nodes]
-    edges, _ = _edges(g, set(shown), max_nodes)
+    # One edge per hop of the path, in the direction it is drawn (forward preferred).
+    hops = []
+    for u, v in pairwise(shown):
+        if g.has_edge(u, v):
+            hops.append({"from": u, "to": v, "kind": g.edges[u, v]["kind"]})
+        else:
+            hops.append({"from": v, "to": u, "kind": g.edges[v, u]["kind"]})
+    edges = hops
     return {
         "from": source,
         "to": target,
@@ -101,6 +110,7 @@ def path(g, source, target, direction="both", max_nodes=100) -> dict:
         "nodes": [_node(g, c) for c in shown],
         "edges": edges,
         "omitted_nodes": len(ids) - len(shown),
+        "omitted_edges": len(ids) - len(shown),
     }
 
 

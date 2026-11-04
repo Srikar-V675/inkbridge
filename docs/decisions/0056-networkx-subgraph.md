@@ -12,7 +12,7 @@ Status: accepted.
 7. Cheap extras on the same module: shortest path (`to_chunk_id`) and connected components.
 
 ## Why per request
-Canvases hold tens to hundreds of chunks, so building the graph costs microseconds next to the outline query. There is no cache to invalidate and nothing to store. networkx is imported only by the API; the MCP process stays a thin HTTP client (boundary test unchanged).
+Cost per request is O(chunks + elements) through `chunk_outline`, plus the networkx build over chunks and links; there is no cache. That is fine for stretch scope. Canvases hold tens to hundreds of chunks, so building the graph costs microseconds next to the outline query. There is no cache to invalidate and nothing to store. networkx is imported only by the API; the MCP process stays a thin HTTP client (boundary test unchanged).
 
 ## MCP error text
 `ApiClient._get` now appends the API's own detail to a 404 and turns a 410 into an `ApiError` carrying it, so a tool error says "call read_canvas". No existing assertion changed.

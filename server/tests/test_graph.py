@@ -91,3 +91,16 @@ def test_mermaid_is_a_flowchart_and_sanitised():
     assert not re.search(r"[\"\[\]<>\n]", label) and 0 < len(label) <= graph.LABEL
     assert 'n2["diagram"]' in lines[2]
     assert [ln for ln in lines if "-->" in ln] == ["  n1 --> n2"]
+
+
+def test_path_edges_are_one_per_hop_and_omitted_edges_reported():
+    both = [ch("a", ["b"]), ch("b", ["a", "c"]), ch("c", ["a"])]
+    g = graph.build(both)
+    p = graph.path(g, "a", "c")  # a-c directly (c -> a); chords and reverse arrows not listed
+    assert p["length"] == 1 and p["edges"] == [{"from": "c", "to": "a", "kind": "arrow"}]
+    assert p["omitted_edges"] == 0
+    g = graph.build(chain("a", "b", "c", "d"))
+    p = graph.path(g, "a", "d", max_nodes=2)
+    assert len(p["nodes"]) == 2 and p["omitted_nodes"] == 2 and p["omitted_edges"] == 2
+    assert len(p["edges"]) == 1
+    assert graph.path(g, "d", "a", "out")["omitted_edges"] == 0
