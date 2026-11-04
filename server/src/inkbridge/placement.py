@@ -85,22 +85,35 @@ def place(
     size: tuple[float, float],
     anchor: Box | None = None,
     fs: float = FONT_SIZE,
+    clear: float = 0.0,
+    recent: Box | None = None,
 ) -> dict[str, float]:
-    """Top-left corner for a box of `size`: right of the anchor, below it, or below everything."""
+    """Top-left for a box of `size`. Order: right of anchor, below anchor, below / right of the
+    most recent draft (column packing), then below everything. `clear` is the chunker proximity
+    threshold: gap and margin never drop under it, so an accepted draft is not chunked into
+    its neighbour."""
     w, h = size
-    gap = gap_for(fs)
+    gap = max(gap_for(fs), clear * 1.05)  # 5% so "exactly the threshold" still counts as apart
+    margin = max(margin_for(fs), clear * 1.05)
 
     def free(x: float, y: float) -> bool:
         box: Box = {"x": x, "y": y, "width": w, "height": h}
-        return not any(overlaps(box, o, margin_for(fs)) for o in occupied)
+        return not any(overlaps(box, o, margin) for o in occupied)
 
+    candidates: list[tuple[float, float]] = []
     if anchor is not None:
-        for x, y in (
+        candidates += [
             (anchor["x"] + anchor["width"] + gap, anchor["y"]),
             (anchor["x"], anchor["y"] + anchor["height"] + gap),
-        ):
-            if free(x, y):
-                return {"x": x, "y": y}
+        ]
+    if recent is not None:
+        candidates += [
+            (recent["x"], recent["y"] + recent["height"] + gap),
+            (recent["x"] + recent["width"] + gap, recent["y"]),
+        ]
+    for x, y in candidates:
+        if free(x, y):
+            return {"x": x, "y": y}
     if not occupied:
         return {"x": 0, "y": 0}
     return {
