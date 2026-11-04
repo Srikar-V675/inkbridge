@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { SceneSync, mergeScenes, type SaveState, type SceneElement } from "../src/sceneSync.ts";
+import { SceneSync, deltaFor, mergeScenes, type SaveState, type SceneElement } from "../src/sceneSync.ts";
 
 const el = (id: string, version = 1, extra: Record<string, unknown> = {}): SceneElement => ({
   id,
@@ -198,7 +198,8 @@ describe("SceneSync", () => {
     await settle();
     const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
     assert.equal(put.body?.base_version, 9);
-    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2", "server"]);
+    // the server element is already stored at the reloaded version: only our strokes travel
+    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2"]);
   });
 
   it("mergeScenes keeps the newer version of an element and never drops a local one", () => {
@@ -301,7 +302,8 @@ describe("SceneSync", () => {
     mock.timers.tick(1500);
     await settle();
     const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
-    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2", "server"]);
+    // the server element is already stored at the reloaded version: only our strokes travel
+    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2"]);
   });
 
   it("an element mutated in place during a save is saved again", async () => {
@@ -409,5 +411,68 @@ describe("SceneSync", () => {
     await settle();
     await settle();
     assert.equal(h.sync.settledVersion(), 4);
+  });
+});
+
+describe("delta saves (INK-075)", () => {
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
+  afterEach(() => mock.timers.reset());
+
+  it("sends only the changed and new elements after a load", async () => {
+    const h = harness([
+      json(200, { version: 3, elements: [el("a"), el("b")] }),
+      json(200, { version: 4 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("a"), el("b", 2), el("c")]);
+    await h.sync.flushNow();
+    assert.deepEqual(h.calls[1].body, {
+      base_version: 3,
+      elements: [el("b", 2), el("c")],
+      delta: true,
+    });
+  });
+
+  it("diffs against the last confirmed save, and keeps the whole diff after a failed save", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [el("a"), el("b")] }),
+      new Error("offline"),
+      json(200, { version: 2 }),
+      json(200, { version: 3 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("a", 2), el("b")]);
+    await h.sync.flushNow(); // fails
+    h.sync.notify([el("a", 2), el("b", 2)]);
+    await h.sync.flushNow(); // both changes are still unconfirmed
+    assert.deepEqual(h.calls[2].body?.elements, [el("a", 2), el("b", 2)]);
+    h.sync.notify([el("a", 2), el("b", 3)]);
+    await h.sync.flushNow();
+    assert.deepEqual(h.calls[3].body?.elements, [el("b", 3)]);
+  });
+
+  it("does a full save when an element the server holds is no longer in the list", () => {
+    const base = new Map([["a", 1], ["b", 1]]);
+    assert.equal(deltaFor(base, [el("a", 2)]), null);
+    assert.equal(deltaFor(null, [el("a")]), null);
+    assert.equal(deltaFor(base, [el("a", 2), el("b", 2)]), null); // nothing smaller to send
+  });
+
+  it("after a conflict reload the next save is diffed against the reloaded scene", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [el("a")] }),
+      json(409, { detail: { current_version: 5 } }),
+      json(200, { version: 5, elements: [el("a"), el("s")] }),
+      json(200, { version: 6 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("a"), el("m")]);
+    await h.sync.flushNow(); // 409, reload, merge schedules a save
+    mock.timers.tick(2000);
+    await settle();
+    const last = h.calls.at(-1)!;
+    assert.equal(last.body?.base_version, 5);
+    assert.deepEqual(last.body?.elements, [el("m")]);
+    assert.equal((last.body as { delta?: boolean }).delta, true);
   });
 });

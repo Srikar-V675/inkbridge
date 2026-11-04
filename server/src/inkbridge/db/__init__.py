@@ -235,8 +235,15 @@ def put_scene(
     base_version: int,
     elements_json: str,
     chunker_config: ChunkerConfig | None = None,
+    delta: bool = False,
+    max_elements: int | None = None,
 ) -> int:
     """Store the scene if base_version is current; return the new version.
+
+    With `delta`, `elements_json` holds only the elements that changed since base_version: each
+    replaces the stored element with its id (in place) or is appended. Nothing is removed, because
+    Excalidraw keeps deleted elements (`isDeleted`) in the scene. base_version pins the stored
+    scene to what the client diffed against, so a stale client gets a conflict, never a bad merge.
 
     BEGIN IMMEDIATE takes the write lock before the old scene is read, and the UPDATE compares
     the version again, so two writers with the same base_version cannot both win even if one
@@ -253,6 +260,13 @@ def put_scene(
             raise DocumentNotFound(document_id)
         if old["version"] != base_version:
             raise VersionConflict(old["version"])
+        old_elements = json.loads(old["elements_json"])
+        if delta:
+            elements_json = json.dumps(
+                _apply_delta(old_elements, json.loads(elements_json)),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         cur = conn.execute(
             "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
             " WHERE document_id = ? AND version = ?",
@@ -262,8 +276,9 @@ def put_scene(
             raise VersionConflict(get_scene(conn, document_id)[0])
         t0 = time.perf_counter()
         elements = json.loads(elements_json)
+        if max_elements is not None and len(elements) > max_elements:
+            raise SceneTooLarge(len(elements))
         by_id = {e["id"]: e for e in elements}
-        old_elements = json.loads(old["elements_json"])
         t1 = time.perf_counter()
         changed = _changed_ids(old_elements, by_id)
         t2 = time.perf_counter()
@@ -291,6 +306,17 @@ def put_scene(
         total * 1000,
     )
     return base_version + 1
+
+
+class SceneTooLarge(Exception):
+    def __init__(self, count: int):
+        super().__init__(f"too many elements: {count}")
+
+
+def _apply_delta(old_elements: list[dict], changed: list[dict]) -> list[dict]:
+    new_by_id = {e["id"]: e for e in changed}
+    merged = [new_by_id.pop(e["id"], e) for e in old_elements]
+    return merged + list(new_by_id.values())  # ids not stored yet, in the order sent
 
 
 def _changed_ids(old_elements: list[dict], new_by_id: dict[str, dict]) -> set[str]:

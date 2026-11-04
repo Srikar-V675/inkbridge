@@ -94,6 +94,7 @@ def _check_geometry(el: dict[str, Any]) -> None:
 class SceneIn(BaseModel):
     base_version: int = Field(ge=0)
     elements: list[dict[str, Any]]
+    delta: bool = False  # elements are only those changed since base_version (INK-075)
 
     @field_validator("elements")
     @classmethod
@@ -131,11 +132,15 @@ def put_scene(document_id: str, body: SceneIn, conn: Conn) -> dict[str, int]:
             document_id,
             body.base_version,
             json.dumps(body.elements, ensure_ascii=False, separators=(",", ":")),
+            delta=body.delta,
+            max_elements=MAX_ELEMENTS,
         )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
     except db.VersionConflict as e:
         raise HTTPException(409, {"current_version": e.current_version}) from None
+    except db.SceneTooLarge:
+        raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
     ws.hub.publish(
         document_id,
         {
