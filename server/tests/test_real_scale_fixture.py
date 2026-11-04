@@ -7,9 +7,9 @@ elements, 10x handwriting, a 1x block, diagrams, deleted elements). Nothing here
 import json
 import os
 import sqlite3
-import tempfile
 import statistics
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
