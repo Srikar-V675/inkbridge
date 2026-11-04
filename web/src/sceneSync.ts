@@ -268,10 +268,15 @@ export class SceneSync {
     } catch {
       // storage may be unavailable (private mode); the merge below still keeps the ink
     }
-    const notice = "Another tab saved first; merged its changes with yours";
+    const notice = (n: number) =>
+      n > 0
+        ? `Another tab saved first; merged its changes with yours (${n} of your edits were replaced by the other tab, backup kept)`
+        : "Another tab saved first; merged its changes with yours";
+    // load() replaces the baseline, so keep the one from before: it tells which edits were ours.
+    const before = this.baseline;
     this.pending = null;
     this.pendingSig = "";
-    this.emit("conflict", notice);
+    this.emit("conflict", notice(0));
     const fresh = await this.load();
     // The canvas stays live during the reload: merge whatever the user has drawn since, too.
     const newest = this.latest ?? local;
@@ -282,10 +287,14 @@ export class SceneSync {
       return;
     }
     if (this.disposed) return;
-    const merged = mergeScenes(fresh, newest);
+    const { merged, kept, taken } = mergeReport(fresh, newest);
+    const newestVersion = new Map(newest.map((e) => [e.id, e.version]));
+    const edited = taken.filter((id) => before?.get(id) !== newestVersion.get(id)).length;
     this.o.onReload(merged);
-    this.emit("conflict", notice);
-    if (signature(merged) !== this.lastSig) {
+    this.emit("conflict", notice(edited));
+    // A local tie win carries the same version the server holds: force it into the next delta.
+    for (const id of kept) this.baseline?.set(id, -1);
+    if (kept.length > 0 || signature(merged) !== this.lastSig) {
       this.pending = merged;
       this.pendingSig = signature(merged);
       this.schedule(this.o.debounceMs ?? 1500);
