@@ -204,3 +204,14 @@ def test_offset_past_the_end_and_overview_of_an_empty_canvas(api):
     body = outline(result)
     assert body["chunks"] == [] and "note" not in body and body["chunk_count"] == 0
     assert result.content[1].type == "image"  # the API's blank overview still arrives
+
+
+def test_read_canvas_lists_only_active_chunks(api):
+    from tests.test_regions_api import _orphan
+
+    Canvas(api, [rect("a", 0, 0, 100, 100), rect("b", 5000, 0, 100, 100)])
+    before = outline(call("read_canvas"))
+    gone = before["chunks"][0]["id"]
+    _orphan(gone)
+    after = outline(call("read_canvas"))
+    assert gone not in [c["id"] for c in after["chunks"]] and "version" in after

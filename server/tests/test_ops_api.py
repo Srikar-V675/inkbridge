@@ -577,6 +577,56 @@ def test_successor_cycle_does_not_hang(client):
     assert op.status_code == 422
 
 
+def _op_body(kind, anchor):
+    if kind == "write_text":
+        return {"type": kind, "payload": {"text": "x", "anchor": anchor}}
+    return {"type": kind, "payload": {"mermaid": "flowchart TD\nA-->B", "anchor": anchor}}
+
+
+@pytest.mark.parametrize("kind", ["write_text", "draw_diagram"])
+def test_chain_of_two_orphans_reaches_live(client, kind):
+    seed(client)
+    a, c = _anchor_region(["user-a"]), _anchor_region(["user-b"])
+    # a -> mid (orphan) -> c (active): mid is a fresh row copied from a
+    conn = db.connect()
+    try:
+        conn.execute(
+            "INSERT INTO regions (id, document_id, element_ids_json, bbox, status, successor_of,"
+            " created_by) SELECT 'mid', document_id, element_ids_json, bbox, 'orphaned', ?,"
+            " created_by FROM regions WHERE id = ?",
+            (c, a),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    _link(a, status="orphaned", successor_of="mid")
+    r = client.post(OPS, json=_op_body(kind, a))
+    assert r.status_code == 201, r.text
+    assert r.json()["payload"]["anchor_resolved"] == c
+
+
+@pytest.mark.parametrize("kind", ["write_text", "draw_diagram"])
+@pytest.mark.fts_unchecked
+@pytest.mark.parametrize("shape", ["no_successor", "cycle"])
+def test_dead_anchor_is_422_gone(client, kind, shape):
+    seed(client)
+    a, b = _anchor_region(["user-a"]), _anchor_region(["user-b"])
+    if shape == "no_successor":
+        _link(a, status="orphaned", successor_of=None)
+    else:
+        _link(a, status="orphaned", successor_of=b)
+        _link(b, status="orphaned", successor_of=a)
+    r = client.post(OPS, json=_op_body(kind, a))
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert detail["code"] == "anchor_gone" and "read_canvas" in detail["msg"]
+    conn = db.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM agent_ops").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_client_sent_anchor_resolved_is_ignored(client):
     seed(client)
     op = client.post(
