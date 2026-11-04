@@ -42,18 +42,32 @@ const RETRY_MS = [2000, 4000, 8000, 16000, 30000];
 // Two element lists are "the same" if every element has the same id and version.
 const signature = (els: readonly SceneElement[]) => els.map((e) => `${e.id}:${e.version}`).join("|");
 
-/** Server scene plus every local element: the newer `version` wins, ties go to the server. */
-export function mergeScenes(
-  server: readonly SceneElement[],
-  local: readonly SceneElement[],
-): SceneElement[] {
+const nonce = (e: SceneElement) => (e.versionNonce as number | undefined) ?? 0;
+// Excalidraw's undo and edits always bump `version` (never reuse an older number), so deltaFor stays safe.
+// Not verified against a real Excalidraw run (decision 0038).
+const localWins = (l: SceneElement, s: SceneElement) =>
+  l.version > s.version || (l.version === s.version && nonce(l) < nonce(s));
+
+/** Server scene plus every local element. The higher `version` wins; on a tie the lower
+ *  `versionNonce` wins, the same rule Excalidraw's reconcile uses, so both tabs pick the same one.
+ *  Equal nonces keep the server copy. `kept`: local won a tie. `taken`: the server copy replaced a local one. */
+export function mergeReport(server: readonly SceneElement[], local: readonly SceneElement[]) {
   const byId = new Map(server.map((e) => [e.id, e]));
+  const kept: string[] = [];
+  const taken: string[] = [];
   for (const e of local) {
     const theirs = byId.get(e.id);
-    if (!theirs || e.version > theirs.version) byId.set(e.id, e);
+    if (!theirs) byId.set(e.id, e);
+    else if (localWins(e, theirs)) {
+      if (e.version === theirs.version) kept.push(e.id);
+      byId.set(e.id, e);
+    } else if (e.version !== theirs.version || nonce(e) !== nonce(theirs)) taken.push(e.id);
   }
-  return [...byId.values()];
+  return { merged: [...byId.values()], kept, taken };
 }
+
+export const mergeScenes = (server: readonly SceneElement[], local: readonly SceneElement[]) =>
+  mergeReport(server, local).merged;
 
 function liveIds(elements: readonly SceneElement[]): Set<string> {
   return new Set(elements.filter((e) => !e.isDeleted).map((e) => e.id));
