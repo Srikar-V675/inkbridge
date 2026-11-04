@@ -151,6 +151,27 @@ def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[f
     return out
 
 
+def _resolve_anchor(conn, document_id, region_id):
+    """The anchor chunk, or its live successor when a re-chunk orphaned it (INK-081).
+
+    An orphan with no successor keeps its own last box. Read-only on regions.
+    """
+    seen = set()
+    while region_id not in seen:
+        seen.add(region_id)
+        row = conn.execute(
+            "SELECT id, bbox, element_ids_json, status, successor_of FROM regions"
+            " WHERE id = ? AND document_id = ?",
+            (region_id, document_id),
+        ).fetchone()
+        if row is None or not row["bbox"]:
+            raise AnchorNotFound(region_id)
+        if row["status"] == "active" or not row["successor_of"]:
+            return row
+        region_id = row["successor_of"]
+    raise AnchorNotFound(region_id)  # successor cycle
+
+
 def _create_op(conn, document_id, op_type, payload, op_id):
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
@@ -161,7 +182,7 @@ def _create_op(conn, document_id, op_type, payload, op_id):
             stored = {
                 k: v
                 for k, v in existing["payload"].items()
-                if k not in ("placement", "id_prefix", "font_size")
+                if k not in ("placement", "id_prefix", "font_size", "anchor_resolved")
             }
             if (existing["document_id"], existing["type"], stored) != (
                 document_id,
@@ -187,12 +208,8 @@ def _create_op(conn, document_id, op_type, payload, op_id):
     anchor = None
     anchor_ids = None
     if payload.get("anchor") is not None:
-        region = conn.execute(
-            "SELECT bbox, element_ids_json FROM regions WHERE id = ? AND document_id = ?",
-            (payload["anchor"], document_id),
-        ).fetchone()
-        if region is None or not region["bbox"]:
-            raise AnchorNotFound(payload["anchor"])
+        region = _resolve_anchor(conn, document_id, payload["anchor"])
+        payload = {**payload, "anchor_resolved": region["id"]}
         anchor = json.loads(region["bbox"])
         anchor_ids = set(json.loads(region["element_ids_json"] or "[]"))
 
