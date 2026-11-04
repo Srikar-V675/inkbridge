@@ -2,7 +2,8 @@
 
 import io
 
-from PIL import Image
+import pytest
+from PIL import Image, features
 
 from inkbridge import config, imaging
 from tests.test_chunk_persistence import Canvas, row
@@ -221,3 +222,66 @@ def test_overview_frames_stale_crops_and_flattens_transparency():
     colours_ = {c for _, c in img.getcolors(1 << 22)}
     assert imaging._STALE in colours_
     assert (0, 0, 0) not in colours_  # the transparent crop shows white, not black
+
+
+def _spread_tiles():
+    # 20 chunks over about 17000 x 11000 px, the shape of a canvas written while zoomed in.
+    tiles = [_tile(i, (i % 5) * 4250, (i // 5) * 3000, w=250, h=250) for i in range(19)]
+    return tiles + [_tile(19, 16750, 10750, w=250, h=250)]
+
+
+def _band_scale(band):
+    x0 = min(c["bounds"]["x"] for c in band) - imaging.OVERVIEW_PAD
+    x1 = max(c["bounds"]["x"] + c["bounds"]["width"] for c in band) + imaging.OVERVIEW_PAD
+    return x0, x1
+
+
+def test_plan_bands_keeps_every_box_at_least_24px():
+    tiles = _spread_tiles()
+    bands = imaging.plan_bands(tiles, 1568)
+    assert len(bands) > 1
+    assert sum(map(len, bands)) == 20
+    assert [c["id"] for band in bands for c in band] == [c["id"] for c in tiles]  # order kept
+    for band in bands:
+        img = _img(imaging.overview(band, lambda _: None, 1568))
+        x0, x1 = _band_scale(band)
+        scale = img.width / (x1 - x0)
+        assert scale * 250 >= imaging.MIN_BOX_PX - 1  # one px of rounding allowed
+
+
+def test_plan_bands_single_band_when_it_fits():
+    tiles = [_tile(i, i * 300, 0) for i in range(3)]
+    assert [len(b) for b in imaging.plan_bands(tiles, 1568)] == [3]
+
+
+def test_plan_bands_always_makes_progress():
+    # A chunk too wide to ever reach 24 px is shown alone, never upscaled, and never loops.
+    bands = imaging.plan_bands([_tile(0, 0, 0, w=5000, h=5), _tile(1, 0, 100)], 1568)
+    assert [[c["id"] for c in b] for b in bands] == [["c0"], ["c1"]]
+
+
+def _rect(text, pos, font):
+    x, y = pos
+    left, top, right, bottom = font.getbbox(text)
+    return (x + left, y + top, x + right, y + bottom)
+
+
+def test_label_positions_do_not_overlap():
+    font = imaging._font(1568)
+    anchors = [("a", (10, 40)), ("b", (14, 40)), ("c", (18, 40))]  # three boxes side by side
+    placed = imaging._place_labels(anchors, font)
+    assert [t for t, _ in placed] == ["a", "b", "c"]
+    rects = [_rect(t, p, font) for t, p in placed]
+    for i, a in enumerate(rects):
+        for b in rects[i + 1 :]:
+            overlap = a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+            assert not overlap, (a, b)
+    assert all(x >= 0 and y >= 0 for x, y in (p for _, p in placed))
+
+
+def test_overview_label_uses_a_sized_font():
+    if not features.check("freetype2"):
+        pytest.skip("Pillow without FreeType keeps the tiny bitmap font")
+    assert imaging._font(1568).size >= 20
+    img = _img(imaging.overview(_spread_tiles()[:2], lambda _: None, 1568))
+    assert img.width <= 1568
