@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "eval" / "fixtures"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import make_real_scale
+import replay_fixture
 
 
 def live(els):
@@ -92,3 +93,45 @@ def test_main_writes_scene_and_boxes(tmp_path):
     assert scene["elements"] == make_real_scale.build()
     boxes = json.loads((tmp_path / "fixture.boxes.json").read_text())
     assert boxes == make_real_scale.boxes()
+
+
+# ---- Task 2: replay helper (delta saves, id churn per save) ----
+
+
+def new_document(client):
+    return client.post("/documents", json={"title": "replay"}).json()["id"]
+
+
+def test_replay_reports_per_save(client):
+    els = make_real_scale.build()[:100]
+    out = replay_fixture.replay(client, new_document(client), els, batch=20)
+    assert len(out.saves) == 5 and all(s.seconds >= 0 for s in out.saves)
+    assert out.saves[-1].version == 5  # one delta save per batch
+    assert out.final_chunks >= 1
+
+
+def test_replay_counts_new_chunk_ids(client):
+    line = [e for e in make_real_scale.build() if e["id"].startswith("t1-l0")]
+    out = replay_fixture.replay(client, new_document(client), line, batch=2)
+    # A growing 1x line re-ids while it is small (decision 0053): a save that adds half the chunk
+    # or more drops the element-id Jaccard to 0.5 or below, so the old id is orphaned (INK-031).
+    # Batches of 2 strokes stop re-ids after the third save.
+    assert [s.new_ids for s in out.saves] == [1, 1, 0, 0, 0]
+    assert out.new_ids_total == 2
+    assert out.final_chunks == 1
+
+
+def test_replay_uses_delta_saves(client, monkeypatch):
+    bodies = []
+    real_put = client.put
+
+    def recording_put(url, **kwargs):
+        bodies.append(kwargs["json"])
+        return real_put(url, **kwargs)
+
+    monkeypatch.setattr(client, "put", recording_put)
+    els = make_real_scale.build()[:40]
+    replay_fixture.replay(client, new_document(client), els, batch=20)
+    assert len(bodies) == 2
+    assert all(b["delta"] is True for b in bodies)
+    assert [len(b["elements"]) for b in bodies] == [20, 20]
