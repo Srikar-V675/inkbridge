@@ -1,6 +1,7 @@
 // Framework-free load/autosave for one canvas. App.tsx wires it to Excalidraw's onChange.
 // Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0008).
 
+import type { LoadClock } from "./loadClock.ts";
 import { record } from "./timing.ts";
 
 export interface SceneElement {
@@ -15,6 +16,7 @@ export interface SyncOptions {
   documentId: string;
   debounceMs?: number;
   fetchFn?: typeof fetch;
+  clock?: LoadClock;
   storage?: Pick<Storage, "setItem">;
   onState: (state: SaveState, detail?: string) => void;
   onReload: (elements: SceneElement[]) => void;
@@ -135,11 +137,13 @@ export class SceneSync {
     const t0 = performance.now();
     try {
       const r = await this.fetchFn(this.url());
+      this.o.clock?.mark("fetch"); // time to the response headers
       if (!r.ok) {
         this.emit("error", r.status === 404 ? "Unknown canvas" : `Load failed (${r.status})`);
         return null;
       }
       const body = (await r.json()) as { version: number; elements: SceneElement[] };
+      this.o.clock?.mark("parse", { elements: body.elements.length }); // body download + parse
       this.version = body.version;
       this.lastSig = signature(body.elements);
       this.savedIds = liveIds(body.elements);
