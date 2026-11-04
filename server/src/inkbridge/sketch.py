@@ -26,6 +26,7 @@ from inkbridge.regions import bbox_of
 
 SHAPES = ("rectangle", "ellipse", "diamond")
 MIN_NODE_FRACTION = 0.05  # a loop's diagonal is at least this fraction of the whole sketch's
+MIN_NODE_FLOOR = 12.0  # px diagonal: loops this small are letters whatever the sketch's size
 LETTER_FACTOR = 2.0  # ... and at least this many median stroke diagonals (handwriting pages)
 MIN_STROKES_FOR_MEDIAN = 8  # fewer freedraw strokes than this: skip the median test
 MAX_UNATTACHED = 30  # unattached strokes listed; the longest, the rest is probably handwriting
@@ -119,7 +120,7 @@ def read_sketch(elements: list[dict[str, Any]]) -> dict[str, Any]:
     live = [e for e in elements if not e.get("isDeleted") and usable(e)]
     sketch_diag = _diag(bbox_of(live)) if live else 0.0
     strokes = sorted(_diag(bbox_of([e])) for e in live if e.get("type") == "freedraw")
-    min_diag = MIN_NODE_FRACTION * sketch_diag
+    min_diag = max(MIN_NODE_FLOOR, MIN_NODE_FRACTION * sketch_diag)
     # Median test only when most strokes are tiny (handwriting): in a chart of boxes the median
     # stroke is a node itself and must not raise the bar above the nodes.
     if len(strokes) >= MIN_STROKES_FOR_MEDIAN and strokes[len(strokes) // 2] < min_diag:

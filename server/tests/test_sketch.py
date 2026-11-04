@@ -125,7 +125,7 @@ def test_a_stroke_touching_one_node_is_unattached():
 
 
 def test_small_loops_are_letters_not_nodes():
-    els = [loop("o", 0, 0, 5, 5, gap=1), loop("box", 100, 0, 100, 60)]
+    els = [loop("o", 0, 0, 8, 8, gap=1), loop("box", 100, 0, 100, 60)]
     assert [n["element_ids"] for n in read_sketch(els)["nodes"]] == [["box"]]
 
 
@@ -401,3 +401,23 @@ def test_marker_radius_shrinks_for_wide_sketches():
     img = Image.open(BytesIO(png)).convert("RGB")
     m = markers[0]
     assert img.getpixel((round(m["x"]) + 5, round(m["y"]) + 2)) == (220, 38, 38)
+
+
+def test_short_handwriting_chunk_has_no_nodes():
+    # "hello": five closed letter loops, fewer strokes than the median test needs
+    els = [loop(f"l{c}", c * 12, 0, 8, 8, gap=1) for c in range(5)]
+    assert read_sketch(els)["nodes"] == []
+
+
+def test_a_single_small_loop_is_not_a_node():
+    assert read_sketch([loop("o", 0, 0, 8, 8, gap=1)])["nodes"] == []
+
+
+def test_boxes_with_many_label_strokes_stay_nodes():
+    els = [loop(f"b{i}", i * 300, 0, 200, 120) for i in range(3)]
+    for i in range(3):
+        for j in range(5):
+            els.append(
+                line(f"t{i}{j}", (i * 300 + 20 + j * 30, 50), (i * 300 + 35 + j * 30, 70), n=3)
+            )
+    assert len(read_sketch(els)["nodes"]) == 3

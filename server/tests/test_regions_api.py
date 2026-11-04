@@ -212,22 +212,16 @@ def test_status_filter_runs_before_limit_so_orphans_cannot_hide_active_chunks(cl
     values = dict(zip(cols, template))
     rows = []
     for i in range(600):
-        values.update(
-            id=f"orphan{i:04d}", status="orphaned", updated_at="2099-01-01T00:00:00+00:00"
-        )
+        values.update(id=f"orphan{i:04d}", status="orphaned", updated_at="2099-01-01T00:00:00+00:00")
         rows.append(tuple(values[c] for c in cols))
-    conn.executemany(
-        f"INSERT INTO regions ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", rows
-    )
+    conn.executemany(f"INSERT INTO regions ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", rows)
     conn.commit()
     conn.close()
 
     listed = client.get(REGIONS, params={"chunks": True, "status": "active", "limit": 500}).json()
     assert sorted(c["id"] for c in listed) == active_ids
     unfiltered = client.get(REGIONS, params={"chunks": True, "limit": 500}).json()
-    assert not set(active_ids) & {
-        c["id"] for c in unfiltered
-    }  # the bug: active rows pushed past LIMIT
+    assert not set(active_ids) & {c["id"] for c in unfiltered}  # the bug: active rows pushed past LIMIT
 
 
 def _orphan(rid, successor=None):
