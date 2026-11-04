@@ -37,6 +37,22 @@ export function deltaFor(
 }
 
 const KEEPALIVE_MAX = 60_000;
+const SAVE_TIMEOUT_MS = 30_000;
+
+// An unsent-or-unanswered save, kept whole so a retry resends the same body under the same key (INK-083).
+interface SaveRequest {
+  key: string;
+  body: string;
+  sent: readonly SceneElement[];
+  sentSig: string;
+  sentVersions: Map<string, number>;
+  changed: SceneElement[] | null;
+}
+
+interface LastWriter {
+  tab?: string;
+  same_ip?: boolean;
+}
 const RETRY_MS = [2000, 4000, 8000, 16000, 30000];
 
 // Two element lists are "the same" if every element has the same id and version.
@@ -93,6 +109,11 @@ export class SceneSync {
   // id -> version of every element in the scene the server confirmed (INK-075); null until known.
   // Saves send only elements whose version differs, so a save costs the edit, not the page.
   private baseline: Map<string, number> | null = null;
+  // LAN HTTP is not a secure context, so crypto.randomUUID may be missing.
+  private readonly tabId = Math.random().toString(36).slice(2, 10);
+  private seq = 0;
+  // Set while a PUT has no definite HTTP answer (network error or timeout); the next attempt reuses it.
+  private unsettled: SaveRequest | null = null;
 
   constructor(options: SyncOptions) {
     this.o = options;
@@ -124,6 +145,7 @@ export class SceneSync {
       this.savedIds = liveIds(body.elements);
       this.baseline = versions(body.elements);
       this.pending = null;
+      this.unsettled = null;
       this.loaded = true;
       record("scene.load", performance.now() - t0, { elements: body.elements.length });
       this.emit("saved");
@@ -189,30 +211,43 @@ export class SceneSync {
     return this.inflight;
   }
 
-  private async doSave(flush: boolean) {
-    const sent = this.pending;
-    if (!sent) return;
+  private buildRequest(sent: readonly SceneElement[]): SaveRequest {
     // Excalidraw mutates element objects in place, so the signature of what was sent must be taken
     // now: recomputed after the response it would include edits made during the request.
-    const sentSig = signature(sent);
-    const sentVersions = versions(sent);
     const changed = deltaFor(this.baseline, sent);
+    const body = JSON.stringify(
+      changed
+        ? { base_version: this.version, elements: changed, delta: true }
+        : { base_version: this.version, elements: sent },
+    );
+    return {
+      key: `${this.tabId}:${++this.seq}`,
+      body,
+      sent,
+      sentSig: signature(sent),
+      sentVersions: versions(sent),
+      changed,
+    };
+  }
+
+  private async doSave(flush: boolean) {
+    if (!this.pending) return;
+    const req = this.unsettled ?? this.buildRequest(this.pending);
+    const { body, sent, sentSig, sentVersions, changed } = req;
+    this.unsettled = req;
     this.saving = true;
     this.emit("saving");
     const t0 = performance.now();
     try {
-      const body = JSON.stringify(
-        changed
-          ? { base_version: this.version, elements: changed, delta: true }
-          : { base_version: this.version, elements: sent },
-      );
       const r = await this.fetchFn(this.url(), {
         method: "PUT",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-inkbridge-save": req.key },
         body,
+        signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
         // On page hide, keepalive lets the save outlive the page; browsers cap it at 64 KiB.
         keepalive: flush && body.length < KEEPALIVE_MAX,
       });
+      this.unsettled = null; // any HTTP answer is definite
       if (r.ok) {
         this.version = ((await r.json()) as { version: number }).version;
         this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
@@ -234,7 +269,10 @@ export class SceneSync {
           this.emit("saved", `${ms} ms`);
         }
       } else if (r.status === 409) {
-        await this.resolveConflict(sent);
+        const detail = (await r.json().catch(() => null))?.detail as
+          | { last_writer?: LastWriter }
+          | undefined;
+        await this.resolveConflict(sent, detail?.last_writer);
       } else if (r.status >= 400 && r.status < 500) {
         // A rejected body would be rejected again, so stop retrying until the next real edit, but
         // keep the ink in memory: the next edit sends the whole scene again.
@@ -257,7 +295,7 @@ export class SceneSync {
 
   // Another tab saved first. Reload the server scene, but keep the local edits in storage so a
   // conflict never silently destroys work.
-  private async resolveConflict(sent: readonly SceneElement[]) {
+  private async resolveConflict(sent: readonly SceneElement[], lastWriter?: LastWriter) {
     // Everything the user has drawn locally, including edits made while this save was in flight.
     const local = this.pending ?? sent;
     try {
@@ -268,10 +306,11 @@ export class SceneSync {
     } catch {
       // storage may be unavailable (private mode); the merge below still keeps the ink
     }
+    const who = lastWriter?.same_ip === false ? "device" : "tab";
     const notice = (n: number) =>
       n > 0
-        ? `Another tab saved first; merged its changes with yours (${n} of your edits were replaced by the other tab, backup kept)`
-        : "Another tab saved first; merged its changes with yours";
+        ? `Another ${who} saved first; merged its changes with yours (${n} of your edits were replaced by the other ${who}, backup kept)`
+        : `Another ${who} saved first; merged its changes with yours`;
     // load() replaces the baseline, so keep the one from before: it tells which edits were ours.
     const before = this.baseline;
     this.pending = null;

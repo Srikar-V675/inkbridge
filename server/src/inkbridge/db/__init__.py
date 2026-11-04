@@ -6,6 +6,7 @@ import re
 import sqlite3
 import time
 import uuid
+from collections import OrderedDict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,6 +26,11 @@ from inkbridge.regions import (
     stroke_hash,
     text_hash,
 )
+
+# (document, save key) -> version that save produced (INK-083, decision 0040).
+# shortcut: in memory, lost on restart (a retry across a restart may 409 once); upgrade to a table if seen.
+_applied: OrderedDict[tuple[str, str], int] = OrderedDict()
+APPLIED_CAP = 256
 
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 SLOW_SAVE_S = 1.0  # a scene save slower than this is logged at warning (INK-072, decision 0027)
@@ -229,6 +235,10 @@ def get_scene(conn: sqlite3.Connection, document_id: str) -> tuple[int, str]:
     return row["version"], row["elements_json"]
 
 
+def was_applied(document_id: str, save_key: str) -> bool:
+    return (document_id, save_key) in _applied
+
+
 def put_scene(
     conn: sqlite3.Connection,
     document_id: str,
@@ -237,6 +247,7 @@ def put_scene(
     chunker_config: ChunkerConfig | None = None,
     delta: bool = False,
     max_elements: int | None = None,
+    save_key: str | None = None,
 ) -> int:
     """Store the scene if base_version is current; return the new version.
 
@@ -251,6 +262,7 @@ def put_scene(
     disagree with the stored scene; any error rolls the whole save back.
     """
     now = _now()
+    recorded = False
     conn.execute("BEGIN IMMEDIATE")  # read the old scene and replace it under one write lock
     try:
         old = conn.execute(
@@ -258,6 +270,9 @@ def put_scene(
         ).fetchone()
         if old is None:
             raise DocumentNotFound(document_id)
+        if save_key is not None and (document_id, save_key) in _applied:
+            conn.rollback()  # a retry of a save that already landed: replay its version
+            return _applied[(document_id, save_key)]
         if old["version"] != base_version:
             raise VersionConflict(old["version"])
         old_elements = json.loads(old["elements_json"])
@@ -287,8 +302,15 @@ def put_scene(
         _sync_chunks(conn, document_id, elements, by_id, changed, now, chunker_config)
         t4 = time.perf_counter()
         conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
+        if save_key is not None:  # recorded under the write lock, so a blocked retry sees it
+            _applied[(document_id, save_key)] = base_version + 1
+            recorded = True
+            while len(_applied) > APPLIED_CAP:
+                _applied.popitem(last=False)
         conn.commit()
     except BaseException:
+        if recorded:
+            _applied.pop((document_id, save_key), None)
         conn.rollback()
         raise
     total = time.perf_counter() - t0
