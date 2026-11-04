@@ -7,8 +7,9 @@ from typing import Annotated, Any
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
+from starlette.middleware.gzip import GZipMiddleware
 
 from inkbridge import db
 from inkbridge.api import chunks, ops, overrides, questions, regions, search, sync, ws
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Inkbridge", lifespan=lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)  # INK-080 (decision 0055)
 app.add_middleware(BodySizeLimit)  # 413 before any route reads an oversized body
 app.add_middleware(RequestTiming)  # added last = outermost: times the body-limit 413 too
 
@@ -127,12 +129,15 @@ def health() -> dict[str, str]:
 
 
 @app.get("/documents/{document_id}/scene")
-def get_scene(document_id: str, conn: Conn) -> dict[str, Any]:
+def get_scene(document_id: str, conn: Conn) -> Response:
     try:
         version, elements_json = db.get_scene(conn, document_id)
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
-    return {"version": version, "elements": json.loads(elements_json)}
+    # The stored text goes out as is: no decode/encode round trip (INK-080).
+    return Response(
+        f'{{"version":{version},"elements":{elements_json}}}', media_type="application/json"
+    )
 
 
 _last_writer: dict[str, tuple[str, str]] = {}  # document -> (tab, ip) of the last save (INK-083)
