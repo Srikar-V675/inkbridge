@@ -1,4 +1,4 @@
-# Deep Dive: recognition (`recognizer/` and `recognition_worker.py`)
+# Deep Dive: recognition (`recognizer/` and `recognizer/worker.py`)
 
 Recognition turns a chunk's crop PNG into text, LaTeX and a kind. It is a **cache in front of a model**: ink is the truth, a reading is keyed by `(region_id, content_hash, source)` (`recognitions` table). Moved or unchanged ink never triggers a model call because `content_hash` ignores position.
 
@@ -8,7 +8,7 @@ Recognition turns a chunk's crop PNG into text, LaTeX and a kind. It is a **cach
 |---|---|
 | `recognizer/__init__.py` | `Recognition` dataclass (`text`, `latex`, `kind`, `model`), `Recognizer` protocol `(png, hint) -> Recognition`, the error hierarchy, `KINDS` |
 | `recognizer/gemini.py` | `GeminiRecognizer`: prompt, spacing, retries, parsing, transport |
-| `recognition_worker.py` | `RecognitionWorker`: the background thread and its rules |
+| `recognizer/worker.py` | `RecognitionWorker`: the background thread and its rules |
 
 There is deliberately no module-level `recognize()`. The only caller is the opt-in worker, which owns the privacy gate (decision 0017).
 
@@ -28,7 +28,7 @@ There is deliberately no module-level `recognize()`. The only caller is the opt-
 
 Tests inject a `transport` callable so nothing goes to the network (`tests/test_recognizer.py`).
 
-## RecognitionWorker (`recognition_worker.py`)
+## RecognitionWorker (`recognizer/worker.py`)
 
 ![diagram 1](../../img/recognition-1.png)
 

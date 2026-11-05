@@ -5,8 +5,9 @@ import sqlite3
 import uuid
 
 from inkbridge import imaging
-from inkbridge.chunker import reading_order
-from inkbridge.db import AUTO, DocumentNotFound, _now, _region_dict
+from inkbridge.canvas.chunker import reading_order
+from inkbridge.db.common import AUTO, DocumentNotFound, _now
+from inkbridge.db.regions import _region_dict
 
 STATUSES = ("active", "orphaned", "all")
 

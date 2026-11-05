@@ -2,23 +2,23 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExterna
 import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
-import { ChunkOverlay } from "./ChunkOverlay";
-import { createRefresh, wireRefresh } from "./chunkRefresh";
-import AskPanel from "./AskPanel";
-import { DraftBar } from "./DraftBar";
-import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "./draftView";
-import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "./chunks";
-import { CropSync } from "./cropSync";
-import { type DraftElement } from "./drafts";
-import { draftOpId, dropDrafts } from "./resolve";
-import { drawOp } from "./drawOp";
-import { OpsSocket } from "./opsSocket";
-import { readRoute } from "./route";
-import { createLoadClock } from "./loadClock";
-import { createStartupGate } from "./startupGate";
-import { SceneSync, type SaveState, type SceneElement } from "./sceneSync";
-import { createStatusStore } from "./status";
-import { loadView, saveView, type View } from "./view";
+import { ChunkOverlay } from "../chunks/ChunkOverlay";
+import { createRefresh, wireRefresh } from "../sync/chunkRefresh";
+import AskPanel from "../ask/AskPanel";
+import { DraftBar } from "../drafts/DraftBar";
+import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "../drafts/draftView";
+import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "../chunks/chunks";
+import { CropSync } from "../sync/cropSync";
+import { type DraftElement } from "../drafts/drafts";
+import { draftOpId, dropDrafts } from "../drafts/resolve";
+import { drawOp } from "../drafts/drawOp";
+import { OpsSocket } from "../sync/opsSocket";
+import { readRoute } from "../lib/route";
+import { createLoadClock } from "../sync/loadClock";
+import { createStartupGate } from "../sync/startupGate";
+import { SceneSync, type SaveState, type SceneElement } from "../sync/sceneSync";
+import { createStatusStore } from "../lib/status";
+import { loadView, saveView, type View } from "../lib/view";
 
 const LABEL: Record<SaveState, string> = {
   loading: "Loading…",

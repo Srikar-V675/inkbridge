@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createLoadClock } from "../src/loadClock.ts";
+import { createLoadClock } from "../src/sync/loadClock.ts";
 
 describe("load clock (INK-080)", () => {
   it("records time since the previous mark, then the total", () => {

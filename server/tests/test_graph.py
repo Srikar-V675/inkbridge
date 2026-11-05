@@ -3,7 +3,8 @@
 import re
 from itertools import pairwise
 
-from inkbridge import graph, mermaid
+from inkbridge.agent import mermaid
+from inkbridge.canvas import graph
 
 
 def ch(i, links=(), status="active", order=None, text=None, kind="handwriting"):

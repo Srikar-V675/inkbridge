@@ -6,7 +6,7 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { draftBox, inView, panTarget, type Unseen } from "./draftView";
 import type { DraftElement } from "./drafts";
 import { applyVerdict, draftOpId, draftOps, fetchAppliedOps, NOT_READY, patchOp, retryAccept, type ResolveSummary, type Verdict } from "./resolve";
-import type { SceneSync } from "./sceneSync";
+import type { SceneSync } from "../sync/sceneSync";
 
 type Sync = { current: SceneSync | null };
 

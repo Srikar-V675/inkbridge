@@ -10,7 +10,7 @@ import {
   planReveal,
   viewportBox,
   type Viewport,
-} from "../src/draftView.ts";
+} from "../src/drafts/draftView.ts";
 
 const draft = (opId: string) => ({ customData: { author: "agent", draft: true, op_id: opId } });
 

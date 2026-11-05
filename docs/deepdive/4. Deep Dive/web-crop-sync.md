@@ -1,4 +1,4 @@
-# Deep Dive: web crop sync (`web/src/cropSync.ts`)
+# Deep Dive: web crop sync (`web/src/sync/cropSync.ts`)
 
 Only the browser can render Excalidraw, so crops of stale chunks are rendered and uploaded here (INK-057, decision 0015). The server flags a chunk `png_stale` when its ink changes; this class finds those chunks and uploads PNGs.
 

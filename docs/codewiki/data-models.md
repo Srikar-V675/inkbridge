@@ -39,4 +39,4 @@ Block markers: `<!-- ink:ID hash:H -->` ... `<!-- /ink -->`. Text outside marker
 
 ## Draft elements
 
-Excalidraw elements with `customData {author:"agent", draft:true, op_id}` and dashed style. Accept (built, `resolve.ts`) drops the dashed style and the draft flag, keeps `author` and `op_id`, and sets text opacity back to 100. Reject soft-deletes elements whose id starts with `<op_id>:` (never matched by tag alone). Ids carry the op's `id_prefix` `<op_id>:`.
+Excalidraw elements with `customData {author:"agent", draft:true, op_id}` and dashed style. Accept (built, `drafts/resolve.ts`) drops the dashed style and the draft flag, keeps `author` and `op_id`, and sets text opacity back to 100. Reject soft-deletes elements whose id starts with `<op_id>:` (never matched by tag alone). Ids carry the op's `id_prefix` `<op_id>:`.

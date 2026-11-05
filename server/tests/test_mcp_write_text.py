@@ -6,10 +6,10 @@ import json
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
+from inkbridge.agent.placement import estimate_size, overlaps
+from inkbridge.canvas.hashes import bbox_of
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
-from inkbridge.placement import estimate_size, overlaps
-from inkbridge.regions import bbox_of
 from tests.test_ops_api import USER_A, USER_B, seed
 
 

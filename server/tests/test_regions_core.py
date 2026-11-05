@@ -1,7 +1,7 @@
 import copy
 import random
 
-from inkbridge.regions import bbox_of, content_hash, stroke_hash, text_hash
+from inkbridge.canvas.hashes import bbox_of, content_hash, stroke_hash, text_hash
 
 STROKE = {
     "id": "a",

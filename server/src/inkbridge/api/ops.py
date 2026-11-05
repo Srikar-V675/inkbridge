@@ -5,7 +5,8 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from inkbridge import db, mermaid
+from inkbridge import db
+from inkbridge.agent import mermaid
 from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message

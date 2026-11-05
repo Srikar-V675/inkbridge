@@ -8,8 +8,10 @@ reading decides between `fresh_after_reread` (same words) and `changed`.
 import sqlite3
 
 from inkbridge import imaging
-from inkbridge.db import DocumentNotFound, document_exists, get_region
+from inkbridge.db.common import DocumentNotFound
+from inkbridge.db.documents import document_exists
 from inkbridge.db.outline import chunk_outline
+from inkbridge.db.regions import get_region
 
 MAX_HOPS = 64  # successor chains are short; this only guards against corrupt cycles
 PREVIEW = 80

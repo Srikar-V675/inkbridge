@@ -17,10 +17,11 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from inkbridge import placement
-from inkbridge.chunker import proximity_threshold
-from inkbridge.db import DocumentNotFound, _now, document_exists, get_scene
-from inkbridge.regions import bbox_of
+from inkbridge.agent import placement
+from inkbridge.canvas.chunker import proximity_threshold
+from inkbridge.canvas.hashes import bbox_of
+from inkbridge.db.common import DocumentNotFound, _now
+from inkbridge.db.documents import document_exists, get_scene
 
 OP_TYPES = ("write_text", "draw_diagram")
 STATUSES = ("pending", "delivered", "applied", "accepted", "rejected", "failed", "expired")

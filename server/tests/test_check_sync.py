@@ -10,8 +10,8 @@ from inkbridge import db
 from inkbridge.api import app
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
-from inkbridge.recognition_worker import RecognitionWorker
 from inkbridge.recognizer import Recognition, RecognizerTimeout
+from inkbridge.recognizer.worker import RecognitionWorker
 from tests.test_chunk_persistence import Canvas, row
 from tests.test_regions_api import PNG
 from tests.test_search import recognise

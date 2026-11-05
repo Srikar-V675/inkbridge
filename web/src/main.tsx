@@ -1,10 +1,10 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.tsx'
+import App from './app/App.tsx'
 
 if (import.meta.env.DEV) {
-  void import('./devLog').then((m) => import('./timing').then((t) => t.setTimingSink(m.devSink)))
+  void import('./lib/devLog').then((m) => import('./lib/timing').then((t) => t.setTimingSink(m.devSink)))
 }
 
 createRoot(document.getElementById('root')!).render(

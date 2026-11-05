@@ -6,7 +6,7 @@ import json
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from inkbridge import mermaid
+from inkbridge.agent import mermaid
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
 from tests.test_chunk_persistence import Canvas, row

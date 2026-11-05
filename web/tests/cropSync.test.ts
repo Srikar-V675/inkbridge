@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { CropSync, MAX_CROP_ELEMENTS, MAX_READ_UNITS, type StaleChunk } from "../src/cropSync.ts";
-import { setTimingSink } from "../src/timing.ts";
+import { CropSync, MAX_CROP_ELEMENTS, MAX_READ_UNITS, type StaleChunk } from "../src/sync/cropSync.ts";
+import { setTimingSink } from "../src/lib/timing.ts";
 
 const settle = async () => {
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));

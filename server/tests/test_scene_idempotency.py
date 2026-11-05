@@ -73,7 +73,7 @@ def test_replay_does_not_publish_or_change_last_writer(client, monkeypatch):
 
 
 def test_oldest_key_is_evicted_at_the_cap(client, monkeypatch):
-    monkeypatch.setattr(db, "APPLIED_CAP", 2)
+    monkeypatch.setattr(db.scenes, "APPLIED_CAP", 2)
     for i in range(3):
         put(client, f"t1:{i + 1}", i)
     assert [k[1] for k in db._applied] == ["t1:2", "t1:3"]

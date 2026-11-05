@@ -6,7 +6,7 @@ State as of `main`. Ticket statuses live in the local, untracked `docs/tickets/R
 
 | Ticket | What |
 |---|---|
-| INK-045 | Accept, Reject, Accept all (`resolve.ts`, `DraftBar.tsx`, decision 0026) |
+| INK-045 | Accept, Reject, Accept all (`drafts/resolve.ts`, `drafts/DraftBar.tsx`, decision 0026) |
 | INK-047 | Questions API, `list_questions`, `answer_question` (decision 0035). INK-046 waived |
 | INK-050, 051 | Eval harness and E1 input-representation arms, synthetic data only (decisions 0033, 0034) |
 | INK-062 | Pen-feel patch (decision 0031); tablet tuning pending |

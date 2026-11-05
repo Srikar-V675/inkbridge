@@ -4,7 +4,7 @@
 // down or a change in the last ~2 s), only when the canvas equals a saved scene version, and the
 // upload carries that version so the server can refuse a crop of older ink.
 
-import { record } from "./timing.ts";
+import { record } from "../lib/timing.ts";
 
 export interface StaleChunk {
   id: string;

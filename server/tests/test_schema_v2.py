@@ -2,7 +2,7 @@ import json
 import shutil
 
 from inkbridge import db
-from inkbridge.regions import content_hash, stroke_hash
+from inkbridge.canvas.hashes import content_hash, stroke_hash, text_hash
 from tests.test_regions_api import SCENE, A, B, post
 from tests.test_search import recognise, search
 
@@ -63,7 +63,7 @@ def test_text_hash_is_stored_with_the_reading(client):
     client.put(SCENE, json={"base_version": 0, "elements": [A, B]})
     ra = post(client, ["a"]).json()
     recognise(ra, "hello  world")
-    assert client.get(f"/regions/{ra['id']}").json()["text_hash"] == db.text_hash(
+    assert client.get(f"/regions/{ra['id']}").json()["text_hash"] == text_hash(
         "hello world", None
     )
 
@@ -83,7 +83,7 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     old.mkdir()
     for f in sorted(db.MIGRATIONS_DIR.glob("000[123]_*.sql")):
         shutil.copy(f, old / f.name)
-    monkeypatch.setattr(db, "MIGRATIONS_DIR", old)
+    monkeypatch.setattr(db.migrations, "MIGRATIONS_DIR", old)
     conn = db.connect(tmp_path / "v1.db")
     assert db.migrate(conn) == [1, 2, 3]
     db.ensure_default_document(conn)
@@ -120,7 +120,7 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     region = db.get_region(conn, "r1")
     assert region["content_hash"] == content_hash([A])
     assert region["text"] == "kept reading"
-    assert region["text_hash"] == db.text_hash("kept reading", None)
+    assert region["text_hash"] == text_hash("kept reading", None)
     indexed = [r["text"] for r in conn.execute("SELECT text FROM region_fts WHERE region_id='r1'")]
     assert indexed == ["kept reading"]
     conn.close()

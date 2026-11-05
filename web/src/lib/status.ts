@@ -1,6 +1,6 @@
 // Tiny external store for the save badge, so a status change re-renders only the badge and never
 // the Excalidraw canvas (a canvas re-render in the middle of a stroke shows up as a hitch).
-import type { SaveState } from "./sceneSync";
+import type { SaveState } from "../sync/sceneSync";
 
 export interface Status {
   state: SaveState;

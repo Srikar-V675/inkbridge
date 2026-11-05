@@ -7,4 +7,4 @@
 3. Claude checks the guess against the image, writes Mermaid using the marker ids, flags uncertain arrows.
 4. `draw_diagram` anchored beside the sketch creates dashed drafts (see [agent-drafts.md](agent-drafts.md)).
 
-`mode=one_shot` uses the crop alone; INK-053 (planned) compares both. Decision 0025. Files: `sketch.py`, `sketch_image.py`, `sketch_prompts.py`.
+`mode=one_shot` uses the crop alone; INK-053 (planned) compares both. Decision 0025. Files: `canvas/sketch.py`, `canvas/sketch_image.py`, `canvas/sketch_prompts.py`.

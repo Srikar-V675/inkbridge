@@ -87,7 +87,8 @@ def main() -> None:
         Path(args.db + suffix).unlink(missing_ok=True)
     os.environ["INKBRIDGE_DB"] = args.db
 
-    from inkbridge import chunker, db
+    from inkbridge import db
+    from inkbridge.canvas import chunker
 
     db.init_db()
     conn = db.connect()

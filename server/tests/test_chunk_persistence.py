@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from inkbridge import db
+from inkbridge import config, db
 from tests.test_chunker import stroke as _stroke
 from tests.test_region_staleness import Scene
 from tests.test_region_staleness import region as get
@@ -210,8 +210,8 @@ def test_one_stroke_edit_on_a_2000_element_scene_rehashes_one_chunk(client, monk
     canvas = Canvas(client, _big_scene())
     assert len(canvas.chunks()) == 200
     calls = []
-    real = db.stroke_hash
-    monkeypatch.setattr(db, "stroke_hash", lambda els: calls.append(len(els)) or real(els))
+    real = db.chunks.stroke_hash
+    monkeypatch.setattr(db.chunks, "stroke_hash", lambda els: calls.append(len(els)) or real(els))
     canvas.el("c7_3")["points"][1] = [11, 21]
     canvas.el("c7_3")["version"] = 2
     canvas.put()
@@ -236,7 +236,7 @@ def test_a_failure_while_chunking_rolls_back_the_whole_save(client, monkeypatch)
 
     canvas.elements.append(stroke("a3", 45, 0))
     with monkeypatch.context() as m:
-        m.setattr(db, "_sync_chunks", boom)
+        m.setattr(db.scenes, "_sync_chunks", boom)
         with pytest.raises(RuntimeError):
             client.put(SCENE, json={"base_version": canvas.version, "elements": canvas.elements})
     scene = client.get(SCENE).json()
@@ -248,7 +248,7 @@ def test_put_scene_rolls_back_on_its_own_connection(client, monkeypatch):
     # The API closes its connection, which would discard the transaction anyway; on a kept
     # connection only put_scene's own rollback stops the next commit from saving half a scene.
     canvas = Canvas(client, row("a", 3))
-    monkeypatch.setattr(db, "_sync_chunks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(db.scenes, "_sync_chunks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
     conn = db.connect()
     try:
         with pytest.raises(RuntimeError):
@@ -286,7 +286,7 @@ def test_two_writers_with_the_same_base_version_cannot_both_win(client):
         except (db.VersionConflict, sqlite3.OperationalError):  # conflict, or locked out
             results.append("refused")
 
-    rival_conn = sqlite3.connect(db.config.db_path(), timeout=0.1)
+    rival_conn = sqlite3.connect(config.db_path(), timeout=0.1)
     rival_conn.row_factory = sqlite3.Row
     conn = db.connect()
     try:
@@ -302,7 +302,7 @@ def test_two_writers_with_the_same_base_version_cannot_both_win(client):
 def test_restart_leaves_a_reading_alone_when_the_ink_changed_since(client):
     # An orphan keeps its last hash while its elements change; the re-key must not move its old
     # reading onto ink it never described.
-    from inkbridge.regions import legacy_content_hash
+    from inkbridge.canvas.hashes import legacy_content_hash
 
     canvas = Canvas(client, [stroke("f0", 0.5, 0), stroke("f1", 15.5, 0)])
     chunk = canvas.chunk_of("f0")
@@ -325,7 +325,7 @@ def test_restart_leaves_a_reading_alone_when_the_ink_changed_since(client):
 
 
 def test_restart_rekeys_hashes_stored_before_integral_floats_hashed_as_ints(client):
-    from inkbridge.regions import content_hash, legacy_content_hash
+    from inkbridge.canvas.hashes import content_hash, legacy_content_hash
 
     canvas = Canvas(client, [stroke("f0", 0.5, 0), stroke("f1", 15.5, 0)])  # offset 15.0 (float)
     chunk = canvas.chunk_of("f0")

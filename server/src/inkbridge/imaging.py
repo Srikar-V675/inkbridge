@@ -12,7 +12,7 @@ MIN_BOX_PX = 24  # an overview chunk box is never drawn shorter than this (INK-0
 MAX_OVERVIEW_IMAGES = 3  # per read_canvas call; the rest continues with offset
 # INK-096: the browser exports crops at most 2048 px on the long side, so 4096 units keeps the
 # scale >= 0.5; the element cap bounds the main-thread cost of one export. Mirrored in
-# web/src/cropSync.ts (a test on each side pins the numbers).
+# web/src/sync/cropSync.ts (a test on each side pins the numbers).
 MAX_READ_UNITS = 4096
 MAX_CROP_ELEMENTS = 1500
 

@@ -1,10 +1,10 @@
-# Deep Dive: web scene sync (`web/src/sceneSync.ts`, `status.ts`, `view.ts`, `route.ts`)
+# Deep Dive: web scene sync (`web/src/sync/sceneSync.ts`, `lib/status.ts`, `lib/view.ts`, `lib/route.ts`)
 
-Framework-free load and autosave for one canvas. `App.tsx` wires it to Excalidraw's `onChange`. Rules (tech ref 9.1/10.1, decision 0008): never block drawing, `PUT` with `base_version`, a 409 means reload and merge. No dependency beyond `fetch`, so it runs under Node's test runner (`web/tests/sceneSync.test.ts`).
+Framework-free load and autosave for one canvas. `app/App.tsx` wires it to Excalidraw's `onChange`. Rules (tech ref 9.1/10.1, decision 0008): never block drawing, `PUT` with `base_version`, a 409 means reload and merge. No dependency beyond `fetch`, so it runs under Node's test runner (`web/tests/sceneSync.test.ts`).
 
 ## States (`SaveState`)
 
-`loading`, `saved`, `dirty`, `saving`, `retry`, `conflict`, `error`. `status.ts` is a tiny external store (`get`, `set`, `subscribe`) so a badge change re-renders only the badge and never the Excalidraw canvas (a canvas re-render mid-stroke shows as a hitch).
+`loading`, `saved`, `dirty`, `saving`, `retry`, `conflict`, `error`. `lib/status.ts` is a tiny external store (`get`, `set`, `subscribe`) so a badge change re-renders only the badge and never the Excalidraw canvas (a canvas re-render mid-stroke shows as a hitch).
 
 ## `SceneSync` class
 
@@ -38,8 +38,8 @@ Another tab saved first.
 
 ## Other files
 
-- `route.ts`: `readRoute()` parses `?canvas=` (default `"default"`) and `?chunk=`. This is the URL contract shared with vault notes.
-- `view.ts`: per-device memory of scroll/zoom per canvas in `localStorage` (`inkbridge-view-<canvas>`), tolerant of missing or blocked storage and clamped to zoom 0.1 to 30. The first-draft fit was removed; new drafts are panned into view by `draftView.ts` (decision 0054).
+- `lib/route.ts`: `readRoute()` parses `?canvas=` (default `"default"`) and `?chunk=`. This is the URL contract shared with vault notes.
+- `lib/view.ts`: per-device memory of scroll/zoom per canvas in `localStorage` (`inkbridge-view-<canvas>`), tolerant of missing or blocked storage and clamped to zoom 0.1 to 30. The first-draft fit was removed; new drafts are panned into view by `drafts/draftView.ts` (decision 0054).
 
 ## Testing
 

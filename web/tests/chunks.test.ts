@@ -9,7 +9,7 @@ import {
   toScreen,
   viewForBounds,
   type Chunk,
-} from "../src/chunks.ts";
+} from "../src/chunks/chunks.ts";
 
 function chunk(id: string, over: Partial<Chunk> = {}): Chunk {
   return {

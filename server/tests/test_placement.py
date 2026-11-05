@@ -2,8 +2,7 @@ import random
 
 import pytest
 
-from inkbridge.chunker import proximity_threshold
-from inkbridge.placement import (
+from inkbridge.agent.placement import (
     DEFAULT_FONT,
     GAP,
     MAX_FONT,
@@ -16,6 +15,7 @@ from inkbridge.placement import (
     overlaps,
     place,
 )
+from inkbridge.canvas.chunker import proximity_threshold
 
 
 def _box(x, y, w, h) -> Box:
@@ -82,7 +82,7 @@ def test_placement_never_overlaps_occupied_boxes():
 def test_rotated_box_covers_the_turned_shape():
     import math
 
-    from inkbridge.placement import rotated_box
+    from inkbridge.agent.placement import rotated_box
 
     assert rotated_box(_box(0, 0, 100, 10), 0) == _box(0, 0, 100, 10)
     r = rotated_box(_box(0, 0, 100, 10), math.pi / 2)

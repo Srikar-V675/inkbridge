@@ -1,6 +1,6 @@
 """INK-059: pinned groups (manual merge/split) are hard chunk boundaries in the pure chunker."""
 
-from inkbridge.chunker import chunk_scene
+from inkbridge.canvas.chunker import chunk_scene
 from tests.test_chunker import arrow, as_sets, rect, stroke
 
 

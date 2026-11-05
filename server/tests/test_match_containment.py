@@ -3,7 +3,7 @@
 import pytest
 
 from inkbridge import config, db
-from inkbridge.chunker import ChunkerConfig, match_chunks
+from inkbridge.canvas.chunker import ChunkerConfig, match_chunks
 from tests.test_chunk_persistence import Canvas, row
 
 OLD = {"c1": ["a", "b"]}

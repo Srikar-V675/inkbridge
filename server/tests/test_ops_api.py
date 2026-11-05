@@ -6,11 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from inkbridge import db
+from inkbridge.agent.placement import estimate_size, gap_for, overlaps
 from inkbridge.api import app
-from inkbridge.chunker import proximity_threshold
+from inkbridge.canvas.chunker import proximity_threshold
+from inkbridge.canvas.hashes import bbox_of
 from inkbridge.db import ops as ops_db
-from inkbridge.placement import estimate_size, gap_for, overlaps
-from inkbridge.regions import bbox_of
 
 SCENE = "/documents/default/scene"
 OPS = "/documents/default/ops"
@@ -321,7 +321,7 @@ def test_anchored_op_goes_right_of_the_chunk(client):
 
 
 def test_stacked_ops_never_overlap_live_ink_or_each_other(client):
-    from inkbridge.placement import estimate_size
+    from inkbridge.agent.placement import estimate_size
 
     seed(client)
     rid = _anchor_region(["user-a"])
@@ -387,7 +387,7 @@ def test_reack_with_the_same_ids_in_another_order_is_idempotent(client):
 def test_placement_avoids_the_corners_of_rotated_ink(client):
     import math
 
-    from inkbridge.placement import estimate_size
+    from inkbridge.agent.placement import estimate_size
 
     # A long thin bar turned upright: its unrotated box is flat, the real shape is tall.
     bar = {
@@ -453,7 +453,7 @@ def _font(client, **payload):
 
 
 def test_font_size_follows_the_anchor_chunks_strokes(client):
-    from inkbridge.placement import MAX_FONT, MIN_FONT
+    from inkbridge.agent.placement import MAX_FONT, MIN_FONT
 
     seed(client, _strokes("s", 0, 0, 20) + _strokes("t", 5000, 5000, 60))
     small = _font(client, anchor=_anchor_region([f"s{i}" for i in range(5)]))
@@ -462,13 +462,13 @@ def test_font_size_follows_the_anchor_chunks_strokes(client):
 
 
 def test_empty_canvas_uses_the_default_font(client):
-    from inkbridge.placement import DEFAULT_FONT
+    from inkbridge.agent.placement import DEFAULT_FONT
 
     assert _font(client) == DEFAULT_FONT
 
 
 def test_sparse_anchor_falls_back_to_latest_strokes_not_default(client):
-    from inkbridge.placement import DEFAULT_FONT
+    from inkbridge.agent.placement import DEFAULT_FONT
 
     shape = {"id": "box", "type": "rectangle", "x": 9000, "y": 9000, "width": 50, "height": 50}
     seed(client, _strokes("o", 0, 0, 10, n=2) + _strokes("t", 5000, 0, 200, n=60) + [shape])

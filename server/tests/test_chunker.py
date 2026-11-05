@@ -3,7 +3,7 @@ import random
 import statistics
 import time
 
-from inkbridge.chunker import (
+from inkbridge.canvas.chunker import (
     ChunkerConfig,
     chunk_scene,
     cluster,
@@ -12,7 +12,7 @@ from inkbridge.chunker import (
     match_chunks,
     reading_order,
 )
-from inkbridge.regions import bbox_of
+from inkbridge.canvas.hashes import bbox_of
 
 
 def stroke(i, x, y, w=10, h=20, **extra):
@@ -209,8 +209,8 @@ def test_oversize_element_still_merges_with_neighbours():
 def test_grid_clustering_matches_brute_force_on_mixed_sizes():
     import math
 
-    from inkbridge.chunker import clustering_elements
-    from inkbridge.regions import bbox_of
+    from inkbridge.canvas.chunker import clustering_elements
+    from inkbridge.canvas.hashes import bbox_of
 
     rng = random.Random(11)
     els = []
