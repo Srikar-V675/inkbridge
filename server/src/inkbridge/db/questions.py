@@ -9,7 +9,8 @@ import json
 import sqlite3
 import uuid
 
-from inkbridge.db import AUTO, DocumentNotFound, _now, document_exists
+from inkbridge.db.common import AUTO, DocumentNotFound, _now
+from inkbridge.db.documents import document_exists
 
 HISTORY_MAX = 5  # earlier question/answer pairs of a thread sent along with a question
 STATUSES = ("pending", "answered", "cancelled")

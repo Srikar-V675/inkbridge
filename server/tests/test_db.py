@@ -112,7 +112,7 @@ def test_second_migrator_waits_for_the_first_then_applies_nothing(tmp_path, monk
             assert release.wait(10)
         real_apply(conn, version, sql)
 
-    monkeypatch.setattr(db, "_apply_migration", paused_apply)
+    monkeypatch.setattr(db.migrations, "_apply_migration", paused_apply)
     results: dict[str, object] = {}
 
     def run(name):
@@ -144,7 +144,7 @@ def test_failed_migration_leaves_nothing_applied(tmp_path, monkeypatch):
     mig.mkdir()
     shutil.copy(next(db.MIGRATIONS_DIR.glob("0001_*.sql")), mig)
     (mig / "0002_broken.sql").write_text("CREATE TABLE ok_so_far (x);\nNOT VALID SQL;\n")
-    monkeypatch.setattr(db, "MIGRATIONS_DIR", mig)
+    monkeypatch.setattr(db.migrations, "MIGRATIONS_DIR", mig)
     c = db.connect(tmp_path / "t.db")
     with pytest.raises(sqlite3.OperationalError):
         db.migrate(c)
@@ -163,7 +163,7 @@ def test_migrate_splits_statements_like_executescript(tmp_path, monkeypatch):
         "CREATE TRIGGER tr AFTER INSERT ON t BEGIN\n  INSERT INTO t2 VALUES (1);\nEND;\n"
         "CREATE TABLE t2 (n); -- trailing comment\n"
     )
-    monkeypatch.setattr(db, "MIGRATIONS_DIR", mig)
+    monkeypatch.setattr(db.migrations, "MIGRATIONS_DIR", mig)
     c = db.connect(tmp_path / "t.db")
     assert db.migrate(c) == [1]
     assert [r["s"] for r in c.execute("SELECT s FROM t")] == ["a;b"]

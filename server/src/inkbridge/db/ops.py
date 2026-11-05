@@ -19,7 +19,8 @@ from typing import Any
 
 from inkbridge import placement
 from inkbridge.chunker import proximity_threshold
-from inkbridge.db import DocumentNotFound, _now, document_exists, get_scene
+from inkbridge.db.common import DocumentNotFound, _now
+from inkbridge.db.documents import document_exists, get_scene
 from inkbridge.regions import bbox_of
 
 OP_TYPES = ("write_text", "draw_diagram")

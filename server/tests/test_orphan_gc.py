@@ -72,7 +72,7 @@ def test_churn_keeps_orphans_and_crops_bounded(client):
 
 
 def test_gc_removes_recognitions_fts_and_links_of_deleted_orphans(client, monkeypatch):
-    monkeypatch.setattr(db, "ORPHAN_KEEP", 1)
+    monkeypatch.setattr(db.chunks, "ORPHAN_KEEP", 1)
     canvas = Canvas(client, row("a0_", 4))
     first = canvas.chunk_of("a0_0")
     read(first, "first words")
@@ -126,7 +126,7 @@ def test_old_orphan_is_collected_but_successor_chain_survives(client):
 
 
 def test_active_and_manual_regions_never_collected(client, monkeypatch):
-    monkeypatch.setattr(db, "ORPHAN_KEEP", 0)
+    monkeypatch.setattr(db.chunks, "ORPHAN_KEEP", 0)
     canvas = Canvas(client, row("a", 4) + row("m", 3, y=900))
     manual = make_region(client, ["m0", "m1"])
     for i in range(3):
