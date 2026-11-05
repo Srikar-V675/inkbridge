@@ -44,6 +44,7 @@ def put_scene(
     delta: bool = False,
     max_elements: int | None = None,
     save_key: str | None = None,
+    timings: dict[str, float] | None = None,
 ) -> int:
     """Store the scene if base_version is current; return the new version.
 
@@ -56,11 +57,18 @@ def put_scene(
     the version again, so two writers with the same base_version cannot both win even if one
     guard is lost. Regions and chunks are re-derived in the same transaction, so they never
     disagree with the stored scene; any error rolls the whole save back.
+
+    `timings` is filled with lock, work, commit and total in ms; the timer starts before the lock
+    wait (INK-102).
     """
     now = _now()
     recorded = False
     crops: list[str] = []
+    timings = {} if timings is None else timings
+    t_start = time.perf_counter()  # before the lock wait
     conn.execute("BEGIN IMMEDIATE")  # read the old scene and replace it under one write lock
+    t_lock = time.perf_counter()
+    timings["lock"] = round((t_lock - t_start) * 1000, 1)
     try:
         old = conn.execute(
             "SELECT version, elements_json FROM scenes WHERE document_id = ?", (document_id,)
@@ -105,7 +113,12 @@ def put_scene(
             recorded = True
             while len(_applied) > APPLIED_CAP:
                 _applied.popitem(last=False)
+        t_c0 = time.perf_counter()
         conn.commit()
+        t_end = time.perf_counter()
+        timings["work"] = round((t_c0 - t_lock) * 1000, 1)
+        timings["commit"] = round((t_end - t_c0) * 1000, 1)
+        timings["total"] = round((t_end - t_start) * 1000, 1)
         for path in crops:  # after the commit: a rollback must not lose files
             try:
                 Path(path).unlink(missing_ok=True)
@@ -116,11 +129,10 @@ def put_scene(
             _applied.pop((document_id, save_key), None)
         conn.rollback()
         raise
-    total = time.perf_counter() - t0
     log.log(
-        logging.WARNING if total > SLOW_SAVE_S else logging.INFO,
+        logging.WARNING if timings["total"] / 1000 > SLOW_SAVE_S else logging.INFO,
         "put_scene doc=%s elements=%d changed=%d parse=%.0fms diff=%.0fms refresh=%.0fms"
-        " chunks=%.0fms total=%.0fms",
+        " chunks=%.0fms %s",
         document_id,
         len(elements),
         len(changed),
@@ -128,7 +140,7 @@ def put_scene(
         (t2 - t1) * 1000,
         (t3 - t2) * 1000,
         (t4 - t3) * 1000,
-        total * 1000,
+        " ".join(f"{k}={v:.0f}ms" for k, v in timings.items()),
     )
     return base_version + 1
 

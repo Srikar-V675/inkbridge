@@ -10,8 +10,26 @@ from contextlib import contextmanager
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 SLOW_S = 1.0
+SCOPE_KEY = "inkbridge.timing"
 req_log = logging.getLogger("inkbridge.request")
 log = logging.getLogger("inkbridge.timing")
+
+
+def _ms(seconds: float) -> float:
+    return round(seconds * 1000, 1)
+
+
+def mark_recv(scope: Scope, start: float, end: float) -> None:
+    """BodySizeLimit calls this once the whole body is in (INK-102)."""
+    scope[SCOPE_KEY] = {"recv": _ms(end - start), "_end": end}
+
+
+def request_parts(scope: Scope, now: float) -> dict[str, float]:
+    """recv and queue in ms; {} when the middleware did not run. `now` is the first line of the handler."""
+    m = scope.get(SCOPE_KEY)
+    if m is None:
+        return {}
+    return {"recv": m["recv"], "queue": _ms(now - m["_end"])}
 
 
 @contextmanager

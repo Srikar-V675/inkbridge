@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import re
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -17,7 +18,7 @@ from inkbridge.api import chunks, graph, ops, overrides, questions, regions, sea
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.recognizer.worker import RecognitionWorker
-from inkbridge.timing import RequestTiming, configure_logging
+from inkbridge.timing import RequestTiming, configure_logging, request_parts
 
 
 @asynccontextmanager
@@ -152,7 +153,8 @@ def put_scene(
     conn: Conn,
     request: Request,
     x_inkbridge_save: Annotated[str | None, Header()] = None,
-) -> dict[str, int]:
+) -> dict[str, Any]:
+    timing = request_parts(request.scope, time.perf_counter())
     key = (
         x_inkbridge_save
         if re.fullmatch(r"[a-z0-9]{1,16}:\d{1,9}", x_inkbridge_save or "")
@@ -178,6 +180,7 @@ def put_scene(
             delta=body.delta,
             max_elements=MAX_ELEMENTS,
             save_key=key,
+            timings=timing,
         )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
@@ -189,7 +192,7 @@ def put_scene(
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
     if replay:
-        return {"version": version}
+        return {"version": version, "timing": timing}
     if key:
         _last_writer[document_id] = (tab, ip)
     ws.hub.publish(
@@ -200,4 +203,4 @@ def put_scene(
             "stale_crops": db.stale_crop_ids(conn, document_id),
         },
     )
-    return {"version": version}
+    return {"version": version, "timing": timing}

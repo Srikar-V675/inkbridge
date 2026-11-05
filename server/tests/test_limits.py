@@ -40,7 +40,7 @@ def test_oversized_chunked_scene_without_content_length_is_413(client, small_cap
 
 def test_scene_under_the_cap_is_unchanged(client, small_caps):
     r = client.put(SCENE, json={"base_version": 0, "elements": [A, B]})
-    assert r.status_code == 200 and r.json() == {"version": 1}
+    assert r.status_code == 200 and r.json()["version"] == 1
     assert client.get(SCENE).json()["elements"] == [A, B]
 
 
