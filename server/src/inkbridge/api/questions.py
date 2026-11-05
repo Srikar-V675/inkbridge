@@ -65,6 +65,8 @@ class QuestionOut(Out):
     answer_md: str | None
     sources: list[dict]
     history: list[HistoryItem]
+    runner_status: str
+    runner_error: str | None
     created_at: str
 
 
