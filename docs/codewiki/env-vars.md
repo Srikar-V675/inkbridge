@@ -11,7 +11,7 @@ See `.env.example`. Never commit `.env`.
 | `INKBRIDGE_API_URL` | MCP client, Vite proxy | `http://127.0.0.1:8000` | Where the API lives |
 | `INKBRIDGE_DOCUMENT` | MCP | `default` | Default canvas id for tools |
 | `INKBRIDGE_WEB_DIST` | API | `web/dist` if it has `index.html` | Built web app the API serves on `/`, `/assets`, `/favicon.svg`; read at import |
-| `INKBRIDGE_PUBLIC_URL` | API (deep links) | `http://localhost:5173` | Base of chunk deep links in notes; use a `.local` name for the tablet |
+| `INKBRIDGE_PUBLIC_URL` | API (deep links) | `http://localhost:8000` | Base of chunk deep links in notes; use a `.local` name for the tablet |
 | `INKBRIDGE_RECOGNIZE_DOCUMENTS` | worker | unset = off | Comma-separated canvas ids Gemini may read (test and eval pages only: free tier may train on content) |
 | `INKBRIDGE_RECOGNIZE_IDLE_S` | worker | 5 | Seconds a canvas must be idle before reading |
 | `INKBRIDGE_CHUNK_CONTAINMENT` | API (chunker) | unset = off | Fraction in (0, 1], for example `0.6`: keep a chunk's id when that share of it survives in one cluster (decision 0029); invalid values are ignored with a warning |
