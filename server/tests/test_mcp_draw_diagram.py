@@ -8,6 +8,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
+from inkbridge.mcp.tools import write
 
 FLOW = "flowchart TD\n  A[Start] --> B[Done]"
 
@@ -42,7 +43,7 @@ def fail(client, op):
 def tool(client, monkeypatch):
     server.set_client(ApiClient(client))
     now = [0.0]
-    monkeypatch.setattr(server, "_clock", lambda: now[0])
+    monkeypatch.setattr(write, "_clock", lambda: now[0])
 
     def run(action=None, after=1, **args):
         browser = Browser(client, action, after)
@@ -51,7 +52,7 @@ def tool(client, monkeypatch):
             now[0] += seconds
             browser(seconds)
 
-        monkeypatch.setattr(server, "_sleep", sleep)
+        monkeypatch.setattr(write, "_sleep", sleep)
         return asyncio.run(server.mcp.call_tool("draw_diagram", {"mermaid": FLOW, **args}))
 
     yield run
@@ -84,7 +85,7 @@ def test_no_browser_times_out_expires_the_op_and_says_to_open_the_canvas(tool, c
 def test_waits_no_longer_than_asked(tool, client):
     with pytest.raises(ToolError):
         tool(wait_seconds=2)
-    assert server._clock() <= 2 + server.POLL_SECONDS
+    assert write._clock() <= 2 + write.POLL_SECONDS
 
 
 def test_browser_finishing_as_the_wait_ends_still_counts(tool, client, monkeypatch):

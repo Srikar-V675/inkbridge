@@ -12,6 +12,7 @@ from PIL import Image
 
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
+from inkbridge.mcp.tools import canvas as canvas_tools
 from tests.test_chunk_persistence import Canvas, row
 from tests.test_chunker import arrow, rect
 from tests.test_search import recognise
@@ -88,7 +89,7 @@ def test_200_chunk_canvas_stays_under_the_cap_and_says_what_was_omitted(api):
         recognise(c, "a fairly long line of handwriting " * 6)
     result = call("read_canvas", include_overview=False)
     text = result.content[0].text
-    assert len(text) <= server.READ_CANVAS_MAX_CHARS
+    assert len(text) <= canvas_tools.READ_CANVAS_MAX_CHARS
     body = json.loads(text)
     shown = len(body["chunks"])
     assert 0 < shown < 200 and body["chunk_count"] == 200
@@ -106,7 +107,7 @@ def test_one_huge_reading_is_shortened_not_dropped(api):
     canvas = Canvas(api, row("a", 3))
     recognise(canvas.chunk_of("a0"), "x" * 100_000)
     result = call("read_canvas", include_overview=False)
-    assert len(result.content[0].text) <= server.READ_CANVAS_MAX_CHARS
+    assert len(result.content[0].text) <= canvas_tools.READ_CANVAS_MAX_CHARS
     (chunk,) = outline(result)["chunks"]
     assert chunk["text"].endswith("…") and chunk["text_truncated"] is True
 
@@ -176,11 +177,11 @@ def test_a_chunk_with_thousands_of_links_is_capped_and_paging_moves_on(client):
         offset, seen = 0, []
         while True:
             text = call("read_canvas", include_overview=False, offset=offset).content[0].text
-            assert len(text) <= server.READ_CANVAS_MAX_CHARS
+            assert len(text) <= canvas_tools.READ_CANVAS_MAX_CHARS
             body = json.loads(text)
             assert body["chunks"], "every page shows at least one chunk"
             for c in body["chunks"]:
-                assert len(c["links"]) == server.MAX_LINKS and c["links_omitted"] == 1480
+                assert len(c["links"]) == canvas_tools.MAX_LINKS and c["links_omitted"] == 1480
             seen += [c["id"] for c in body["chunks"]]
             if "note" not in body:
                 break
@@ -195,7 +196,7 @@ def test_long_latex_is_shortened_too(client):
     server.set_client(FakeCanvas(client, [_chunk(0, latex="\\\\frac{a}{b}" * 2000)]))
     try:
         (c,) = outline(call("read_canvas", include_overview=False))["chunks"]
-        assert c["latex_truncated"] is True and len(c["latex"]) == server.MAX_READING_CHARS
+        assert c["latex_truncated"] is True and len(c["latex"]) == canvas_tools.MAX_READING_CHARS
     finally:
         server.set_client(None)
 

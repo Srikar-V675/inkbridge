@@ -6,7 +6,7 @@ import sys
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
-from inkbridge.mcp import server
+from inkbridge.mcp import app, server
 from inkbridge.mcp.client import ApiClient
 from tests.test_regions_api import PNG, SCENE, A, B, post
 
@@ -194,7 +194,7 @@ def test_mcp_shutdown_closes_the_http_client(monkeypatch):
     try:
         server.main()
         assert client.http.is_closed
-        assert server._client is None
+        assert app._client is None
     finally:
         server.set_client(None)
 
