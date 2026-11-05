@@ -11,11 +11,12 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.gzip import GZipMiddleware
 
-from inkbridge import db
+from inkbridge import config, db
 from inkbridge.agent.ask_runner import AskWorker
 from inkbridge.api import chunks, graph, ops, overrides, questions, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
+from inkbridge.api.web import mount_web
 from inkbridge.recognizer.worker import RecognitionWorker
 from inkbridge.timing import RequestTiming, configure_logging
 
@@ -201,3 +202,6 @@ def put_scene(
         },
     )
     return {"version": version}
+
+
+mount_web(app, config.web_dist())  # last: every API route wins over the static paths (INK-100)
