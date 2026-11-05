@@ -58,3 +58,24 @@ def test_queue_is_body_end_to_handler_start():
     scope = {timing.SCOPE_KEY: {"recv": 5.0, "_end": 10.0}}
     assert timing.request_parts(scope, 10.05) == {"recv": 5.0, "queue": 50.0}
     assert timing.request_parts({}, 1.0) == {}
+
+
+def _lag_run(block_s, limit_s, caplog):
+    async def go():
+        task = asyncio.create_task(timing.sample_loop_lag(sleep_s=0.01, limit_s=limit_s))
+        await asyncio.sleep(0.02)
+        time.sleep(block_s)  # noqa: ASYNC251 - blocks the loop on purpose
+        await asyncio.sleep(0.03)
+        task.cancel()
+
+    with caplog.at_level(logging.WARNING, logger="inkbridge.loop"):
+        asyncio.run(go())
+    return [r for r in caplog.records if "loop lag" in r.getMessage()]
+
+
+def test_loop_lag_sampler_logs_a_blocked_loop(caplog):
+    assert _lag_run(0.2, 0.05, caplog)
+
+
+def test_loop_lag_sampler_is_quiet_on_a_quiet_loop(caplog):
+    assert not _lag_run(0, 0.5, caplog)

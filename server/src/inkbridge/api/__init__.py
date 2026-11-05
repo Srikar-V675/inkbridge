@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import math
@@ -14,16 +15,17 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from inkbridge import db
 from inkbridge.agent.ask_runner import AskWorker
-from inkbridge.api import chunks, graph, ops, overrides, questions, regions, search, sync, ws
+from inkbridge.api import chunks, debug, graph, ops, overrides, questions, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.recognizer.worker import RecognitionWorker
-from inkbridge.timing import RequestTiming, configure_logging, request_parts
+from inkbridge.timing import RequestTiming, configure_logging, request_parts, sample_loop_lag
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    lag = asyncio.create_task(sample_loop_lag())
     db.init_db()
     # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0017).
     worker = RecognitionWorker.from_env(publish=ws.hub.publish)
@@ -37,6 +39,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        lag.cancel()
         try:
             if worker is not None:
                 worker.stop()
@@ -67,6 +70,8 @@ app.include_router(regions.router)
 app.include_router(search.router)
 app.include_router(sync.router)
 app.include_router(ws.router)
+if debug.enabled():  # absent unless INKBRIDGE_DEVICE_LOG=1 (INK-102)
+    app.include_router(debug.router)
 
 
 MAX_ELEMENTS = 50_000
