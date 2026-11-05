@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, it, mock } from "node:test";
-import { record, setTimingSink, timed, type TimingRecord } from "../src/lib/timing.ts";
+import { addTimingSink, netParts, record, serverParts, setTimingSink, timed, type TimingRecord } from "../src/lib/timing.ts";
 
 const grab = () => {
   const got: TimingRecord[] = [];
@@ -58,5 +58,32 @@ describe("dev-only sink", () => {
     const main = readFileSync(new URL("main.tsx", dir), "utf8");
     const at = main.indexOf("devLog");
     assert.ok(at > main.indexOf("import.meta.env.DEV") && main.indexOf("import.meta.env.DEV") >= 0);
+  });
+});
+
+describe("measurement helpers (INK-102)", () => {
+  it("addTimingSink keeps the previous sink and survives a throwing one", () => {
+    const a: TimingRecord[] = [];
+    const b: TimingRecord[] = [];
+    setTimingSink((r) => void a.push(r));
+    addTimingSink((r) => void b.push(r));
+    record("x", 1);
+    assert.equal(a.length + b.length, 2);
+    addTimingSink(() => { throw new Error("second"); });
+    record("y", 1);
+    assert.equal(a.length, 2);
+    assert.equal(b.length, 2);
+  });
+
+  it("serverParts keeps numbers with an s_ prefix", () => {
+    assert.deepEqual(serverParts({ recv: 1.5, lock: 2, junk: "x" } as never), { s_recv: 1.5, s_lock: 2 });
+    assert.deepEqual(serverParts(undefined), {});
+  });
+
+  it("netParts splits a resource timing entry and clamps negatives", () => {
+    const e = { startTime: 100, connectStart: 100, connectEnd: 100, requestStart: 105, responseStart: 205, responseEnd: 210 };
+    assert.deepEqual(netParts(e as never), { n_pre: 5, n_conn: 0, n_wait: 100, n_recv: 5 });
+    assert.deepEqual(netParts(undefined), {});
+    assert.equal(netParts({ ...e, connectEnd: 90 } as never).n_conn, 0);
   });
 });
