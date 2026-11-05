@@ -126,7 +126,7 @@ def reset_runner(conn: sqlite3.Connection, status: str, error: str | None) -> No
     assert status in RUNNER_STATUSES
     conn.execute(
         "UPDATE questions SET runner_status = ?, runner_error = ? WHERE status = 'pending'",
-        (status, error),
+        (status, error[:200] if error else None),
     )
     conn.commit()
 

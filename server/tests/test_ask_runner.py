@@ -72,10 +72,16 @@ def test_vault_read_tools_accepted(tmp_path, tool):
     assert full in flag(build_command(c), "--allowedTools").split(",")
 
 
+def test_write_word_check_ignores_the_server_key(tmp_path):
+    c = cfg(tmp_path, INKBRIDGE_RUNNER_VAULT_TOOLS="mcp__vault_sync__search_notes")
+    assert "mcp__vault_sync__search_notes" in flag(build_command(c), "--allowedTools")
+
+
 @pytest.mark.parametrize(
     "tool",
     ["obsidian_save_note", "obsidian_update_note", "obsidian_search_and_save",
-     "get_or_create_note", "sync_notes", "Write_Note", "research", "budget"],
+     "get_or_create_note", "sync_notes", "Write_Note", "research", "budget",
+     "add_to_list", "set_read_status", "get_or_put_note"],
 )  # fmt: skip
 def test_vault_write_or_unlisted_tools_refused(tmp_path, tool):
     with pytest.raises(RunnerError, match=tool):

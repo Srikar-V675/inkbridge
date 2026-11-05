@@ -34,6 +34,26 @@ WRITE_WORDS = (
     "update",
     "replace",
     "save",
+    "put",
+    "set",
+    "add",
+    "insert",
+    "remove",
+    "clear",
+    "mark",
+    "trash",
+    "archive",
+    "toggle",
+    "upload",
+    "send",
+    "run",
+    "exec",
+    "mkdir",
+    "touch",
+    "copy",
+    "import",
+    "sync",
+    "open",
 )
 READ_TOOLS = ("read_canvas", "get_region", "search", "answer_question")
 ENV_KEEP = re.compile(
@@ -79,7 +99,7 @@ class ClaudeConfig:
         )
         for t in tools:
             name = t.rsplit("__", 1)[-1]
-            if not VAULT_VERB.search(name) or any(w in t.lower() for w in WRITE_WORDS):
+            if not VAULT_VERB.search(name) or any(w in name.lower() for w in WRITE_WORDS):
                 raise RunnerError(
                     f"vault tool {t!r} is not read-only"
                     " (needs a search/read/get/list word, no write word)"
