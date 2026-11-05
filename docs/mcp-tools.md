@@ -14,6 +14,12 @@ Claude Code:
 claude mcp add inkbridge -- uv run --directory /path/to/inkbridge/server inkbridge-mcp
 ```
 
+Once, at user scope, the tools are available in every project (set `-e INKBRIDGE_API_URL=...` if the API is not on :8000):
+
+```bash
+claude mcp add --scope user inkbridge -- uv run --directory /path/to/inkbridge/server inkbridge-mcp
+```
+
 Claude Desktop (`claude_desktop_config.json`):
 
 ```json
