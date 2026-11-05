@@ -80,7 +80,7 @@ Each `chunks` entry:
 | `section` | string or null | The heading the block sits under: its own first heading, else the nearest heading above it. Recomputed on every export. |
 | `status` | optional: `removed` or `merged` | Set when `check_sync` reported the ink gone (`removed`), or replaced by a chunk that already has a block (`merged`). Entries with a status are not sent to `check_sync` again. |
 | `successor` | string, with `status: merged` | The chunk whose block now carries this ink. |
-| `body` | 64 hex, optional | sha256 of the block interior as the skill wrote it, ignoring leading `[!warning]` and `[!conflict]` Inkbridge callouts. A block whose interior no longer matches was edited by the user and is never rewritten. A note without `body` entries is rewritten as before. |
+| `body` | 64 hex, optional | sha256 of the block interior as the skill wrote it, ignoring leading `[!warning]` and `[!conflict]` Inkbridge callouts. A block whose interior no longer matches was edited by the user and is never rewritten. An entry without `body` (a note from before this key) counts as possibly edited: if its ink changes it gets a conflict callout and `body` is set from its current text. |
 
 ## Blocks
 
@@ -119,6 +119,7 @@ Each `chunks` entry:
 
 **Conflict callout.** It starts `> [!conflict] Inkbridge:` and quotes the new words. The user merges
 by hand and deletes the callout. Because `body` is unchanged, the block stays protected until the
-`body` key is removed from its entry, which hands the block back to the skill.
+`body` key is removed from its entry, which hands the block back to the skill. The entry's hash and
+reading move to the new values at once, so deleting the callout without merging hides the drift.
 
 If nothing needs doing, the file is left byte-identical and `exported` is not touched.

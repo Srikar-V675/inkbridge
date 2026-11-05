@@ -276,14 +276,17 @@ def _check_markers(cid: str, words: str) -> None:
 
 
 def _managed_prefix_len(interior: str) -> int:
-    """Length of the leading Inkbridge-managed callouts (flags, conflict) of a block."""
+    """Length of the leading Inkbridge-managed callouts (flags, conflict) of a block, each ending
+    at its own blank line. Flags are one line; only a conflict callout has `>` continuation lines
+    (the quoted new words), so a quote glued under a flag is the user's."""
     lines = interior.splitlines(keepends=True)
     i = 0
     while i < len(lines) and MANAGED_RE.match(lines[i]):
+        conflict = lines[i].startswith("> [!conflict]")
         i += 1
-        while i < len(lines) and lines[i].startswith(">"):
+        while conflict and i < len(lines) and lines[i].startswith(">"):
             i += 1
-        while i < len(lines) and not lines[i].strip():
+        if i < len(lines) and not lines[i].strip():
             i += 1
     return sum(len(x) for x in lines[:i])
 
@@ -320,9 +323,12 @@ CONFLICT_HEAD = (
 
 
 def _edited(text: str, note: Note, cid: str) -> bool:
-    """The user changed this block since the skill wrote it (needs a stored body hash)."""
+    """The user may have changed this block since the skill wrote it. Without a stored body hash
+    (a note from before INK-106) we cannot tell, so we assume yes: user text is never overwritten."""
     e, b = note.entry(cid), note.block(cid)
-    return bool(e and b and "body" in e and _body_hash(text[b.body_start : b.body_end]) != e["body"])
+    if not (e and b):
+        return False
+    return "body" not in e or _body_hash(text[b.body_start : b.body_end]) != e["body"]
 
 
 def _conflict_callout(cid: str, words: str) -> str:
@@ -526,6 +532,7 @@ def apply(
         if item["id"] in conflicts:
             b, e = blocks[item["id"]], note.entry(item["id"])
             edits += _conflict_edits(text, b, item["id"], item["hash"], bodies[item["id"]])
+            e.setdefault("body", _body_hash(text[b.body_start : b.body_end]))  # legacy: protect now
             e.update(hash=item["hash"], reading=item["reading"])
             changed_meta = True
         elif item["id"] in todo["rewrite"]:
@@ -540,6 +547,7 @@ def apply(
         if item["id"] in conflicts:
             succ = item["successor"]
             edits += _conflict_edits(text, b, succ, item["hash"], bodies[succ])
+            e.setdefault("body", _body_hash(text[b.body_start : b.body_end]))
             e.update(id=succ, hash=item["hash"], reading=item["reading"])
             changed_meta = True
         elif item["id"] in todo["rewrite"]:

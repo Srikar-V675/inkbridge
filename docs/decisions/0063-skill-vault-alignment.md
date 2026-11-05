@@ -15,12 +15,19 @@ broke the rule that user text is never overwritten.
   whenever the skill writes a block (new, rewrite, append, recreate). A hash refresh only touches the
   marker line, so `body` stays.
 - **Edited block.** The entry has `body` and it differs from the hash of the current interior. An entry
-  without `body` (exported before INK-106) is never edited: it is rewritten as before.
+  without `body` (exported before INK-106) is treated as possibly edited, because we cannot tell: when its
+  ink changes it takes the conflict path too, and the entry gets `body` = the hash of the block's current
+  text, so detection works from then on. Legacy blocks whose ink did not change are left untouched.
+- **Managed callouts.** A flag is one line; a conflict callout is its head, the `>` lines and the blank
+  line that ends it. Only that span is ignored by `body` and replaced by a later conflict, so a quote the
+  user puts under a flag is theirs.
 - **Conflict.** A `changed` item, or a `replaced` item that would be rewritten, on an edited block is
   not rewritten. The marker line and the entry get the new hash and reading (so `check_sync` is fresh
   next time), `body` stays (so the block stays protected), and a `> [!conflict] Inkbridge` callout with
   the new words goes on top, replacing an earlier conflict callout. `plan` lists these under `conflict`
-  (also in `needs_body`). To give a block back to the skill, delete its `body` key.
+  (also in `needs_body`). To give a block back to the skill, delete its `body` key. After a conflict the
+  entry's hash and reading move to the new values, so deleting the callout without merging hides the
+  drift: `check_sync` will say fresh.
 - **New notes** get the vault frontmatter (`tags: [library]`, `type: library`, `format: reference`,
   optional `index` and `relates`, `publish: false`, `date`, `ai-first: true`, then `inkbridge:`) and
   the collapsed `For future agent` callout before the title.
@@ -34,10 +41,11 @@ broke the rule that user text is never overwritten.
 
 ## Consequences
 - Old notes keep working and keep their old embed paths until their blocks are rewritten; crops are not
-  moved.
+  moved. A legacy block whose ink changes is no longer rewritten: it gets a conflict callout once, then
+  is protected.
 - A block stays protected until its `body` key is removed; no command resets it.
-- Whitespace-only edits count as edits (the safe side). A blockquote left directly under a managed
-  callout with no blank line between can be ignored by the hash; documented limit.
+- Whitespace-only edits count as edits (the safe side). A quote glued under a conflict callout with no
+  blank line between is indistinguishable from its quoted words; documented limit.
 - Strict validation is for fresh notes (flat YAML as written, before Obsidian reformats properties).
 - The backend is unchanged: it never writes the vault and stores no note text. No migration.
 

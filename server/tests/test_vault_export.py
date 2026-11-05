@@ -380,7 +380,7 @@ def test_flags_are_not_user_edits(client, page):
     assert inknote._edited(out.replace("- momentum", "- momentum!"), inknote.parse(out), c_id)
 
 
-def test_a_note_without_body_hashes_is_rewritten_as_before(client, page):
+def test_a_note_without_body_hashes_is_treated_as_edited_and_gets_one(client, page):
     text = edit_first_block_and_change_its_ink(client, page)
     note = inknote.parse(text)
     for e in note.meta["chunks"]:
@@ -388,10 +388,40 @@ def test_a_note_without_body_hashes_is_rewritten_as_before(client, page):
     text = inknote._replace_meta(text, note)
     a = page.chunk_of("a0")["id"]
     sync = check(client, text)
-    assert inknote.plan(text, sync)["rewrite"] == [a]
-    out = inknote.apply(text, sync, outline(client), {a: "legacy rewrite"})
-    assert "[!conflict]" not in out and "(my note)" not in out
-    assert "legacy rewrite" in block_body(out, a)
+    assert inknote.plan(text, sync)["conflict"] == [a]
+    out = inknote.apply(text, sync, outline(client), {a: "legacy words"})
+    block = block_body(out, a)
+    assert "(my note)" in block and block.startswith("> [!conflict] Inkbridge:")
+    assert "> legacy words" in block
+    after = inknote.parse(out)
+    assert after.entry(a)["body"] == inknote._body_hash(block)
+    assert after.entry(a)["hash"] == page.chunk_of("a0")["content_hash"]
+    assert not inknote._edited(out, after, a)
+    assert "body" not in after.entry(after.blocks[1].id)  # untouched legacy blocks stay as they were
+    assert inknote.validate(out) == []
+
+
+def test_a_quote_glued_under_a_callout_is_not_part_of_it(client, page):
+    flag = inknote.REMOVED_FLAG
+    mine = "> my own quote\n"
+    assert inknote._managed_prefix_len(f"{flag}\n{mine}words\n") == len(flag) + 1
+    assert inknote._body_hash(f"{flag}\n{mine}words\n") != inknote._body_hash("words\n")
+    # After a conflict the user keeps a quote under the callout; a second conflict keeps it.
+    text = edit_first_block_and_change_its_ink(client, page)
+    a = page.chunk_of("a0")["id"]
+    out = inknote.apply(text, check(client, text), outline(client), {a: "first"})
+    b = inknote.parse(out).block(a)
+    top = out[b.body_start :]
+    end = top.index("\n\n") + 2  # the callout's own blank line
+    out = out[: b.body_start + end] + mine + out[b.body_start + end :]
+    page.el("a1")["points"] = [[0, 0], [10, 40]]
+    page.put()
+    recognise(page.chunk_of("a0"), "gradient descent v3")
+    a2 = page.chunk_of("a0")["id"]
+    out2 = inknote.apply(out, check(client, out), outline(client), {a2: "second"})
+    block = block_body(out2, a2)
+    assert mine in block and "(my note)" in block and block.count("[!conflict]") == 1
+    assert "second" in block and "first" not in block
 
 
 def outside_blocks(text):

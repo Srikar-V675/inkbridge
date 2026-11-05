@@ -90,7 +90,9 @@ If it is not there, ask the user for the repo path.
    - `rewrite`: changed or replaced chunks; their blocks get new words.
    - `conflict`: the user edited the block, so it is not rewritten. A `[!conflict]` callout with
      the new reading is added on top and the user merges by hand. To give a block back to the
-     skill, delete its `body` key in the frontmatter entry.
+     skill, delete its `body` key in the frontmatter entry. After a conflict the entry's hash and
+     reading already hold the new values, so deleting the callout without merging hides the drift.
+     Entries without `body` (older notes) take this path too, and get `body` set.
    - `merged`: replaced by a chunk that already has a block; the block is flagged, not rewritten.
    - `flag_removed`: ink gone from the canvas; a warning callout is added at the top of the block.
    - `append`: new chunks, added at the end of the note.
