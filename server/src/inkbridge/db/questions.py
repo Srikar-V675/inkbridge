@@ -2,6 +2,7 @@
 
 The backend only stores the question and the answer an agent hands back. Nothing here starts a
 process or calls a model, so a row leaves `pending` only through answer or cancel.
+A follow-up without a selection stores its parent's focus (INK-104), so the thread root's ink.
 Lifecycle: pending -> answered | cancelled. The Ask runner state (`runner_status`, `runner_error`,
 INK-103) is only meaningful while `status='pending'`.
 """
@@ -41,13 +42,17 @@ def create_question(
 ) -> dict:
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
-    if (
-        parent_id is not None
-        and not conn.execute(
-            "SELECT 1 FROM questions WHERE id = ? AND document_id = ?", (parent_id, document_id)
+    if parent_id is not None:
+        parent = conn.execute(
+            "SELECT focus_element_ids FROM questions WHERE id = ? AND document_id = ?",
+            (parent_id, document_id),
         ).fetchone()
-    ):
-        raise ParentNotFound(parent_id)
+        if parent is None:
+            raise ParentNotFound(parent_id)
+        # A follow-up without a selection keeps asking about the same ink (INK-104). The parent
+        # stored its own inherited focus, so this is the thread root's focus.
+        if not focus_element_ids:
+            focus_element_ids = json.loads(parent["focus_element_ids"])
     qid = uuid.uuid4().hex[:12]
     conn.execute(
         "INSERT INTO questions (id, document_id, parent_id, text, focus_element_ids, status,"
