@@ -10,9 +10,20 @@ this page.
 
 ````markdown
 ---
-tags: [ml]
-inkbridge: {"canvas": "default", "exported": "2026-10-26T10:00:00+00:00", "chunks": [{"id": "9f2a41c07b3e", "hash": "51a8…", "reading": "2d90…", "section": "Gradient descent"}]}
+tags: [library]
+type: library
+format: reference
+index: "[[Machine Learning & AI.base]]"
+publish: false
+date: 2026-10-26
+ai-first: true
+inkbridge: {"canvas": "default", "exported": "2026-10-26T10:00:00+00:00", "chunks": [{"id": "9f2a41c07b3e", "hash": "51a8…", "reading": "2d90…", "section": "Gradient descent", "body": "c41e…"}]}
 ---
+> [!info]- For future agent
+> Provenance note for an Inkbridge canvas. Text between ink markers is managed by the
+> inkbridge-export skill and synced with check_sync. Text outside the markers is the
+> user's and is never changed.
+
 # Optimisation
 
 Anything the user writes here is theirs and is never touched.
@@ -24,7 +35,7 @@ Anything the user writes here is theirs and is never touched.
 
 [Open in Inkbridge](http://laptop.local:8000/?canvas=default&chunk=9f2a41c07b3e)
 > [!ink]- Source ink
-> ![[attachments/inkbridge/9f2a41c07b3e-51a8f2c0d9e1.png]]
+> ![[content/raw/attachments/inkbridge/9f2a41c07b3e-51a8f2c0d9e1.png]]
 <!-- /ink -->
 ````
 
@@ -35,6 +46,23 @@ Hashes are shortened with `…` above; in a real note they are 64 hex characters
 The frontmatter has exactly one line starting with `inkbridge:`. Its value is a JSON object on that
 line, which is also valid YAML. Other frontmatter keys belong to the user. Updates rewrite only the
 `inkbridge:` line, so the other keys are never re-serialised.
+
+The vault's own standard is `~/Documents/kaizen/_CLAUDE.md`; `new` writes the keys it asks for
+(a note under `content/library/`). Other keys belong to the user.
+
+| Key | Value |
+|---|---|
+| `tags` | `[library]`, exactly one type tag |
+| `type` | `library` |
+| `format` | `reference` (the vault also allows `course`, `book`, `video`) |
+| `index` | optional, `"[[Name.base]]"` |
+| `relates` | optional, a list of `"[[Note]]"` links |
+| `publish` | `false` |
+| `date` | `YYYY-MM-DD`, the day of the first export |
+| `ai-first` | `true` |
+
+`inknote.py validate NOTE --strict` checks these keys and the callout; plain `validate` stays
+lenient so notes exported before this format can still be re-exported.
 
 | Key | Type | Meaning |
 |---|---|---|
@@ -52,6 +80,7 @@ Each `chunks` entry:
 | `section` | string or null | The heading the block sits under: its own first heading, else the nearest heading above it. Recomputed on every export. |
 | `status` | optional: `removed` or `merged` | Set when `check_sync` reported the ink gone (`removed`), or replaced by a chunk that already has a block (`merged`). Entries with a status are not sent to `check_sync` again. |
 | `successor` | string, with `status: merged` | The chunk whose block now carries this ink. |
+| `body` | 64 hex, optional | sha256 of the block interior as the skill wrote it, ignoring leading `[!warning]` and `[!conflict]` Inkbridge callouts. A block whose interior no longer matches was edited by the user and is never rewritten. A note without `body` entries is rewritten as before. |
 
 ## Blocks
 
@@ -67,8 +96,11 @@ Each `chunks` entry:
 - **Inside a block:** the words (headings, bullets, LaTeX, Mermaid for diagrams), then a plain-URL
   deep link `[Open in Inkbridge](<deep_link>)` that opens the canvas at the chunk (INK-035). Last
   comes a folded callout `> [!ink]- Source ink` embedding the crop
-  `attachments/inkbridge/{id}-{first 12 hex of hash}.png`. The crop is fetched from
+  `content/raw/attachments/inkbridge/{id}-{first 12 hex of hash}.png`. The crop is fetched from
   `GET /regions/{id}/png` and embedded only if it was saved.
+- **Interior:** everything between the two markers is what `body` hashes.
+- **Style:** words and titles use `-`, `->` and commas: no em or en dashes, arrows, middle dots
+  or emojis (the helper refuses them).
 - **Outside the blocks:** text belongs to the user and is never changed by a re-export.
 - **Line endings:** markers are matched per line on `\n`. Keep the note's line endings as LF.
 
@@ -79,9 +111,14 @@ Each `chunks` entry:
 | `fresh` | Nothing. |
 | `fresh_after_reread` | Only the entry's `hash` and `reading` and the block's opening marker change. The words stay. |
 | `changed` | The block between its markers is rewritten with new words; the entry gets the new hash and reading. |
+| `changed` or `replaced`, block edited by the user | Not rewritten. The marker line and the entry get the new hash and reading, `body` stays, and a `[!conflict]` callout with the new reading goes on top of the block (replacing an earlier one). |
 | `replaced` | The block is rewritten from the successor chunk and its id becomes the successor's. If the successor already has a block in this note, the block is instead flagged `merged`: a warning callout is added at its top and the entry gets `status: merged` and `successor`. |
 | `removed` | A warning callout is added once at the top of the block, and the entry gets `status: removed`. The block is not deleted. |
 | `new` | A new block is appended at the end of the note, with a new entry. |
 | block deleted by the user | Left out. Recreated (appended) only when asked (`--recreate`). |
+
+**Conflict callout.** It starts `> [!conflict] Inkbridge:` and quotes the new words. The user merges
+by hand and deletes the callout. Because `body` is unchanged, the block stays protected until the
+`body` key is removed from its entry, which hands the block back to the skill.
 
 If nothing needs doing, the file is left byte-identical and `exported` is not touched.

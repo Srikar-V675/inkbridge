@@ -705,6 +705,23 @@ def test_skill_does_not_assume_the_repo_as_cwd():
     assert "H=skills/" not in text and "from the repo or copy it" not in text
 
 
+def test_skill_follows_the_vault_rules():
+    text = SKILL.read_text()
+    for want in (
+        "content/library/",
+        "content/raw/attachments/inkbridge",
+        "_CLAUDE.md",
+        "For future agent",
+        "obsidian_validate_note",
+        'validate "$INKBRIDGE_VAULT',
+        "--strict",
+    ):
+        assert want in text, want
+    assert "Crops go in `attachments/inkbridge/`" not in text
+    fmt = (SCRIPT.parents[3] / "docs" / "vault-note-format.md").read_text()
+    assert "body" in fmt and "[!conflict]" in fmt
+
+
 def test_helper_runs_from_a_symlinked_skill_outside_the_repo(tmp_path):
     link = tmp_path / "inkbridge-export"
     link.symlink_to(SCRIPT.parents[1])
