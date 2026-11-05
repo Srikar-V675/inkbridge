@@ -4,6 +4,7 @@
 |---|---|
 | `make install` | `uv sync` (server) + `npm install` (web) |
 | `make dev-server` | FastAPI on `:8000` with reload, bound to `0.0.0.0` |
+| `make serve` | Builds the web app, then the API serves it on `:8000` (`KEEPALIVE=65` sets uvicorn `--timeout-keep-alive`); tablet opens `http://<laptop>:8000/?canvas=default` |
 | `make dev-web` | Vite on `:5173` with `--host` so the tablet can reach it |
 | `make test` | Server pytest + web `npm test` |
 | `make lint` | `ruff check` (server, skills, scripts, eval), `oxlint`, `tsc -b` |
