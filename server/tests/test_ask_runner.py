@@ -5,7 +5,9 @@ import sys
 import time
 
 import pytest
+from fastapi.testclient import TestClient
 
+from inkbridge import db
 from inkbridge.agent import ask_runner
 from inkbridge.agent.ask_runner import (
     RUNNERS,
@@ -16,6 +18,8 @@ from inkbridge.agent.ask_runner import (
     build_command,
     build_prompt,
 )  # fmt: skip
+from inkbridge.api import app
+from inkbridge.db import questions as q_db
 from tests.test_ops_api import seed
 from tests.test_questions_api import ask, chunk_id
 
@@ -263,3 +267,91 @@ def test_terminate_before_start_refuses_to_spawn(tmp_path):
     with pytest.raises(RunnerError):
         r.run(Q)
     assert not marker.exists()
+
+
+# -- runner state (INK-103) -----------------------------------------------------------------
+
+
+def state(client, qid):
+    q = client.get(f"/questions/{qid}").json()
+    return q["status"], q["runner_status"], q["runner_error"]
+
+
+@pytest.mark.parametrize(
+    "fake, why",
+    [
+        (Fake(exc=RunnerError("exit 2")), "exit 2"),
+        (Fake(answer=False), "returned without answering"),
+        (Fake(exc=ValueError("secret")), "ValueError"),
+    ],
+)
+def test_third_failed_attempt_sets_failed_with_reason(client, fake, why):
+    q = ask(client)
+    now = [1000.0]
+    w = AskWorker(fake, backoff_s=10, clock=lambda: now[0])
+    for _ in range(2):
+        w.run_once()
+        now[0] += 1000
+        assert state(client, q["id"]) == ("pending", "pending", why)
+    w.run_once()
+    assert state(client, q["id"]) == ("pending", "failed", why)
+    assert "secret" not in str(client.get(f"/questions/{q['id']}").json())
+
+
+def test_running_status_is_set_during_the_run(client):
+    ask(client)
+    seen = []
+
+    class Watch(Fake):
+        def run(self, question):
+            seen.append(state(client, question["id"])[1])
+
+    AskWorker(Watch()).run_once()
+    assert seen == ["running"]
+
+
+def test_failure_is_published(client):
+    q = ask(client)
+    seen = []
+    w = AskWorker(Fake(exc=RunnerError("exit 2")), publish=lambda doc, msg: seen.append((doc, msg)))
+    w.run_once()
+    doc, msg = seen[-1]
+    assert doc == "default" and msg["type"] == "question.update"
+    assert msg["question"]["id"] == q["id"] and msg["question"]["runner_error"] == "exit 2"
+
+
+def test_config_refusal_marks_questions_failed(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKBRIDGE_DB", str(tmp_path / "api.db"))
+    db._applied.clear()
+    monkeypatch.setenv("INKBRIDGE_RUNNER", "claude")
+    monkeypatch.setenv("INKBRIDGE_RUNNER_MCP_CONFIG", str(tmp_path / "mcp.json"))
+    monkeypatch.setenv("INKBRIDGE_RUNNER_VAULT_TOOLS", "mcp__vault__obsidian_save_note")
+    with TestClient(app) as c:
+        seed(c)
+        q = ask(c)
+        assert q["runner_status"] == "failed" and "obsidian_save_note" in q["runner_error"]
+        assert state(c, q["id"])[1] == "failed"
+    worker, reason = AskWorker.setup()
+    assert worker is None and "obsidian_save_note" in reason
+    monkeypatch.delenv("INKBRIDGE_RUNNER")
+    assert AskWorker.setup() == (None, None)
+    monkeypatch.setitem(RUNNERS, "fake", lambda: Fake())
+    monkeypatch.setenv("INKBRIDGE_RUNNER", "fake")
+    worker, reason = AskWorker.setup()
+    assert worker is not None and reason is None
+
+
+def test_restart_resets_runner_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKBRIDGE_DB", str(tmp_path / "api.db"))
+    db._applied.clear()
+    monkeypatch.delenv("INKBRIDGE_RUNNER", raising=False)
+    with TestClient(app) as c:
+        q = ask(c)
+        conn = db.connect()
+        try:
+            q_db.set_runner(conn, q["id"], "running", "old")
+        finally:
+            conn.close()
+        assert state(c, q["id"])[1] == "running"
+    with TestClient(app) as c:
+        assert state(c, q["id"]) == ("pending", "pending", None)

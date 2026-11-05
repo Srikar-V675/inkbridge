@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from inkbridge import db
@@ -89,7 +89,7 @@ def _transition(fn, *args) -> dict:
 
 
 @router.post("/documents/{document_id}/questions", status_code=201, response_model=QuestionOut)
-def create_question(document_id: str, body: QuestionIn, conn: Conn) -> dict:
+def create_question(document_id: str, body: QuestionIn, conn: Conn, request: Request) -> dict:
     try:
         q = q_db.create_question(
             conn, document_id, body.text, body.focus_element_ids, body.parent_id
@@ -100,6 +100,8 @@ def create_question(document_id: str, body: QuestionIn, conn: Conn) -> dict:
         raise HTTPException(
             422, {"code": "parent_not_found", "msg": "parent_id is not a question on this canvas"}
         ) from None
+    if err := getattr(request.app.state, "runner_error", None):
+        q = q_db.set_runner(conn, q["id"], "failed", err)
     return _publish(q)
 
 

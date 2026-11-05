@@ -206,26 +206,35 @@ class AskWorker:
     MAX_ATTEMPTS = 3
 
     def __init__(self, runner: AgentRunner, *, poll_s: float = 2.0, backoff_s: float = 30.0,
-                 clock: Callable[[], float] = time.time):  # fmt: skip
+                 clock: Callable[[], float] = time.time,
+                 publish: Callable[[str, dict], object] | None = None):  # fmt: skip
         self.runner, self.poll_s, self._backoff_s, self._clock = runner, poll_s, backoff_s, clock
+        self._publish = publish
         self._failures: dict[str, tuple[int, float]] = {}  # question id -> (count, retry at)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     @classmethod
-    def from_env(cls) -> "AskWorker | None":
+    def setup(cls, publish=None) -> "tuple[AskWorker | None, str | None]":
+        """(worker, None) when on; (None, reason) when INKBRIDGE_RUNNER is set but unusable;
+        (None, None) when unset."""
         name = (os.environ.get("INKBRIDGE_RUNNER") or "").strip()
         if not name:
-            return None
-        try:
-            factory = RUNNERS.get(name)
-            if factory is None:
-                log.warning("unknown INKBRIDGE_RUNNER %r; Ask runner off", name)
-                return None
-            return cls(factory())
-        except RunnerError as e:
-            log.warning("Ask runner off: %s", e)
-            return None
+            return None, None
+        factory = RUNNERS.get(name)
+        if factory is None:
+            reason = f"unknown INKBRIDGE_RUNNER {name!r}"
+        else:
+            try:
+                return cls(factory(), publish=publish), None
+            except RunnerError as e:
+                reason = str(e)
+        log.warning("Ask runner off: %s", reason)
+        return None, reason
+
+    @classmethod
+    def from_env(cls) -> "AskWorker | None":
+        return cls.setup()[0]
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="inkbridge-ask", daemon=True)
@@ -245,10 +254,16 @@ class AskWorker:
                 log.exception("ask pass failed")
             self._stop.wait(self.poll_s)
 
-    def _fail(self, qid: str, why: str) -> None:
+    def _mark(self, conn: sqlite3.Connection, qid: str, status: str, error: str | None = None) -> None:
+        q = q_db.set_runner(conn, qid, status, error)
+        if self._publish is not None and q["status"] == "pending":
+            self._publish(q["document_id"], {"type": "question.update", "question": q})
+
+    def _fail(self, conn: sqlite3.Connection, qid: str, why: str) -> None:
         n = self._failures.get(qid, (0, 0.0))[0] + 1
         self._failures[qid] = (n, self._clock() + self._backoff_s * n)
         log.warning("ask runner failed for question %s (attempt %d): %s", qid, n, why)
+        self._mark(conn, qid, "failed" if n >= self.MAX_ATTEMPTS else "pending", why)
 
     def _next(self, conn: sqlite3.Connection) -> str | None:
         now = self._clock()
@@ -268,13 +283,16 @@ class AskWorker:
             qid = self._next(conn)
             if qid is None:
                 return 0
+            question = q_db.get_question(conn, qid)  # focus ids are read now (0035)
+            self._mark(conn, qid, "running")
             try:
-                self.runner.run(q_db.get_question(conn, qid))  # focus ids are read now (0035)
+                self.runner.run(question)
             except Exception as e:  # noqa: BLE001 - any adapter failure must leave the row pending
-                self._fail(qid, type(e).__name__)
+                # RunnerError texts are path-free; never store stderr or other exception text.
+                self._fail(conn, qid, str(e) if isinstance(e, RunnerError) else type(e).__name__)
                 return 1
             if q_db.get_question(conn, qid)["status"] == "pending":
-                self._fail(qid, "returned without answering")
+                self._fail(conn, qid, "returned without answering")
             return 1
         finally:
             conn.close()
