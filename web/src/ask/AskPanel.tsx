@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { askQuestion, cancelQuestion, fileName, focusIds, keepOnCanvas, listQuestions, MAX_FOCUS, type Question, type Source } from "./ask";
 import { AnswerMarkdown } from "./askMarkdown";
-import { liveIds, resolveChunk } from "./chunks";
+import { liveIds, resolveChunk } from "../chunks/chunks";
 
 const btn = {
   font: "12px system-ui, sans-serif",

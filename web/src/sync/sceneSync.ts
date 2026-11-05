@@ -2,7 +2,7 @@
 // Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0008).
 
 import type { LoadClock } from "./loadClock.ts";
-import { record } from "./timing.ts";
+import { record } from "../lib/timing.ts";
 
 export interface SceneElement {
   id: string;

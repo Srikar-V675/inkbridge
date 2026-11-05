@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { afterEach, describe, it, mock } from "node:test";
-import { record, setTimingSink, timed, type TimingRecord } from "../src/timing.ts";
+import { record, setTimingSink, timed, type TimingRecord } from "../src/lib/timing.ts";
 
 const grab = () => {
   const got: TimingRecord[] = [];
@@ -52,8 +52,9 @@ describe("timed", () => {
 describe("dev-only sink", () => {
   it("/__log appears only in devLog.ts, and main.tsx loads it under import.meta.env.DEV", () => {
     const dir = new URL("../src/", import.meta.url);
-    const hits = readdirSync(dir).filter((f) => readFileSync(new URL(f, dir), "utf8").includes("/__log"));
-    assert.deepEqual(hits, ["devLog.ts"]);
+    const files = readdirSync(dir, { recursive: true, encoding: "utf8" });
+    const hits = files.filter((f) => /\.tsx?$/.test(f) && readFileSync(new URL(f, dir), "utf8").includes("/__log"));
+    assert.deepEqual(hits, ["lib/devLog.ts"]);
     const main = readFileSync(new URL("main.tsx", dir), "utf8");
     const at = main.indexOf("devLog");
     assert.ok(at > main.indexOf("import.meta.env.DEV") && main.indexOf("import.meta.env.DEV") >= 0);

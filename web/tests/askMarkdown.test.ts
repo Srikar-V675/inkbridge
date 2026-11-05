@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AnswerMarkdown } from "../src/askMarkdown.ts";
+import { AnswerMarkdown } from "../src/ask/askMarkdown.ts";
 
 const render = (s: string) => renderToStaticMarkup(h(AnswerMarkdown, { source: s }));
 

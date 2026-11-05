@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createRefresh, onVisible, wireRefresh, type Refresh } from "../src/chunkRefresh.ts";
+import { createRefresh, onVisible, wireRefresh, type Refresh } from "../src/sync/chunkRefresh.ts";
 
 function fakeTimers() {
   const pending: Array<() => void> = [];

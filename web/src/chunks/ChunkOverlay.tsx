@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
 import { chunkMark, connectorIds, overrideUi, planOverride, sendOverride, toggleChunk } from "./overrides";
-import type { Refresh } from "./chunkRefresh";
+import type { Refresh } from "../sync/chunkRefresh";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
 

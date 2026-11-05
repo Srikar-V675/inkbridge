@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { SceneSync, deltaFor, mergeScenes, type SaveState, type SceneElement } from "../src/sceneSync.ts";
+import { SceneSync, deltaFor, mergeScenes, type SaveState, type SceneElement } from "../src/sync/sceneSync.ts";
 
 const el = (id: string, version = 1, extra: Record<string, unknown> = {}): SceneElement => ({
   id,

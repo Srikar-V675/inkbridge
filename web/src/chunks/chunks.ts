@@ -2,7 +2,7 @@
 // Deep link contract: /?canvas=<document id>&chunk=<chunk id> (docs/decisions/0014).
 // Only plain fetch and DOM-free maths: works over LAN HTTP, no secure-context APIs.
 
-import { timed } from "./timing.ts";
+import { timed } from "../lib/timing.ts";
 
 export interface Bounds {
   x: number;

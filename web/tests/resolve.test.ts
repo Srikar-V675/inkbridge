@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { acceptOp, applyVerdict, dropDrafts, draftOpId, draftOps, NOT_READY, fetchAppliedOps, patchOp, retryAccept, type Ports } from "../src/resolve.ts";
-import { markDraft, type DraftElement } from "../src/drafts.ts";
+import { acceptOp, applyVerdict, dropDrafts, draftOpId, draftOps, NOT_READY, fetchAppliedOps, patchOp, retryAccept, type Ports } from "../src/drafts/resolve.ts";
+import { markDraft, type DraftElement } from "../src/drafts/drafts.ts";
 
 const draftsOf = (opId: string, n: number): DraftElement[] =>
   markDraft(

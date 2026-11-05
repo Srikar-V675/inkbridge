@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { PendingOp } from "../src/drafts.ts";
-import { OpsSocket, type SocketLike } from "../src/opsSocket.ts";
+import type { PendingOp } from "../src/drafts/drafts.ts";
+import { OpsSocket, type SocketLike } from "../src/sync/opsSocket.ts";
 
 class FakeSocket implements SocketLike {
   sent: unknown[] = [];

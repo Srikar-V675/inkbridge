@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Chunk } from "../src/chunks.ts";
+import type { Chunk } from "../src/chunks/chunks.ts";
 import {
   chunkMark,
   connectorIds,
@@ -8,7 +8,7 @@ import {
   planOverride,
   sendOverride,
   toggleChunk,
-} from "../src/overrides.ts";
+} from "../src/chunks/overrides.ts";
 
 function chunk(id: string, element_ids: string[]): Chunk {
   return {

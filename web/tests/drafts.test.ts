@@ -11,7 +11,7 @@ import {
   toDrafts,
   type DraftElement,
   type PendingOp,
-} from "../src/drafts.ts";
+} from "../src/drafts/drafts.ts";
 
 const op: PendingOp = {
   op_id: "op1",

@@ -2,7 +2,7 @@
 // Reconnects with backoff; the server replays pending and delivered ops on every connect. Ops are
 // handled one at a time, and an op already being handled is not started twice.
 
-import type { PendingOp } from "./drafts";
+import type { PendingOp } from "../drafts/drafts";
 
 export interface ChunksUpdated {
   version: number;

@@ -1,6 +1,6 @@
 // Framework-free client and helpers for the Ask AI panel (INK-049, docs/decisions/0046).
 // answer_md is untrusted (decision 0035): plainText strips it before it reaches an agent op.
-import { resolveChunk } from "./chunks.ts";
+import { resolveChunk } from "../chunks/chunks.ts";
 
 export interface Source {
   type: "chunk" | "note";

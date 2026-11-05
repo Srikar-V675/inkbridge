@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { loadView, saveView } from "../src/view.ts";
+import { loadView, saveView } from "../src/lib/view.ts";
 
 function store(initial: Record<string, string> = {}) {
   const data = { ...initial };

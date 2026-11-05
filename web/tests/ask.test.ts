@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { fileName, focusIds, keepOnCanvas, keepOp, plainText, type Question } from "../src/ask.ts";
+import { fileName, focusIds, keepOnCanvas, keepOp, plainText, type Question } from "../src/ask/ask.ts";
 
 const q = (over: Partial<Question> = {}): Question => ({
   id: "abc123", document_id: "c", parent_id: null, text: "t", focus_element_ids: [], focus_chunk_ids: [],

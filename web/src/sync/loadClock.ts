@@ -1,4 +1,4 @@
-import { record } from "./timing.ts";
+import { record } from "../lib/timing.ts";
 
 export type Mark = "fetch" | "parse" | "restore" | "firstChange";
 
