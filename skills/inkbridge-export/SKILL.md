@@ -36,6 +36,8 @@ D=$(dirname "$(readlink -f "<base directory>/SKILL.md")")   # follows the symlin
 H="$D/scripts/inknote.py"
 ```
 
+These shell variables do not persist between Bash calls, so repeat the two lines (or inline the path) in every call that uses `$H`.
+
 `$D/../../docs/vault-note-format.md` is the note format when this skill is a symlink into the repo.
 If it is not there, ask the user for the repo path.
 

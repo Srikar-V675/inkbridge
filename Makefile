@@ -20,6 +20,7 @@ serve:
 # Symlink, so a git pull updates the skill; every Claude session sees it, not just this repo's.
 install-skill:
 	mkdir -p ~/.claude/skills
+	@if [ -e ~/.claude/skills/inkbridge-export ] && [ ! -L ~/.claude/skills/inkbridge-export ]; then echo "~/.claude/skills/inkbridge-export exists and is not a symlink; move it first"; exit 1; fi
 	ln -sfn $(CURDIR)/skills/inkbridge-export ~/.claude/skills/inkbridge-export
 
 test:
