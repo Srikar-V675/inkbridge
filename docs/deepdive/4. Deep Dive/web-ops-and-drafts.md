@@ -1,8 +1,8 @@
-# Deep Dive: web ops socket and drafts (`opsSocket.ts`, `drafts.ts`, `drawOp.ts`)
+# Deep Dive: web ops socket and drafts (`sync/opsSocket.ts`, `drafts/drafts.ts`, `drafts/drawOp.ts`)
 
 Browser side of the agent write-back loop (INK-042, decisions 0009, 0012). Server side: [ops-queue-and-websocket.md](ops-queue-and-websocket.md).
 
-## `OpsSocket` (`opsSocket.ts`)
+## `OpsSocket` (`sync/opsSocket.ts`)
 
 Client for `WS /ws?document=<id>`.
 - **Reconnect**: on close, wait `BACKOFF_MS = [500, 1000, 2000, 5000, 10000]` (indexed by consecutive failures, reset on open) and start again. A stale close event from a replaced socket is ignored (`this.ws !== ws`).
@@ -11,7 +11,7 @@ Client for `WS /ws?document=<id>`.
 - **Safe send**: a socket that is closed or still connecting throws on `send`; the message is dropped instead. The server replays an unacked op on the next connect and the drawn drafts are found and acked then. Throwing would report a drawn op as failed and a rejected queue would never run another op.
 - Injectable `createSocket` and `setTimer` for tests (`idle()` resolves when the queue is empty).
 
-## Pure draft helpers (`drafts.ts`)
+## Pure draft helpers (`drafts/drafts.ts`)
 
 No Excalidraw import, so they run under Node's test runner. Rules: drafts only ever **add** elements; every element an op creates gets an id starting with the op's server-issued `id_prefix`; each is tagged `customData {author:"agent", draft:true, op_id}` and drawn dashed.
 
@@ -24,7 +24,7 @@ No Excalidraw import, so they run under Node's test runner. Rules: drafts only e
 | `toDrafts(converted, op)` | The pipeline after conversion: prefix, place, mark |
 | `rejectOp(elements, prefix)` | Soft-deletes (`isDeleted: true`, `version + 1`) every element whose id starts with the prefix, a sweep that also catches elements the ack did not list, and nothing else; the version bump keeps the delete through autosave and conflict merge |
 
-## `drawOp` (`drawOp.ts`, browser only)
+## `drawOp` (`drafts/drawOp.ts`, browser only)
 
 `drawOp(api, op, persist)`:
 1. If elements with the op's prefix already exist (replay after a reload or reconnect), `await persist(scene)` again and return their ids: the first ack may have been lost before the drafts were saved.
@@ -33,7 +33,7 @@ No Excalidraw import, so they run under Node's test runner. Rules: drafts only e
 4. `convertToExcalidrawElements(skeleton, {regenerateIds: true})`, then `toDrafts`; no elements throws "the op produced no elements".
 5. `api.updateScene` appends the drafts, then `await persist(...)` (the caller acks only after the scene containing the drafts is saved, because an applied op is never replayed, so an unsaved draft lost to a reload would never come back). Returns the draft ids.
 
-## Accept / Reject (`resolve.ts`, `DraftBar.tsx`, decision 0026)
+## Accept / Reject (`drafts/resolve.ts`, `drafts/DraftBar.tsx`, decision 0026)
 
 | Piece | Behaviour |
 |---|---|

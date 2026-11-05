@@ -1,4 +1,4 @@
-# Deep Dive: delta scene saves (`web/src/sceneSync.ts`, `api/__init__.py`, `db/__init__.py`)
+# Deep Dive: delta scene saves (`web/src/sync/sceneSync.ts`, `api/__init__.py`, `db/__init__.py`)
 
 INK-075, decision 0036. Autosave used to `PUT` the whole scene. A 496-element canvas (about 1 MB) took 96 s through the Vite proxy from the tablet while the server needed 41 ms, so cost grew with the page, not with the edit. Now only changed elements travel.
 
@@ -20,7 +20,7 @@ PUT {base_version, elements: changed, delta:true}
 baseline = versions of what was sent
 ```
 
-## Client (`sceneSync.ts`)
+## Client (`sync/sceneSync.ts`)
 
 - `deltaFor(baseline, els)` returns the changed elements, or `null` (send a full save) when there is no baseline, when an element in the baseline is missing from the list (a delta cannot delete), or when the delta would not be smaller.
 - The baseline is set on load and after every successful save, taken from what was sent (before the request, because Excalidraw mutates elements in place). A failed save keeps the old baseline, so the retry carries the whole unconfirmed diff.

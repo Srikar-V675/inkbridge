@@ -1,8 +1,8 @@
-# Deep Dive: sketch to diagram (`sketch.py`, `sketch_image.py`, `sketch_prompts.py`)
+# Deep Dive: sketch to diagram (`canvas/sketch.py`, `canvas/sketch_image.py`, `canvas/sketch_prompts.py`)
 
 Two-pass reading (INK-058, decision 0025). **Pass 1** is pure geometry on the server: guess nodes and arrows from the ink and number them. **Pass 2** is the agent: it checks the guess against two images and writes Mermaid that cites the markers, then calls `draw_diagram`. No model call happens in pass 1.
 
-## Pass 1: `read_sketch` (`sketch.py:114-271`)
+## Pass 1: `read_sketch` (`canvas/sketch.py:114-271`)
 
 Constants (`:27-32`): `MIN_NODE_SIZE = 20` px diagonal (smaller loops are letters), `CLOSURE = 0.25` (a loop's ends within 25% of its box diagonal), `LOOP_LENGTH = 1.8` (path at least 1.8 diagonals), `HEAD_SIZE = 0.4` (a separate head stroke at most 40% of the shaft), `HOOK = 0.05`.
 
@@ -21,7 +21,7 @@ Constants (`:27-32`): `MIN_NODE_SIZE = 20` px diagonal (smaller loops are letter
 
 Return shape: `nodes[{id, box, element_ids, label_element_ids, label_text, confidence}]`, `arrows[{id, from, to, head, tip, tail, element_ids, confidence}]`, `unattached[ids]`.
 
-## Marker image (`sketch_image.py`)
+## Marker image (`canvas/sketch_image.py`)
 
 The server redraws the ink itself (not on the browser crop) so markers land exactly on the geometry pass 1 used; the crop's padding and scale belong to the browser.
 - `_layout`: scale = min(2.0, fit to 1024 wide, fit to 2048 tall) with a 30 px pad.
@@ -32,7 +32,7 @@ The server redraws the ink itself (not on the browser crop) so markers land exac
 
 A flowchart with long arrows is split into one chunk per node joined by `links`. `db.get_sketch_elements` (`db/__init__.py:740`) therefore includes the elements of chunks linked one hop away (limit 50 links so a hub does not pull in the canvas), skipping deleted and draft elements. API limit: 2,000 elements.
 
-## Prompts (`sketch_prompts.py`)
+## Prompts (`canvas/sketch_prompts.py`)
 
 `MODES = ("one_shot", "two_pass")`. `ONE_SHOT`: look at the crop, identify boxes and arrows. `TWO_PASS`: get region with `include_image` and `include_sketch`, verify the guess against both images, write Mermaid with node ids equal to markers (`N1[Label]`), add `%% A2: uncertain direction` for confidence below 0.6 or no head, retry once on arrows with a missing end, else leave them out and say so. Both end with: return a flowchart, call `draw_diagram` anchored to the region, use the handwritten labels, do not invent. The MCP prompt `sketch_to_diagram(region_id, mode)` serves these. INK-053's E2 compares the two arms.
 

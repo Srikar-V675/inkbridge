@@ -13,7 +13,7 @@ Single page, no router. URL contract shared with vault notes: `/?canvas=<documen
 | `src/opsSocket.ts` | WebSocket client: receives ops, sends `op.applied`/`op.failed` |
 | `src/drawOp.ts`, `src/drafts.ts` | Draw `write_text`/`draw_diagram` ops as dashed drafts (Mermaid via `mermaid-to-excalidraw`) |
 | `src/resolve.ts`, `src/DraftBar.tsx` | Accept / Reject / Accept all for drafts (decision 0026). `acceptOp`, `draftOps`, `applyVerdict` are pure/testable; the bar shows counts, per-selection and bulk buttons, and "Retry accept" if a PATCH failed after a save |
-| `src/timing.ts`, `src/devLog.ts` | `record()` / `timed()` with a swappable sink; `devLog.ts` (dev only) batches lines to Vite's `/__log` -> `web/dev.log` |
+| `src/timing.ts`, `src/devLog.ts` | `record()` / `timed()` with a swappable sink; `lib/devLog.ts` (dev only) batches lines to Vite's `/__log` -> `web/dev.log` |
 | `web/patches/@excalidraw+excalidraw+0.18.1.patch` | `patch-package` (runs on `postinstall`): freedraw `thinning` 0.6 -> 0.3, `streamline` 0.5 -> 0.2; stored `pressures` untouched (decision 0031) |
 | `src/view.ts` | Per-device scroll/zoom memory in `localStorage`; keeps fitting the first agent drafts on a freshly created canvas until the user pans or draws |
 

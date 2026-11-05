@@ -23,14 +23,14 @@ tablet browser (web/, Excalidraw)  <-- HTTP + WebSocket -->  server/ API (FastAP
 | `api/overrides.py` | Manual chunk merge/split (pinned chunks) |
 | `api/search.py` | FTS5 search |
 | `api/limits.py` | Body-size limits (128 MiB scene; image routes capped separately) |
-| `chunker.py` | Pure clustering: union-find proximity, container text, arrows, reading order, kind hint |
-| `regions.py` | bbox and the three hashes |
-| `placement.py` | Server-side placement and font sizing of agent output (gap 40 px; font from median handwriting stroke height, clamp 18..64, default 28; diagrams 600x400 scaled by font) |
+| `canvas/chunker/` | Pure clustering: union-find proximity, container text, arrows, reading order, kind hint |
+| `canvas/hashes.py` | bbox and the three hashes |
+| `agent/placement.py` | Server-side placement and font sizing of agent output (gap 40 px; font from median handwriting stroke height, clamp 18..64, default 28; diagrams 600x400 scaled by font) |
 | `timing.py` | `timed()` log helper and `RequestTiming` middleware (counts and ms only, never content) |
-| `mermaid.py` | Flowchart-only gate (`flowchart`/`graph`) |
-| `sketch.py`, `sketch_image.py`, `sketch_prompts.py` | Two-pass sketch-to-diagram: node/arrow guess plus numbered-marker image |
+| `agent/mermaid.py` | Flowchart-only gate (`flowchart`/`graph`) |
+| `canvas/sketch.py`, `canvas/sketch_image.py`, `canvas/sketch_prompts.py` | Two-pass sketch-to-diagram: node/arrow guess plus numbered-marker image |
 | `recognizer/gemini.py` | Swappable recognizer (decision 0006) |
-| `recognition_worker.py` | Daemon thread, own connection, idle-gated, backs off on failures |
+| `recognizer/worker.py` | Daemon thread, own connection, idle-gated, backs off on failures |
 | `db/__init__.py`, `db/outline.py`, `db/migrations/*.sql` | SQLite layer, forward-only migrations 0001..0005 |
 | `mcp/server.py`, `mcp/client.py` | MCP tools and prompt; HTTP client |
 | `mcp_smoke.py` | `inkbridge-mcp-smoke` stdio client check |
@@ -45,10 +45,10 @@ tablet browser (web/, Excalidraw)  <-- HTTP + WebSocket -->  server/ API (FastAP
    - `text_hash`: normalised reading. Drives early cutoff in `check_sync`.
    - Never hash `version`, `versionNonce`, `updated`, `seed`, `customData`.
 4. **Recognition is a cache** keyed `(region, content_hash, source)`; precedence `user > agent > gemini`. Moved or unchanged ink never calls a model.
-5. **Crops are rendered only in the browser** (`cropSync.ts`): when idle and saved, it uploads PNGs for `png_stale` chunks, answered 409 if the scene moved on (decision 0015).
-6. **Agent write-back = drafts.** Ops (`write_text`, `draw_diagram`) are queued server-side, pushed over WebSocket, drawn as dashed elements tagged `customData {author:"agent", draft:true, op_id}`. The text size is computed on the server from the handwriting scale (decision 0032). The user resolves drafts with Accept / Reject / Accept all (`resolve.ts`, `DraftBar.tsx`, decision 0026): accept saves first, then PATCHes; reject PATCHes first, then sweeps by id prefix. Mermaid conversion happens only in the browser, so `draw_diagram` waits for the browser ack, then expires on give-up (decision 0023). Drafts are excluded from chunking, recognition and export until accepted.
+5. **Crops are rendered only in the browser** (`sync/cropSync.ts`): when idle and saved, it uploads PNGs for `png_stale` chunks, answered 409 if the scene moved on (decision 0015).
+6. **Agent write-back = drafts.** Ops (`write_text`, `draw_diagram`) are queued server-side, pushed over WebSocket, drawn as dashed elements tagged `customData {author:"agent", draft:true, op_id}`. The text size is computed on the server from the handwriting scale (decision 0032). The user resolves drafts with Accept / Reject / Accept all (`drafts/resolve.ts`, `drafts/DraftBar.tsx`, decision 0026): accept saves first, then PATCHes; reject PATCHes first, then sweeps by id prefix. Mermaid conversion happens only in the browser, so `draw_diagram` waits for the browser ack, then expires on give-up (decision 0023). Drafts are excluded from chunking, recognition and export until accepted.
 7. **Questions (pull path).** The browser or any client posts a question; any MCP client lists pending ones and answers (`list_questions`, `answer_question`); no runner starts anything (decision 0035).
-8. **Timing logs** (decision 0030). Server: `inkbridge.request`, `inkbridge.scene`, `inkbridge.timing` (>1 s logs a warning). Browser: `timing.ts` records `scene.load`, `scene.save`, `crop.upload`, `crop.pass`; in dev they go to `web/dev.log` via `/__log`.
+8. **Timing logs** (decision 0030). Server: `inkbridge.request`, `inkbridge.scene`, `inkbridge.timing` (>1 s logs a warning). Browser: `lib/timing.ts` records `scene.load`, `scene.save`, `crop.upload`, `crop.pass`; in dev they go to `web/dev.log` via `/__log`.
 9. **Vault loop.** The export skill calls `read_canvas`, writes one marker-bounded block per chunk (`<!-- ink:ID hash:H -->` ... `<!-- /ink -->`) plus frontmatter `inkbridge: {canvas, exported, chunks:[{id, hash, reading, section}]}`; re-export rewrites only changed blocks. Format: `docs/vault-note-format.md`.
 
 ## Invariants (easy to break)

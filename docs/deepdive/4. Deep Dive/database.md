@@ -1,6 +1,6 @@
-# Deep Dive: database layer (`server/src/inkbridge/db/` and `regions.py`)
+# Deep Dive: database layer (`server/src/inkbridge/db/` and `canvas/hashes.py`)
 
-`db/__init__.py` (about 1,000 lines; splitting it is INK-068, backlog) is the only module that touches SQLite; the MCP server must not import it (boundary test `test_mcp_boundary.py`). `regions.py` holds the pure maths (bbox and the three hashes). `db/ops.py`, `db/sync.py` and `db/outline.py` are covered in their own pages.
+`db/__init__.py` (about 1,000 lines; splitting it is INK-068, backlog) is the only module that touches SQLite; the MCP server must not import it (boundary test `test_mcp_boundary.py`). `canvas/hashes.py` holds the pure maths (bbox and the three hashes). `db/ops.py`, `db/sync.py` and `db/outline.py` are covered in their own pages.
 
 ## Connection and migrations
 
@@ -80,7 +80,7 @@ Under `BEGIN IMMEDIATE`, the new pinned chunks are inserted with exactly the pin
 
 `_fts_query` turns free text into quoted prefix tokens (`"foo"* "bar"*`, ANDed). `search` joins `region_fts` to active regions, scores `-bm25` and snippets with `[ ]`.
 
-## `regions.py` (pure maths)
+## `canvas/hashes.py` (pure maths)
 
 | Function | Purpose |
 |---|---|

@@ -1,8 +1,8 @@
-# Deep Dive: web chunks, deep links, overlay and overrides (`chunks.ts`, `ChunkOverlay.tsx`, `overrides.ts`)
+# Deep Dive: web chunks, deep links, overlay and overrides (`chunks/chunks.ts`, `chunks/ChunkOverlay.tsx`, `chunks/overrides.ts`)
 
-Framework-free logic in `chunks.ts` and `overrides.ts`; `ChunkOverlay.tsx` is the React layer (INK-035, INK-059, decisions 0014 and 0024). All fetches use plain `fetch` and DOM-free maths, so they work over LAN HTTP (not a secure context).
+Framework-free logic in `chunks/chunks.ts` and `chunks/overrides.ts`; `chunks/ChunkOverlay.tsx` is the React layer (INK-035, INK-059, decisions 0014 and 0024). All fetches use plain `fetch` and DOM-free maths, so they work over LAN HTTP (not a secure context).
 
-## Deep link resolution (`chunks.ts`)
+## Deep link resolution (`chunks/chunks.ts`)
 
 URL contract: `/?canvas=<document id>&chunk=<chunk id>`.
 
@@ -20,7 +20,7 @@ Viewport maths: `viewForBounds(b, viewport)` centres the bounds with a 10% margi
 
 `listChunks(canvas)` loads `?chunks=true&limit=500` and keeps the active ones; failures give an empty list. Known limit (in the source): the server applies `limit` before the status filter and orders by recency, so a canvas with over 500 chunk rows (orphans included) can miss active ones.
 
-## Overrides (`overrides.ts`)
+## Overrides (`chunks/overrides.ts`)
 
 `planOverride(selected, chunks, connectors)` (`:21-37`) decides what a selection means:
 - ids in `connectors` (arrows, lines, and text bound to them; `connectorIds(scene)`) are ignored on both sides, because the server keeps them with the chunk they start from, so only ink decides;
@@ -32,11 +32,11 @@ Viewport maths: `viewForBounds(b, viewport)` centres the bounds with a 10% margi
 
 `sendOverride(canvas, plan)` POSTs to `/documents/{id}/chunks/merge|split` with an 8 s timeout and returns `{ok, ids}` (ids from `chunk` or `chunks`) or `{ok: false, message}` using the API's `detail` string, or "Could not reach the server; try again." on network failure. The server owns overrides (pinned chunks; see [database.md](database.md)); nothing here touches the scene.
 
-## Overlay (`ChunkOverlay.tsx`)
+## Overlay (`chunks/ChunkOverlay.tsx`)
 
 Plain DOM over the canvas; UI state only, nothing here touches the Excalidraw scene, so the overlay can never be autosaved (decision 0014). Hooks: `useView` follows scroll/zoom via `api.onScrollChange`; `useSelection` tracks selected ids via `api.onChange`, updating state only when the selection itself changes; `useChunks(canvas, on, session, status)` loads active chunks while the overlay is on and **refetches whenever the save status moves into `saved`** (not on the WebSocket). Requests are numbered so only the latest may set the list, and rows are tagged with a `session` (one per time the overlay is switched on) so turning it on again never shows a list from before. `OverrideActions` computes `planOverride(selected, chunks, connectors)` (connectors read from the scene only when the selection changes), enables "Merge chunks" or "Split selection" accordingly, and calls `sendOverride`; after any result it refreshes the list, since a refusal usually means the list was stale. Boxes use `toScreen`.
 
-Rendering (`ChunkOverlay.tsx:174-242`): a "Show chunks" / "Hide chunks (N)" toggle button at the bottom right (`aria-pressed`; switching on starts a new `session`). When on, a non-interactive layer (`pointerEvents: none`, `zIndex: 4`) draws one blue box per chunk with a monospace id label above it (inside the box when it touches the top edge); a **pinned** chunk gets a thicker 2.5 px border and a "· manual" suffix. A dashed orange "ghost" box shows the old bounds of an orphaned deep-linked chunk until the notice is dismissed (it renders even when the overlay is off). The Merge/Split buttons sit above the toggle (`OverrideActions`, `:89-155`), disabled with a tooltip carrying the plan's reason when nothing applies; the merge tooltip reads "Merges the whole of every chunk the selection touches"; a status line shows "Merged into <id>" or "Split into <id> and <id>" or the refusal message.
+Rendering (`chunks/ChunkOverlay.tsx:174-242`): a "Show chunks" / "Hide chunks (N)" toggle button at the bottom right (`aria-pressed`; switching on starts a new `session`). When on, a non-interactive layer (`pointerEvents: none`, `zIndex: 4`) draws one blue box per chunk with a monospace id label above it (inside the box when it touches the top edge); a **pinned** chunk gets a thicker 2.5 px border and a "· manual" suffix. A dashed orange "ghost" box shows the old bounds of an orphaned deep-linked chunk until the notice is dismissed (it renders even when the overlay is off). The Merge/Split buttons sit above the toggle (`OverrideActions`, `:89-155`), disabled with a tooltip carrying the plan's reason when nothing applies; the merge tooltip reads "Merges the whole of every chunk the selection touches"; a status line shows "Merged into <id>" or "Split into <id> and <id>" or the refusal message.
 
 ## Testing
 

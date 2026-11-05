@@ -1,6 +1,6 @@
 # Deep Dive: agent ops queue, placement, mermaid gate and WebSocket hub
 
-Files: `db/ops.py` (293 lines), `api/ops.py` (173), `api/ws.py` (205), `placement.py` (84), `mermaid.py` (28). Decisions 0009, 0012, 0023.
+Files: `db/ops.py` (293 lines), `api/ops.py` (173), `api/ws.py` (205), `agent/placement.py` (84), `agent/mermaid.py` (28). Decisions 0009, 0012, 0023.
 
 An **op** is an agent write: `write_text` or `draw_diagram`. Agents can only **add** elements; there is no edit or delete op type, so none can be expressed (`api/ops.py:41`).
 
@@ -48,7 +48,7 @@ Under `BEGIN IMMEDIATE` so two ops posted at once see each other's reserved spot
 5. **Placement**: occupied boxes = live scene elements (rotated about their centres) plus the reserved boxes of `pending`/`delivered`/`applied` ops; then `placement.place`.
 6. Stored payload gains `placement` and `id_prefix`; status `pending`.
 
-## Placement (`placement.py`)
+## Placement (`agent/placement.py`)
 
 Pure. Sizes are estimates because the browser lays out text and Mermaid:
 - text: `max line length x 0.6 x font_size` wide, `lines x 1.25 x font_size` tall;
@@ -57,7 +57,7 @@ Pure. Sizes are estimates because the browser lays out text and Mermaid:
 **Font size** (decision 0032, `placement.font_size_for`, `db/ops.py` `_stroke_heights`): the median height of the user's freedraw strokes in the anchor chunk (all live strokes if fewer than 3 there), times `INK_TO_FONT = 1.5`, times the `size` hint (0.75 / 1 / 1.5), clamped to 18..64; fewer than 3 strokes gives 28. Stored as `payload.font_size`; clients cannot send it. Ops without it count as 20. Known issue: the 64 clamp can still make text small beside large handwriting (INK-082).
 `place(occupied, size, anchor)`: try **right of the anchor** (`anchor.x + width + GAP(40)`, same top), then **below it**; use the first spot that does not overlap any occupied box within `MARGIN = 16`. Otherwise (and when there is no anchor) the fallback is the left edge of everything, below the lowest box plus `GAP` (the one position that can never overlap whatever the real size); an empty canvas gets `(0, 0)`. `rotated_box` expands a rotated element to its axis-aligned bound.
 
-## Mermaid gate (`mermaid.py`)
+## Mermaid gate (`agent/mermaid.py`)
 
 `diagram_type` strips a BOM, normalises newlines, removes YAML front matter and `%%{...}%%` directives (bounded to 2,000 characters so there is no slow backtracking), skips blank and `%%` comment lines, and returns the first keyword. `is_flowchart` accepts only `flowchart` and `graph`. Reason: `@excalidraw/mermaid-to-excalidraw` renders every other diagram kind as one image, which the user cannot edit. The API answers 422 `not_flowchart` with the detected type.
 

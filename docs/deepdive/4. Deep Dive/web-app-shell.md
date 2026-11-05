@@ -1,13 +1,13 @@
-# Deep Dive: web app shell (`web/src/App.tsx`, `main.tsx`)
+# Deep Dive: web app shell (`web/src/app/App.tsx`, `main.tsx`)
 
-`App.tsx` (405 lines) wires the framework-free modules to Excalidraw. Dev server config (`vite.config.ts`): proxies `/documents`, `/ops`, `/regions`, `/search`, `/health` and `/ws` (websocket) to `INKBRIDGE_API_URL`; a dev-only `/__log` plugin appends request bodies to `web/dev.log`.
+`app/App.tsx` (405 lines) wires the framework-free modules to Excalidraw. Dev server config (`vite.config.ts`): proxies `/documents`, `/ops`, `/regions`, `/search`, `/health` and `/ws` (websocket) to `INKBRIDGE_API_URL`; a dev-only `/__log` plugin appends request bodies to `web/dev.log`.
 
 ## Components
 
 - `Canvas` (`:124-144`): memoised so nothing outside the canvas (save status, route) can re-render Excalidraw mid-stroke. `initialData` is built from restored elements and an optional remembered view.
 - `SaveBadge`: reads the status store with `useSyncExternalStore`.
 - `Notice`: dismissible banner for deep-link outcomes.
-- `ChunkOverlay` (`ChunkOverlay.tsx`, 242 lines): boxes and Merge/Split buttons.
+- `ChunkOverlay` (`chunks/ChunkOverlay.tsx`, 242 lines): boxes and Merge/Split buttons.
 - `applyJump` (`:31-53`): select the chunk's live strokes and `scrollToContent` (`viewportZoomFactor 0.7`, `maxZoom 1`), or for an orphan set scroll/zoom from `viewForBounds`. `captureUpdate: NEVER` so it never enters undo history.
 
 ## Startup order (`useEffect`, `:167-266`)
@@ -34,4 +34,4 @@ The Ask AI panel (INK-049). `DraftBar` (Accept / Reject) is mounted here; `rejec
 
 ## Potential improvements
 
-Pen feel: `patch-package` changes Excalidraw's freedraw constants to `thinning 0.3`, `streamline 0.2` (`web/patches`, decision 0031; tablet tuning pending). Timing: `timing.ts` records go to the dev-only `devLog.ts` sink. LAN lag (INK-074) is open.
+Pen feel: `patch-package` changes Excalidraw's freedraw constants to `thinning 0.3`, `streamline 0.2` (`web/patches`, decision 0031; tablet tuning pending). Timing: `lib/timing.ts` records go to the dev-only `lib/devLog.ts` sink. LAN lag (INK-074) is open.
