@@ -21,6 +21,7 @@ by the agent's own file access.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import os
@@ -34,16 +35,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_API = "http://127.0.0.1:8000"
-ATTACHMENTS = "attachments/inkbridge"
+ATTACHMENTS = "content/raw/attachments/inkbridge"
 CLOSE = "<!-- /ink -->"
 OPEN_RE = re.compile(r"^<!-- ink:(?P<id>[A-Za-z0-9_-]{1,64}) hash:(?P<hash>[0-9a-f]{64}) -->$")
 ANY_MARKER_RE = re.compile(r"^<!-- (?:ink:|/ink)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*#*\s*$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-ENTRY_KEYS = {"id", "hash", "reading", "section", "status", "successor"}
+ENTRY_KEYS = {"id", "hash", "reading", "section", "status", "successor", "body"}
 STATUSES = {"removed", "merged"}
 REMOVED_FLAG = "> [!warning] Inkbridge: this ink is no longer on the canvas."
 MERGED_FLAG = "> [!warning] Inkbridge: this ink was merged into another block of this note ({id})."
+MANAGED_RE = re.compile(r"> \[!(?:warning|conflict)\] Inkbridge")
+BANNED_RE = re.compile("[–—·←-⇿☀-➿\U0001f300-\U0001faff]")
+INDEX_RE = re.compile(r'\[\[[^\]\n"]+\]\]')
+FUTURE_AGENT = (
+    "> [!info]- For future agent\n"
+    "> Provenance note for an Inkbridge canvas. Text between ink markers is managed by the\n"
+    "> inkbridge-export skill and synced with check_sync. Text outside the markers is the\n"
+    "> user's and is never changed.\n"
+)
+FORMATS = {"course", "book", "video", "reference"}
 
 
 class NoteError(ValueError):
@@ -139,8 +150,36 @@ def parse(text: str) -> Note:
 # -- validation --------------------------------------------------------------------------------
 
 
-def validate(text: str) -> list[str]:
-    """Every way the note breaks docs/vault-note-format.md; an empty list means it is valid."""
+def _vault_errors(text: str) -> list[str]:
+    """The vault frontmatter and callout that `new` writes (flat YAML, as written, before
+    Obsidian reformats properties)."""
+    head, sep, after = text[4:].partition("\n---\n")
+    if not sep:
+        return ["the frontmatter is not closed with '---'"]
+    lines = head.splitlines()
+    errors = [
+        f"frontmatter needs the line {want!r}"
+        for want in ("tags: [library]", "type: library", "ai-first: true")
+        if want not in lines
+    ]
+    if not {"publish: false", "publish: true"} & set(lines):
+        errors.append("frontmatter needs 'publish: false' or 'publish: true'")
+    if not any(ln.startswith("format: ") and ln[8:] in FORMATS for ln in lines):
+        errors.append(f"frontmatter needs 'format: ' one of {sorted(FORMATS)}")
+    if not any(re.fullmatch(r"date: \d{4}-\d{2}-\d{2}", ln) for ln in lines):
+        errors.append("frontmatter needs a 'date: YYYY-MM-DD' line")
+    for ln in lines:
+        if ln.startswith("index:") and not re.fullmatch(r'index: "\[\[[^\]\n"]+\]\]"', ln):
+            errors.append(f"index must look like index: \"[[Name.base]]\", got {ln!r}")
+    if not after.startswith("> [!info]- For future agent"):
+        errors.append("the '> [!info]- For future agent' callout must follow the frontmatter")
+    return errors
+
+
+def validate(text: str, strict: bool = False) -> list[str]:
+    """Every way the note breaks docs/vault-note-format.md; an empty list means it is valid.
+    `strict` also checks the vault frontmatter `new` writes; plain validation stays lenient so
+    notes exported before INK-106 can still be re-exported."""
     try:
         note = parse(text)
     except NoteError as e:
@@ -178,6 +217,8 @@ def validate(text: str) -> list[str]:
             errors.append(f"{where}.reading must be a 64-hex reading hash or null")
         if e.get("section") is not None and not isinstance(e["section"], str):
             errors.append(f"{where}.section must be a string or null")
+        if "body" in e and not (isinstance(e["body"], str) and HASH_RE.match(e["body"])):
+            errors.append(f"{where}.body must be a 64-hex hash")
         if "status" in e and e["status"] not in STATUSES:
             errors.append(f"{where}.status must be one of {sorted(STATUSES)}")
         if e.get("status") == "merged" and not isinstance(e.get("successor"), str):
@@ -192,6 +233,8 @@ def validate(text: str) -> list[str]:
             errors.append(f"block {b.id} has no entry in inkbridge.chunks")
         elif e.get("hash") != b.hash:
             errors.append(f"block {b.id}: marker hash differs from inkbridge.chunks")
+    if strict:
+        errors += _vault_errors(text)
     return errors
 
 
@@ -218,13 +261,48 @@ def _check_chunk_fields(chunk: dict) -> None:
         raise NoteError(f"chunk {cid}: unsafe deep link {link!r}")
 
 
+def _check_words(label: str, words: str) -> None:
+    """Notes follow the vault's writing style (_CLAUDE.md): no em/en dashes, arrows or emoji."""
+    for line in words.splitlines():
+        if BANNED_RE.search(line):
+            raise NoteError(f"{label}: use '-', '->' and commas, not dashes, arrows or emoji: {line!r}")
+
+
+def _check_markers(cid: str, words: str) -> None:
+    for line in words.splitlines():
+        if ANY_MARKER_RE.match(line.strip()) or "<!-- ink:" in line or "<!-- /ink" in line:
+            raise NoteError(f"the words for chunk {cid} contain an ink marker: {line!r}")
+
+
+def _managed_prefix_len(interior: str) -> int:
+    """Length of the leading Inkbridge-managed callouts (flags, conflict) of a block."""
+    lines = interior.splitlines(keepends=True)
+    i = 0
+    while i < len(lines) and MANAGED_RE.match(lines[i]):
+        i += 1
+        while i < len(lines) and lines[i].startswith(">"):
+            i += 1
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+    return sum(len(x) for x in lines[:i])
+
+
+def _body_hash(interior: str) -> str:
+    """Hash of a block's words as the skill wrote them, ignoring its own callouts on top."""
+    return hashlib.sha256(interior[_managed_prefix_len(interior) :].encode()).hexdigest()
+
+
+def _interior(rendered: str) -> str:
+    """The text between the markers of a block from render_block (same as the note's slice)."""
+    return rendered.split("\n", 1)[1].removesuffix(CLOSE + "\n")
+
+
 def render_block(chunk: dict, body: str, vault: Path | None = None) -> str:
     """One marker-bounded block: the agent's words, a deep link, a folded crop preview."""
     cid, h = chunk["id"], chunk["content_hash"]
     _check_chunk_fields(chunk)
-    for line in body.splitlines():
-        if ANY_MARKER_RE.match(line.strip()) or "<!-- ink:" in line or "<!-- /ink" in line:
-            raise NoteError(f"the words for chunk {cid} contain an ink marker: {line!r}")
+    _check_markers(cid, body)
+    _check_words(f"chunk {cid}", body)
     parts = [f"<!-- ink:{cid} hash:{h} -->", body.strip("\n"), ""]
     if chunk.get("deep_link"):
         parts.append(f"[Open in Inkbridge]({chunk['deep_link']})")
@@ -259,18 +337,21 @@ def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-def _entry(chunk: dict, section: str | None) -> dict:
-    return {
+def _entry(chunk: dict, section: str | None, rendered: str | None = None) -> dict:
+    e = {
         "id": chunk["id"],
         "hash": chunk["content_hash"],
         "reading": chunk.get("text_hash"),
         "section": section,
     }
+    if rendered is not None:
+        e["body"] = _body_hash(_interior(rendered))
+    return e
 
 
-def _checked(text: str) -> str:
+def _checked(text: str, strict: bool = False) -> str:
     """Never hand back a note that breaks the format."""
-    errors = validate(text)
+    errors = validate(text, strict)
     if errors:
         raise NoteError("the result would not be a valid note: " + "; ".join(errors))
     return text
@@ -291,19 +372,39 @@ def _replace_meta(text: str, note: Note) -> str:
     return text[:a] + _meta_line(note.meta) + text[b:]
 
 
-def new_note(canvas: dict, title: str, bodies: dict[str, str], vault: Path | None = None) -> str:
+def new_note(
+    canvas: dict,
+    title: str,
+    bodies: dict[str, str],
+    vault: Path | None = None,
+    index: str | None = None,
+    relates: tuple | list = (),
+    date: str | None = None,
+) -> str:
     """A fresh note with one block per chunk that has a body, in the canvas's reading order."""
     chunks = [c for c in canvas["chunks"] if c["id"] in bodies and c.get("status") == "active"]
     missing = set(bodies) - {c["id"] for c in chunks}
     if missing:
         raise NoteError(f"bodies for chunks that are not active on the canvas: {sorted(missing)}")
-    meta = {"canvas": canvas["document"], "exported": _now(), "chunks": []}
-    meta["chunks"] = [_entry(c, None) for c in chunks]
     if "\n" in title or "\r" in title:
         raise NoteError("the title must be one line")
-    head = f"---\n{_meta_line(meta)}\n---\n# {title}\n\n"
-    text = head + "\n".join(render_block(c, bodies[c["id"]], vault) for c in chunks)
-    return _checked(_refresh_sections(text))
+    _check_words("title", title)
+    for v in ([index] if index else []) + list(relates):
+        if not INDEX_RE.fullmatch(v):
+            raise NoteError(f"{v!r} must be a wikilink like [[Name]]")
+    rendered = {c["id"]: render_block(c, bodies[c["id"]], vault) for c in chunks}
+    meta = {"canvas": canvas["document"], "exported": _now()}
+    meta["chunks"] = [_entry(c, None, rendered[c["id"]]) for c in chunks]
+    fm = ["tags: [library]", "type: library", "format: reference"]
+    if index:
+        fm.append(f"index: {json.dumps(index)}")
+    if relates:
+        fm.append(f"relates: {json.dumps(list(relates))}")
+    today = date or datetime.now().astimezone().date().isoformat()
+    fm += ["publish: false", f"date: {today}", "ai-first: true", _meta_line(meta)]
+    head = "---\n" + "\n".join(fm) + f"\n---\n{FUTURE_AGENT}\n# {title}\n\n"
+    text = head + "\n".join(rendered[c["id"]] for c in chunks)
+    return _checked(_refresh_sections(text), strict=True)
 
 
 # -- re-export ---------------------------------------------------------------------------------

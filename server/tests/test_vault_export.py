@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -113,7 +114,7 @@ def test_a_new_note_validates_and_records_provenance(client, page):
         assert e["reading"] == by_id[e["id"]]["text_hash"] and e["reading"]
         assert e["section"] == by_id[e["id"]]["text"]  # the block's own heading
     assert [b.id for b in note.blocks] == [c["id"] for c in canvas["chunks"]]
-    assert text.startswith("---\ninkbridge: {")
+    assert text.startswith("---\ntags: [library]\n")
 
 
 def test_each_block_links_to_its_chunk_and_embeds_its_crop(client, page):
@@ -124,7 +125,7 @@ def test_each_block_links_to_its_chunk_and_embeds_its_crop(client, page):
         (link,) = [ln for ln in body.splitlines() if ln.startswith("[Open in Inkbridge](")]
         q = parse_qs(urlparse(link[len("[Open in Inkbridge](") : -1]).query)
         assert q == {"canvas": ["default"], "chunk": [b.id]}
-        assert f"![[attachments/inkbridge/{b.id}-{b.hash[:12]}.png]]" in body
+        assert f"![[content/raw/attachments/inkbridge/{b.id}-{b.hash[:12]}.png]]" in body
         assert "> [!ink]- Source ink" in body  # folded callout
 
 
@@ -152,6 +153,69 @@ def test_a_marker_hash_that_disagrees_with_the_frontmatter_is_invalid(client, pa
     b = inknote.parse(text).blocks[0]
     broken = text.replace(f"hash:{b.hash} -->", f"hash:{'0' * 64} -->", 1)
     assert any("marker hash differs" in e for e in inknote.validate(broken))
+
+
+# -- vault rules (INK-106) -------------------------------------------------------------------------
+
+
+def test_new_note_has_the_vault_frontmatter_and_callout(client, page):
+    _canvas, text = export(client, page)
+    fm, _, after = text[4:].partition("\n---\n")
+    lines = fm.splitlines()
+    for want in ("tags: [library]", "type: library", "format: reference", "publish: false"):
+        assert want in lines
+    assert "ai-first: true" in lines
+    assert any(re.fullmatch(r"date: \d{4}-\d{2}-\d{2}", ln) for ln in lines)
+    assert sum(ln.startswith("inkbridge:") for ln in lines) == 1
+    assert after.startswith("> [!info]- For future agent\n")
+    assert inknote.validate(text, strict=True) == []
+    canvas = outline(client)
+    rich = inknote.new_note(
+        canvas, "T", bodies_for(canvas),
+        index="[[Machine Learning & AI.base]]", relates=["[[Linear Regression]]"],
+    )
+    assert 'index: "[[Machine Learning & AI.base]]"' in rich
+    assert 'relates: ["[[Linear Regression]]"]' in rich
+    assert inknote.validate(rich, strict=True) == []
+    with pytest.raises(inknote.NoteError):
+        inknote.new_note(canvas, "T", bodies_for(canvas), index="Machine")
+    with pytest.raises(inknote.NoteError):
+        inknote.new_note(canvas, "T", bodies_for(canvas), relates=["Linear"])
+
+
+def test_every_entry_records_the_body_hash(client, page):
+    _canvas, text = export(client, page)
+    note = inknote.parse(text)
+    for b in note.blocks:
+        want = inknote._body_hash(text[b.body_start : b.body_end])
+        assert note.entry(b.id)["body"] == want
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda t: t.replace("tags: [library]", "tags: [library, ml]"),
+        lambda t: t.replace("type: library\n", ""),
+        lambda t: t.replace("format: reference", "format: novel"),
+        lambda t: t.replace("> [!info]- For future agent", "> note"),
+    ],
+)
+def test_strict_validation_catches_vault_breaks(client, page, mutate):
+    _, text = export(client, page)
+    broken = mutate(text)
+    assert broken != text
+    assert inknote.validate(broken) == []
+    assert inknote.validate(broken, strict=True)
+
+
+@pytest.mark.parametrize("bad", ["a \u2014 b", "a \u2013 b", "a \u2192 b", "ok \U0001f600", "a \u00b7 b"])
+def test_words_with_dashes_arrows_or_emoji_are_refused(client, page, bad):
+    canvas = outline(client)
+    first = canvas["chunks"][0]["id"]
+    with pytest.raises(inknote.NoteError, match="chunk"):
+        inknote.new_note(canvas, "T", {first: f"## h\n\n- {bad}"})
+    with pytest.raises(inknote.NoteError, match="title"):
+        inknote.new_note(canvas, f"T {bad}", bodies_for(canvas))
 
 
 # -- re-export -------------------------------------------------------------------------------------
@@ -370,7 +434,7 @@ def test_crops_are_saved_under_the_documented_name_and_embedded(client, page, ap
     canvas = outline(client)
     result = inknote.fetch_crops(api, tmp_path, canvas)
     assert result["saved"] == [a["id"]] and len(result["failed"]) == 2
-    saved = tmp_path / f"attachments/inkbridge/{a['id']}-{a['content_hash'][:12]}.png"
+    saved = tmp_path / f"content/raw/attachments/inkbridge/{a['id']}-{a['content_hash'][:12]}.png"
     assert saved.read_bytes() == PNG
     assert inknote.fetch_crops(api, tmp_path, canvas, [a["id"]])["skipped"] == [a["id"]]
     text = inknote.new_note(canvas, "T", bodies_for(canvas), tmp_path)
