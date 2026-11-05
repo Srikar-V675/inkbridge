@@ -573,17 +573,38 @@ def test_cli_round_trip(client, page, api, tmp_path, monkeypatch, capsys):
     assert inknote.main(args) == 0
     assert inknote.main(["validate", str(note)]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
+    assert inknote.main(["validate", str(note), "--strict"]) == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True
     before = note.read_bytes()
     assert inknote.main(["sync", str(note)]) == 0
     sync_json = tmp_path / "sync.json"
     sync_json.write_text(capsys.readouterr().out)
     assert inknote.main(["plan", str(note), str(sync_json)]) == 0
-    assert json.loads(capsys.readouterr().out)["needs_body"] == []
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["needs_body"] == [] and planned["conflict"] == []
     apply_args = ["apply", str(note), str(sync_json), str(canvas_json), str(bodies_json)]
     assert inknote.main(apply_args) == 0
     assert note.read_bytes() == before
     note.write_text("not a note")
     assert inknote.main(["validate", str(note)]) == 1
+
+
+def test_cli_new_creates_folders_and_refuses_to_overwrite(client, page, api, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("INKBRIDGE_API_URL", api)
+    canvas_json, bodies_json = tmp_path / "canvas.json", tmp_path / "bodies.json"
+    assert inknote.main(["canvas"]) == 0
+    canvas_json.write_text(capsys.readouterr().out)
+    bodies_json.write_text(json.dumps(bodies_for(json.loads(canvas_json.read_text()))))
+    out = tmp_path / "content/library/T.md"
+    args = ["new", str(canvas_json), str(bodies_json), "--title", "T", "--out", str(out)]
+    args += ["--index", "[[Machine Learning & AI.base]]"]
+    assert inknote.main(args) == 0
+    assert 'index: "[[Machine Learning & AI.base]]"' in out.read_text()
+    before = out.read_bytes()
+    capsys.readouterr()
+    assert inknote.main(args) == 2
+    assert "apply" in capsys.readouterr().err
+    assert out.read_bytes() == before
 
 
 def test_the_script_only_uses_the_standard_library():

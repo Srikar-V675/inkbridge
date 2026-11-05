@@ -8,7 +8,8 @@ the markers, and every block that did not change, stays byte-identical.
     inknote.py canvas   [--api URL] [--document ID]            # GET /documents/{id}/chunks
     inknote.py crops    --vault DIR CANVAS_JSON [--api URL] [--ids ID ...]
     inknote.py new      --title T CANVAS_JSON BODIES_JSON [--vault DIR] [--out NOTE]
-    inknote.py validate NOTE
+                        [--index "[[X.base]]"] [--relates "[[A]]" ...]   # refuses an existing NOTE
+    inknote.py validate NOTE [--strict]                      # --strict: the vault frontmatter too
     inknote.py sync     NOTE [--api URL] [--wait S]             # POST check_sync, prints result
     inknote.py plan     NOTE SYNC_JSON                          # which blocks need new words
     inknote.py apply    NOTE SYNC_JSON CANVAS_JSON BODIES_JSON [--vault DIR] [--recreate] [--out NOTE]
@@ -672,6 +673,7 @@ def _read(path: str) -> str:
 
 def _atomic(path: Path, data: bytes) -> None:
     """Write via a temp file and rename, so an interruption never leaves a truncated file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.inknote-tmp")
     tmp.write_bytes(data)
     tmp.replace(path)
@@ -705,8 +707,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--title", required=True)
     s.add_argument("--vault")
     s.add_argument("--out")
+    s.add_argument("--index")
+    s.add_argument("--relates", nargs="*", default=[])
     s = sub.add_parser("validate")
     s.add_argument("note")
+    s.add_argument("--strict", action="store_true")
     s = sub.add_parser("sync")
     s.add_argument("note")
     s.add_argument("--api")
@@ -732,9 +737,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if result["failed"] else 0
         elif a.cmd == "new":
             vault = Path(a.vault) if a.vault else None
-            _write(new_note(_load(a.canvas), a.title, _load(a.bodies), vault), a.out)
+            if a.out and Path(a.out).exists():
+                raise NoteError(f"{a.out} exists; use plan/apply to re-export it, or pick another title")
+            note = new_note(_load(a.canvas), a.title, _load(a.bodies), vault, a.index, a.relates)
+            _write(note, a.out)
         elif a.cmd == "validate":
-            errors = validate(_read(a.note))
+            errors = validate(_read(a.note), a.strict)
             print(json.dumps({"valid": not errors, "errors": errors}, indent=2))
             return 1 if errors else 0
         elif a.cmd == "sync":
