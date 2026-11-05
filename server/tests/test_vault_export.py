@@ -295,6 +295,105 @@ def test_one_changed_line_rewrites_exactly_one_block(client, page):
     assert inknote.validate(out) == []
 
 
+# -- edited blocks are never overwritten (INK-106) ---------------------------------------------------
+
+
+def edit_first_block_and_change_its_ink(client, page, reading="gradient descent v2"):
+    """The user edits block a0 by hand; then a0's ink changes meaning."""
+    _canvas, text = export(client, page)
+    text = with_user_text(text)
+    text = text.replace("- gradient descent", "- gradient descent (my note)", 1)
+    page.el("a1")["points"] = [[0, 0], [10, 21]]
+    page.put()
+    recognise(page.chunk_of("a0"), reading)
+    return text
+
+
+def test_a_changed_block_the_user_edited_is_not_overwritten(client, page):
+    text = edit_first_block_and_change_its_ink(client, page)
+    sync = check(client, text)
+    a = page.chunk_of("a0")
+    plan = inknote.plan(text, sync)
+    assert plan["conflict"] == [a["id"]] and plan["rewrite"] == []
+    assert a["id"] in plan["needs_body"]
+    out = inknote.apply(text, sync, outline(client), {a["id"]: "## v2\n\n- brand new words"})
+    before, after = inknote.parse(text), inknote.parse(out)
+    block = block_body(out, a["id"])
+    assert "(my note)" in block
+    assert block.startswith("> [!conflict] Inkbridge:") and "> - brand new words" in block
+    assert after.block(a["id"]).hash == a["content_hash"]
+    e = after.entry(a["id"])
+    assert e["hash"] == a["content_hash"] and e["reading"] == a["text_hash"]
+    assert e["body"] == before.entry(a["id"])["body"]
+    assert inknote.validate(out) == []
+    for b in before.blocks[1:]:
+        assert block_body(out, b.id) == block_body(text, b.id)
+    assert out.count(USER_TEXT) == 3
+
+
+def test_after_a_conflict_the_next_sync_is_clean_and_a_second_change_replaces_the_callout(
+    client, page
+):
+    text = edit_first_block_and_change_its_ink(client, page)
+    a = page.chunk_of("a0")["id"]
+    out = inknote.apply(text, check(client, text), outline(client), {a: "first words"})
+    again = check(client, out)
+    assert a in again["fresh"]
+    assert inknote.apply(out, again, outline(client), {}) == out
+    page.el("a1")["points"] = [[0, 0], [10, 40]]
+    page.put()
+    recognise(page.chunk_of("a0"), "gradient descent v3")
+    sync = check(client, out)
+    assert inknote.plan(out, sync)["conflict"] == [page.chunk_of("a0")["id"]]
+    a2 = page.chunk_of("a0")["id"]
+    out2 = inknote.apply(out, sync, outline(client), {a2: "second words"})
+    block = block_body(out2, a2)
+    assert block.count("[!conflict]") == 1
+    assert "second words" in block and "first words" not in block and "(my note)" in block
+    assert inknote.validate(out2) == []
+
+
+def test_an_unedited_changed_block_is_rewritten_and_its_body_hash_follows(client, page):
+    _canvas, text = export(client, page)
+    for n in (2, 3):
+        page.el("b1")["points"] = [[0, 0], [30, -10 * n]]
+        page.put()
+        recognise(page.chunk_of("b0"), f"learning rate {n}")
+        b = page.chunk_of("b0")["id"]
+        sync = check(client, text)
+        assert inknote.plan(text, sync)["conflict"] == []
+        text = inknote.apply(text, sync, outline(client), {b: f"## rate {n}\n\nnew"})
+        note = inknote.parse(text)
+        assert note.entry(b)["body"] == inknote._body_hash(block_body(text, b))
+        assert "[!conflict]" not in text
+
+
+def test_flags_are_not_user_edits(client, page):
+    _canvas, text = export(client, page)
+    for i in range(3):
+        page.el(f"c{i}")["isDeleted"] = True
+    page.put()
+    c_id = inknote.parse(text).blocks[2].id
+    out = inknote.apply(text, check(client, text), outline(client), {})
+    assert block_body(out, c_id).startswith(inknote.REMOVED_FLAG)
+    assert not inknote._edited(out, inknote.parse(out), c_id)
+    assert inknote._edited(out.replace("- momentum", "- momentum!"), inknote.parse(out), c_id)
+
+
+def test_a_note_without_body_hashes_is_rewritten_as_before(client, page):
+    text = edit_first_block_and_change_its_ink(client, page)
+    note = inknote.parse(text)
+    for e in note.meta["chunks"]:
+        del e["body"]
+    text = inknote._replace_meta(text, note)
+    a = page.chunk_of("a0")["id"]
+    sync = check(client, text)
+    assert inknote.plan(text, sync)["rewrite"] == [a]
+    out = inknote.apply(text, sync, outline(client), {a: "legacy rewrite"})
+    assert "[!conflict]" not in out and "(my note)" not in out
+    assert "legacy rewrite" in block_body(out, a)
+
+
 def outside_blocks(text):
     note = inknote.parse(text)
     out, pos = [], note.body_offset
@@ -362,6 +461,26 @@ def test_a_split_rewrites_the_block_from_its_successor_and_appends_the_other_pie
     after = inknote.parse(out)
     assert [b.id for b in after.blocks] == [top["id"], low["id"]]
     assert after.entry(old) is None and after.entry(top["id"])["hash"] == top["content_hash"]
+    assert inknote.validate(out) == []
+
+
+def test_a_split_of_an_edited_block_keeps_the_edit_and_adds_a_conflict(client):
+    page = Canvas(client, row("e", 10))
+    recognise(page.chunk_of("e0"), "ten strokes")
+    canvas = outline(client)
+    text = inknote.new_note(canvas, "Split", bodies_for(canvas))
+    text = text.replace("- ten strokes", "- ten strokes (mine)", 1)
+    for i in range(5, 10):
+        page.el(f"e{i}")["y"] += 400
+    page.put()
+    top, low = page.chunk_of("e0"), page.chunk_of("e9")
+    sync = check(client, text)
+    assert inknote.plan(text, sync)["conflict"] != []
+    out = inknote.apply(text, sync, outline(client), {top["id"]: "top", low["id"]: "low"})
+    after = inknote.parse(out)
+    assert "(mine)" in block_body(out, top["id"]) and "[!conflict]" in block_body(out, top["id"])
+    assert after.entry(top["id"])["hash"] == top["content_hash"]
+    assert after.block(low["id"]) is not None
     assert inknote.validate(out) == []
 
 

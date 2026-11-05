@@ -313,6 +313,35 @@ def render_block(chunk: dict, body: str, vault: Path | None = None) -> str:
     return "\n".join(parts) + "\n"
 
 
+CONFLICT_HEAD = (
+    "> [!conflict] Inkbridge: the ink changed, but you edited this block, so it was not rewritten."
+)
+
+
+def _edited(text: str, note: Note, cid: str) -> bool:
+    """The user changed this block since the skill wrote it (needs a stored body hash)."""
+    e, b = note.entry(cid), note.block(cid)
+    return bool(e and b and "body" in e and _body_hash(text[b.body_start : b.body_end]) != e["body"])
+
+
+def _conflict_callout(cid: str, words: str) -> str:
+    _check_words(f"chunk {cid}", words)
+    _check_markers(cid, words)
+    head = [CONFLICT_HEAD, "> The new reading is below. Merge it by hand, then delete this callout.", ">"]
+    quoted = [("> " + ln).rstrip() for ln in words.strip("\n").splitlines()]
+    return "\n".join(head + quoted) + "\n\n"
+
+
+def _conflict_edits(text: str, b: Block, new_id: str, new_hash: str, words: str) -> list:
+    """New marker line plus the callout on top (replacing an older conflict callout there)."""
+    inner = text[b.body_start : b.body_end]
+    old = _managed_prefix_len(inner) if inner.startswith(CONFLICT_HEAD) else 0
+    return [
+        (b.start, b.body_start - 1, f"<!-- ink:{new_id} hash:{new_hash} -->"),
+        (b.body_start, b.body_start + old, _conflict_callout(new_id, words)),
+    ]
+
+
 def _section(text: str, body_offset: int, block_start: int, block_end: int) -> str | None:
     """The heading a block sits under: its own first heading, else the nearest one above it."""
     for _, line, _ in _lines(text[block_start:block_end]):
@@ -418,6 +447,7 @@ def plan(text: str, sync: dict) -> dict:
         "unchanged": list(sync.get("fresh", [])),
         "refresh_hash": [i["id"] for i in sync.get("fresh_after_reread", [])],
         "rewrite": [],
+        "conflict": [],
         "merged": [],
         "flag_removed": [],
         "append": [],
@@ -426,7 +456,7 @@ def plan(text: str, sync: dict) -> dict:
     }
     for item in sync.get("changed", []):
         if item["id"] in has_block:
-            out["rewrite"].append(item["id"])
+            out["conflict" if _edited(text, note, item["id"]) else "rewrite"].append(item["id"])
             out["needs_body"].append(item["id"])
         else:
             out["user_deleted"].append(item["id"])
@@ -438,7 +468,7 @@ def plan(text: str, sync: dict) -> dict:
             out["merged"].append(item["id"])
         else:
             taken.add(item["successor"])
-            out["rewrite"].append(item["id"])
+            out["conflict" if _edited(text, note, item["id"]) else "rewrite"].append(item["id"])
             out["needs_body"].append(item["successor"])
     for cid in sync.get("removed", []):
         e = note.entry(cid)
@@ -488,31 +518,46 @@ def apply(
     edits: list[tuple[int, int, str]] = []  # (start, end, replacement) in the original text
     changed_meta = False
     blocks = {b.id: b for b in note.blocks}
-    rewritten = set(todo["rewrite"])  # a rewrite wins over a hash refresh or a flag on that block
+    conflicts = set(todo["conflict"])  # edited by the user: new words go in a callout, not over it
+    # a rewrite or conflict wins over a hash refresh or a flag on that block
+    touched = set(todo["rewrite"]) | conflicts
     for item in sync.get("changed", []):
-        if item["id"] in todo["rewrite"]:
+        if item["id"] in conflicts:
+            b, e = blocks[item["id"]], note.entry(item["id"])
+            edits += _conflict_edits(text, b, item["id"], item["hash"], bodies[item["id"]])
+            e.update(hash=item["hash"], reading=item["reading"])
+            changed_meta = True
+        elif item["id"] in todo["rewrite"]:
             b, e = blocks[item["id"]], note.entry(item["id"])
             c = chunk(item["id"], item)
-            edits.append((b.start, b.end, render_block(c, bodies[item["id"]], vault)))
-            e.update(hash=item["hash"], reading=item["reading"])
+            rendered = render_block(c, bodies[item["id"]], vault)
+            edits.append((b.start, b.end, rendered))
+            e.update(hash=item["hash"], reading=item["reading"], body=_entry(c, None, rendered)["body"])
             changed_meta = True
     for item in sync.get("replaced", []):
         b, e = blocks.get(item["id"]), note.entry(item["id"])
-        if item["id"] in todo["rewrite"]:
+        if item["id"] in conflicts:
+            succ = item["successor"]
+            edits += _conflict_edits(text, b, succ, item["hash"], bodies[succ])
+            e.update(id=succ, hash=item["hash"], reading=item["reading"])
+            changed_meta = True
+        elif item["id"] in todo["rewrite"]:
             s = {"hash": item["hash"], "reading": item["reading"]}
             c = chunk(item["successor"], s)
-            edits.append((b.start, b.end, render_block(c, bodies[item["successor"]], vault)))
+            rendered = render_block(c, bodies[item["successor"]], vault)
+            edits.append((b.start, b.end, rendered))
             e.clear()
             e.update(id=item["successor"], hash=item["hash"], reading=item["reading"])
+            e["body"] = _entry(c, None, rendered)["body"]
             changed_meta = True
-        elif item["id"] in todo["merged"] and item["id"] not in rewritten:
+        elif item["id"] in todo["merged"] and item["id"] not in touched:
             flag = MERGED_FLAG.format(id=item["successor"])
             edits.append((b.body_start, b.body_start, flag + "\n\n"))
             e.update(status="merged", successor=item["successor"])
             changed_meta = True
     for item in sync.get("fresh_after_reread", []):
         e, b = note.entry(item["id"]), blocks.get(item["id"])
-        if e is None or item["id"] in rewritten:
+        if e is None or item["id"] in touched:
             continue
         e["hash"], e["reading"] = item["hash"], item["reading"]
         changed_meta = True
@@ -520,7 +565,7 @@ def apply(
             line_end = b.body_start - 1 if text[b.body_start - 1] == "\n" else b.body_start
             edits.append((b.start, line_end, f"<!-- ink:{b.id} hash:{item['hash']} -->"))
     for cid in todo["flag_removed"]:
-        if cid in rewritten:
+        if cid in touched:
             continue
         b = blocks[cid]
         edits.append((b.body_start, b.body_start, REMOVED_FLAG + "\n\n"))
@@ -529,8 +574,9 @@ def apply(
     appended = []
     for item in sync.get("new", []):
         c = chunk(item["id"], item)
-        appended.append(render_block(c, bodies[item["id"]], vault))
-        note.meta["chunks"].append(_entry(c, None))
+        rendered = render_block(c, bodies[item["id"]], vault)
+        appended.append(rendered)
+        note.meta["chunks"].append(_entry(c, None, rendered))
         changed_meta = True
     if recreate:
         for cid in todo["user_deleted"]:
@@ -540,10 +586,11 @@ def apply(
             )
             target = src.get("successor", cid) if src else cid
             c = chunk(target, src or {"hash": note.entry(cid)["hash"]})
-            appended.append(render_block(c, bodies[cid], vault))
+            rendered = render_block(c, bodies[cid], vault)
+            appended.append(rendered)
             e = note.entry(cid)
             e.clear()
-            e.update(_entry(c, None))
+            e.update(_entry(c, None, rendered))
             changed_meta = True
     if not changed_meta:
         return text
