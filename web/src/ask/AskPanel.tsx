@@ -2,7 +2,10 @@
 // goes through the agent op queue as a draft the user accepts in DraftBar.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { askQuestion, cancelQuestion, fileName, focusIds, keepOnCanvas, listQuestions, MAX_FOCUS, type Question, type Source } from "./ask";
+import {
+  applyQuestionUpdate, askQuestion, cancelQuestion, fileName, focusIds, keepOnCanvas, listQuestions, MAX_FOCUS,
+  runnerLine, subscribeQuestions, type Question, type Source,
+} from "./ask";
 import { AnswerMarkdown } from "./askMarkdown";
 import { liveIds, resolveChunk } from "../chunks/chunks";
 
@@ -16,7 +19,6 @@ const btn = {
   cursor: "pointer",
   pointerEvents: "auto",
 } as const;
-const POLL_MS = 3000;
 const WAIT_HINT_MS = 60_000;
 
 function useSelection(api: ExcalidrawImperativeAPI): { ids: string[]; raw: number } {
@@ -86,6 +88,7 @@ function Item(props: { api: ExcalidrawImperativeAPI; canvas: string; n: number; 
     const t = setTimeout(() => setOld(true), Math.max(0, Date.parse(q.created_at) + WAIT_HINT_MS - Date.now()));
     return () => clearTimeout(t);
   }, [q.status, q.created_at]);
+  const line = runnerLine(q);
   const cancel = () => cancelQuestion(q.id).then(refetch, (e: Error) => (e.message === "409" ? refetch() : setNote(`Cancel failed (${e.message})`)));
   const keep = async () => {
     setNote("Adding draft...");
@@ -99,7 +102,8 @@ function Item(props: { api: ExcalidrawImperativeAPI; canvas: string; n: number; 
       {q.status === "pending" && (
         <div>
           <button style={btn} onClick={() => void cancel()}>Cancel</button>
-          {old && <div style={{ color: "#666" }}>Waiting for an agent: ask your MCP client to run list_questions</div>}
+          {line && <div style={{ color: q.runner_status === "failed" ? "#b3261e" : "#666" }}>{line}</div>}
+          {old && !line && <div style={{ color: "#666" }}>Waiting for an agent: ask your MCP client to run list_questions</div>}
         </div>
       )}
       {q.status === "answered" && q.answer_md && (
@@ -130,23 +134,24 @@ export default function AskPanel({ api, canvas }: { api: ExcalidrawImperativeAPI
     () => listQuestions(canvas).then((l) => (setQs(l), setError("")), (e: Error) => setError(`Could not load questions (${e.message})`)),
     [canvas],
   );
-  const pending = qs.some((q) => q.status === "pending");
+  // Pushes arrive over the ops socket (INK-104); a null push means it reconnected, so refetch.
   useEffect(() => {
     if (!open) return;
     void refetch();
-    if (!pending) return;
-    const t = setInterval(() => void refetch(), POLL_MS);
-    return () => clearInterval(t);
-  }, [open, pending, refetch]);
+    return subscribeQuestions((q) => {
+      if (!q) void refetch();
+      else if (q.document_id === canvas) setQs((l) => applyQuestionUpdate(l, q));
+    });
+  }, [open, canvas, refetch]);
 
   const ask = async () => {
     setBusy(true);
     try {
-      await askQuestion(canvas, text.trim(), sel.ids, parent?.id);
+      const created = await askQuestion(canvas, text.trim(), sel.ids, parent?.id);
       setText("");
       setParent(null);
       setError("");
-      await refetch();
+      setQs((l) => applyQuestionUpdate(l, created));
     } catch (e) {
       setError(`Could not send the question (${(e as Error).message})`);
     } finally {
@@ -163,12 +168,12 @@ export default function AskPanel({ api, canvas }: { api: ExcalidrawImperativeAPI
         <b>Ask AI</b>
         <button style={btn} onClick={() => setOpen(false)}>Close</button>
       </div>
-      <textarea value={text} maxLength={4000} onChange={(e) => setText(e.target.value)} placeholder="Select the doubt on the canvas, then ask" style={{ width: "100%", boxSizing: "border-box", marginTop: 6, font: "inherit" }} />
+      <textarea value={text} maxLength={4000} onChange={(e) => setText(e.target.value)} placeholder="Select the doubt on the canvas, then ask (a follow-up needs no selection)" style={{ width: "100%", boxSizing: "border-box", marginTop: 6, font: "inherit" }} />
       {parent && <div>Follow up on #{parent.n} <button style={btn} onClick={() => setParent(null)}>Clear</button></div>}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button style={btn} disabled={busy || !text.trim() || !sel.ids.length} onClick={() => void ask()}>Ask</button>
+        <button style={btn} disabled={busy || !text.trim() || !(parent || sel.ids.length)} onClick={() => void ask()}>Ask</button>
         <span style={{ color: "#666" }}>
-          {sel.ids.length ? `${sel.ids.length} elements${sel.raw > MAX_FOCUS ? ", capped at 200" : ""}` : "Select the doubt first"}
+          {sel.ids.length ? `${sel.ids.length} elements${sel.raw > MAX_FOCUS ? ", capped at 200" : ""}` : parent ? "Same ink as the question above" : "Select the doubt first"}
         </span>
       </div>
       {error && <div style={{ color: "#b3261e" }}>{error}</div>}
