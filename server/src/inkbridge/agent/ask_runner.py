@@ -33,14 +33,15 @@ WRITE_WORDS = (
     "rename",
     "update",
     "replace",
+    "save",
 )
 READ_TOOLS = ("read_canvas", "get_region", "search", "answer_question")
 ENV_KEEP = re.compile(
     r"(PATH|HOME|LANG|LC_.*|ANTHROPIC_.*|XDG_.*|CLAUDE_.*)$"
 )  # not GEMINI_API_KEY or tokens
 VAULT_VERB = re.compile(
-    r"(search|read|get|list)", re.IGNORECASE
-)  # positive allow-list; curate the list anyway
+    r"(^|_)(search|read|get|list)(_|$)", re.IGNORECASE
+)  # a whole word anywhere in the tool name; positive allow-list, curate the list anyway
 DENIED_NATIVE = ("Bash", "Edit", "Write", "WebFetch", "WebSearch", "NotebookEdit")
 DENIED_MCP = ("write_text", "draw_diagram", "create_canvas")
 
@@ -78,8 +79,11 @@ class ClaudeConfig:
         )
         for t in tools:
             name = t.rsplit("__", 1)[-1]
-            if not VAULT_VERB.match(name) or any(w in t.lower() for w in WRITE_WORDS):
-                raise RunnerError("vault tools must be read-only (search/read/get/list)")
+            if not VAULT_VERB.search(name) or any(w in t.lower() for w in WRITE_WORDS):
+                raise RunnerError(
+                    f"vault tool {t!r} is not read-only"
+                    " (needs a search/read/get/list word, no write word)"
+                )
         try:
             timeout = float(env.get("INKBRIDGE_RUNNER_TIMEOUT_S") or 180)
         except ValueError:

@@ -59,6 +59,25 @@ def test_vault_write_tool_refused(tmp_path):
     assert "mcp__vault__search_notes" in flag(build_command(c), "--allowedTools")
 
 
+@pytest.mark.parametrize(
+    "tool", ["obsidian_search", "obsidian_read_note", "get_note", "list_files", "search"]
+)
+def test_vault_read_tools_accepted(tmp_path, tool):
+    full = f"mcp__vault__{tool}"
+    c = cfg(tmp_path, INKBRIDGE_RUNNER_VAULT_TOOLS=full)
+    assert full in flag(build_command(c), "--allowedTools").split(",")
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["obsidian_save_note", "obsidian_update_note", "obsidian_search_and_save",
+     "get_or_create_note", "sync_notes", "Write_Note", "research", "budget"],
+)  # fmt: skip
+def test_vault_write_or_unlisted_tools_refused(tmp_path, tool):
+    with pytest.raises(RunnerError, match=tool):
+        cfg(tmp_path, INKBRIDGE_RUNNER_VAULT_TOOLS=f"mcp__vault__{tool}")
+
+
 def test_mcp_config_required(monkeypatch):
     monkeypatch.delenv("INKBRIDGE_RUNNER_MCP_CONFIG", raising=False)
     with pytest.raises(RunnerError):
