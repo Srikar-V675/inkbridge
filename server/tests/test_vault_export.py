@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -490,3 +491,21 @@ def test_an_unchanged_note_file_is_not_rewritten(client, page, tmp_path):
     os.utime(note, (1, 1))
     inknote._write(text, None, str(note))
     assert note.stat().st_mtime == 1
+
+
+SKILL = SCRIPT.parents[1] / "SKILL.md"
+
+
+def test_skill_does_not_assume_the_repo_as_cwd():
+    text = SKILL.read_text()
+    assert "H=skills/" not in text and "from the repo or copy it" not in text
+
+
+def test_helper_runs_from_a_symlinked_skill_outside_the_repo(tmp_path):
+    link = tmp_path / "inkbridge-export"
+    link.symlink_to(SCRIPT.parents[1])
+    r = subprocess.run(
+        [sys.executable, str(link / "scripts" / "inknote.py"), "--help"],
+        cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert r.returncode == 0 and "validate" in r.stdout

@@ -7,7 +7,8 @@ description: Turn an Inkbridge handwritten canvas into an Obsidian vault note th
 
 You turn a handwritten canvas into a markdown note in the user's vault, and later bring that note
 up to date without clobbering anything the user wrote. The note format is specified in
-`docs/vault-note-format.md` in the Inkbridge repo. Read it once if anything below is unclear.
+`docs/vault-note-format.md` in the Inkbridge repo (`$D/../../docs/`, see Helper below). Read it once
+if anything below is unclear.
 
 **Rules.**
 - Inkbridge never writes the vault. You write the note with your own file tools, or with the helper
@@ -26,12 +27,17 @@ up to date without clobbering anything the user wrote. The note format is specif
   the vault root). Crops go in `attachments/inkbridge/`.
 - **API:** `$INKBRIDGE_API_URL` (default `http://127.0.0.1:8000`); the canvas id is
   `$INKBRIDGE_DOCUMENT` (default `default`) unless the user names one.
-- **Helper:** `skills/inkbridge-export/scripts/inknote.py`. It needs only Python 3.11+; run it from
-  the repo or copy it. Write its JSON inputs to a scratch folder, not into the vault.
+- **Helper:** `scripts/inknote.py` inside this skill's directory (the folder this SKILL.md was loaded
+  from; Claude Code prints it as "Base directory for this skill"). It needs only Python 3.11+ and
+  works from any working directory. Write its JSON inputs to a scratch folder, not into the vault.
 
 ```
-H=skills/inkbridge-export/scripts/inknote.py
+D=$(dirname "$(readlink -f "<base directory>/SKILL.md")")   # follows the symlink made by make install-skill
+H="$D/scripts/inknote.py"
 ```
+
+`$D/../../docs/vault-note-format.md` is the note format when this skill is a symlink into the repo.
+If it is not there, ask the user for the repo path.
 
 ## First export
 
