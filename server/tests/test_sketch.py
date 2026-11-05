@@ -1,7 +1,7 @@
 """Pass 1 of the sketch reading on synthetic hand-drawn diagrams (no model)."""
 
-from inkbridge.sketch import read_sketch
-from inkbridge.sketch_image import (
+from inkbridge.canvas.sketch import read_sketch
+from inkbridge.canvas.sketch_image import (
     MIN_RADIUS,
     RADIUS,
     marker_positions,
@@ -206,7 +206,7 @@ def test_marker_image_puts_labels_on_node_centres_and_arrow_tips():
 
     from PIL import Image
 
-    from inkbridge.sketch_image import ARROW_COLOUR, NODE_COLOUR, PAD, render_markers
+    from inkbridge.canvas.sketch_image import ARROW_COLOUR, NODE_COLOUR, PAD, render_markers
 
     els = [
         loop("box1", 0, 0, 100, 60),
@@ -234,7 +234,7 @@ def test_marker_image_puts_labels_on_node_centres_and_arrow_tips():
 
 
 def test_marker_image_is_capped_in_width():
-    from inkbridge.sketch_image import render_markers
+    from inkbridge.canvas.sketch_image import render_markers
 
     els = [loop("wide", 0, 0, 5000, 60)]
     png, _ = render_markers(els, read_sketch(els), max_width=1024)
@@ -246,7 +246,7 @@ def test_marker_image_is_capped_in_width():
 
 
 def test_unattached_strokes_get_grey_markers():
-    from inkbridge.sketch_image import render_markers
+    from inkbridge.canvas.sketch_image import render_markers
 
     els = [loop("box1", 0, 0, 100, 60), line("dangling", (105, 30), (250, 200))]
     _, markers = render_markers(els, read_sketch(els))
@@ -281,7 +281,7 @@ def test_malformed_elements_are_skipped_not_fatal():
     ]
     out = read_sketch(els)
     assert [n["element_ids"] for n in out["nodes"]] == [["box1"], ["box2"]]
-    from inkbridge.sketch_image import render_markers
+    from inkbridge.canvas.sketch_image import render_markers
 
     render_markers(els, out)  # draws without raising
 
@@ -291,7 +291,7 @@ def test_marker_image_is_capped_in_height_for_tall_thin_ink():
 
     from PIL import Image
 
-    from inkbridge.sketch_image import MAX_HEIGHT, marker_positions, render_markers
+    from inkbridge.canvas.sketch_image import MAX_HEIGHT, marker_positions, render_markers
 
     els = [line("pole", (0, 0), (1, 10_000_000), n=2)]
     structure = read_sketch(els)

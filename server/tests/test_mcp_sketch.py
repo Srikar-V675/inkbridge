@@ -5,9 +5,9 @@ import json
 
 import pytest
 
+from inkbridge.canvas.sketch_prompts import MODES, sketch_prompt
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
-from inkbridge.sketch_prompts import MODES, sketch_prompt
 from tests.test_regions_api import post
 from tests.test_sketch_api import seed
 

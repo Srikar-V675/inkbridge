@@ -4,7 +4,7 @@ import logging
 import re
 import sqlite3
 
-from inkbridge.regions import (
+from inkbridge.canvas.hashes import (
     text_hash,
 )
 

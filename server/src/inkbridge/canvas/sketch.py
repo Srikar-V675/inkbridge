@@ -22,7 +22,7 @@ import itertools
 import math
 from typing import Any
 
-from inkbridge.regions import bbox_of
+from inkbridge.canvas.hashes import bbox_of
 
 SHAPES = ("rectangle", "ellipse", "diamond")
 MIN_NODE_FRACTION = 0.05  # a loop's diagonal is at least this fraction of the whole sketch's

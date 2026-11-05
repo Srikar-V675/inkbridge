@@ -302,7 +302,7 @@ def test_two_writers_with_the_same_base_version_cannot_both_win(client):
 def test_restart_leaves_a_reading_alone_when_the_ink_changed_since(client):
     # An orphan keeps its last hash while its elements change; the re-key must not move its old
     # reading onto ink it never described.
-    from inkbridge.regions import legacy_content_hash
+    from inkbridge.canvas.hashes import legacy_content_hash
 
     canvas = Canvas(client, [stroke("f0", 0.5, 0), stroke("f1", 15.5, 0)])
     chunk = canvas.chunk_of("f0")
@@ -325,7 +325,7 @@ def test_restart_leaves_a_reading_alone_when_the_ink_changed_since(client):
 
 
 def test_restart_rekeys_hashes_stored_before_integral_floats_hashed_as_ints(client):
-    from inkbridge.regions import content_hash, legacy_content_hash
+    from inkbridge.canvas.hashes import content_hash, legacy_content_hash
 
     canvas = Canvas(client, [stroke("f0", 0.5, 0), stroke("f1", 15.5, 0)])  # offset 15.0 (float)
     chunk = canvas.chunk_of("f0")

@@ -1,6 +1,6 @@
 import pytest
 
-from inkbridge.mermaid import diagram_type, is_flowchart
+from inkbridge.agent.mermaid import diagram_type, is_flowchart
 
 
 @pytest.mark.parametrize(

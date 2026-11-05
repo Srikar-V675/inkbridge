@@ -84,7 +84,7 @@ def test_op_placement_logs_a_timing_record(client, caplog):
 
 
 def test_worker_pass_logs(client, caplog):
-    from inkbridge.recognition_worker import RecognitionWorker
+    from inkbridge.recognizer.worker import RecognitionWorker
 
     w = RecognitionWorker(lambda png, hint: None, ("default",), clock=lambda: 10**10)
     with caplog.at_level(logging.INFO, logger="inkbridge.timing"):

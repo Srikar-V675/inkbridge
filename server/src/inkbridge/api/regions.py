@@ -6,9 +6,10 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
-from inkbridge import config, db, imaging, sketch, sketch_image
+from inkbridge import config, db, imaging
 from inkbridge.api.chunks import Out, refuse_orphan
 from inkbridge.api.deps import Conn
+from inkbridge.canvas import sketch, sketch_image
 from inkbridge.db import sync
 
 router = APIRouter()

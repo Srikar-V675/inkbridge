@@ -4,9 +4,10 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
-from inkbridge import db, graph
+from inkbridge import db
 from inkbridge.api.chunks import NOT_FOUND, Out, deep_link
 from inkbridge.api.deps import Conn
+from inkbridge.canvas import graph
 from inkbridge.db import outline
 
 router = APIRouter()

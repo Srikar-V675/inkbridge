@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta
 
 from inkbridge import config
-from inkbridge.chunker import (
+from inkbridge.canvas.chunker import (
     ChunkerConfig,
     agent_op,
     chunk_scene,
@@ -16,7 +16,7 @@ from inkbridge.chunker import (
     match_chunks,
     pin_groups,
 )
-from inkbridge.regions import (
+from inkbridge.canvas.hashes import (
     bbox_of,
     content_hash,
     stroke_hash,

@@ -19,7 +19,7 @@ import itertools
 
 from chunk_scale_fixture import mixed_zoom_canvas
 
-from inkbridge.chunker import ChunkerConfig, _box, _gap, chunk_scene, clustering_elements
+from inkbridge.canvas.chunker import ChunkerConfig, _box, _gap, chunk_scene, clustering_elements
 
 CONFIGS = {"k=1.5 (now)": ChunkerConfig(), "k=1.0": ChunkerConfig(k=1.0)}
 if "max_extent" in ChunkerConfig.__dataclass_fields__:

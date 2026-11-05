@@ -12,11 +12,11 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from inkbridge import db
+from inkbridge.agent.ask_runner import AskWorker
 from inkbridge.api import chunks, graph, ops, overrides, questions, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
-from inkbridge.ask_runner import AskWorker
-from inkbridge.recognition_worker import RecognitionWorker
+from inkbridge.recognizer.worker import RecognitionWorker
 from inkbridge.timing import RequestTiming, configure_logging
 
 

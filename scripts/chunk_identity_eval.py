@@ -8,7 +8,7 @@ rewrite and unrelated cases keeping an id is WRONG, so those count as "wrongly k
 Synthetic; confirm on real pages (INK-061) before turning the flag on.
 """
 
-from inkbridge.chunker import match_chunks
+from inkbridge.canvas.chunker import match_chunks
 
 SIZES = (2, 3, 4, 6, 10, 20)
 VARIANTS = {"off": None, "c0.6": 0.6, "c0.75": 0.75}

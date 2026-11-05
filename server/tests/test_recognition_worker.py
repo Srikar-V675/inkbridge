@@ -7,13 +7,13 @@ import time
 import pytest
 
 from inkbridge import db
-from inkbridge.recognition_worker import RecognitionWorker
 from inkbridge.recognizer import (
     BadResponse,
     MissingApiKey,
     RateLimited,
     Recognition,
 )
+from inkbridge.recognizer.worker import RecognitionWorker
 from tests.test_chunk_persistence import Canvas, row
 from tests.test_regions_api import PNG
 from tests.test_search import recognise, search
@@ -272,8 +272,8 @@ def test_from_env_reads_the_list_and_survives_a_missing_key(monkeypatch):
 def test_api_starts_the_worker_only_when_configured(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from inkbridge import recognition_worker
     from inkbridge.api import app
+    from inkbridge.recognizer import worker as recognition_worker
 
     started = []
     monkeypatch.setattr(recognition_worker.RecognitionWorker, "start", lambda s: started.append(s))
@@ -297,7 +297,7 @@ def test_worker_never_imports_the_api():
     import ast
     import inspect
 
-    from inkbridge import recognition_worker
+    from inkbridge.recognizer import worker as recognition_worker
 
     tree = ast.parse(inspect.getsource(recognition_worker))
     imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
@@ -563,7 +563,7 @@ def test_a_too_large_chunk_is_never_sent_to_the_model(client, caplog):
     w = worker(model)
     big = canvas.chunk_of("big")["id"]
     w._urgent["default"] = {big: LATER + 100}  # even when check_sync asks for it
-    with caplog.at_level("INFO", logger="inkbridge.recognition_worker"):
+    with caplog.at_level("INFO", logger="inkbridge.recognizer.worker"):
         assert w.run_once() == 1  # only the normal chunk
         assert w.run_once() == 0
     assert len(model.calls) == 1

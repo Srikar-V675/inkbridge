@@ -5,7 +5,7 @@ import logging
 import sqlite3
 import uuid
 
-from inkbridge.regions import (
+from inkbridge.canvas.hashes import (
     bbox_of,
     content_hash,
     stroke_hash,

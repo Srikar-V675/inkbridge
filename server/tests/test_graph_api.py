@@ -2,7 +2,7 @@
 
 import pytest
 
-from inkbridge import mermaid
+from inkbridge.agent import mermaid
 from tests.test_chunk_persistence import Canvas, row
 from tests.test_chunker import arrow, rect
 

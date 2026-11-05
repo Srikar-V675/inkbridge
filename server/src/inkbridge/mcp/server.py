@@ -15,8 +15,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 from inkbridge import config, imaging
+from inkbridge.canvas.sketch_prompts import sketch_prompt
 from inkbridge.mcp.client import ApiClient, ApiError, Conflict, NotFound
-from inkbridge.sketch_prompts import sketch_prompt
 
 mcp = MCPServer(
     "inkbridge",

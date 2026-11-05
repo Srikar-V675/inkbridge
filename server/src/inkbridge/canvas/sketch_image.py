@@ -13,8 +13,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from inkbridge.regions import bbox_of
-from inkbridge.sketch import usable
+from inkbridge.canvas.hashes import bbox_of
+from inkbridge.canvas.sketch import usable
 
 PAD = 30
 MAX_WIDTH = 1024

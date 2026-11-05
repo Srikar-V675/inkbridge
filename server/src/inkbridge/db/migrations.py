@@ -6,7 +6,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from inkbridge.regions import (
+from inkbridge.canvas.hashes import (
     content_hash,
     legacy_content_hash,
     text_hash,

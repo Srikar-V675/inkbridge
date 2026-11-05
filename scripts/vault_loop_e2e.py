@@ -242,7 +242,7 @@ def main(argv=None):
 
 def tune():
     """Chunker constants on synthetic handwriting: where `k` splits lines, and id retention."""
-    from inkbridge.chunker import ChunkerConfig, cluster
+    from inkbridge.canvas.chunker import ChunkerConfig, cluster
 
     print("\n## Tuning (synthetic handwriting, 10 x 20 px strokes)\n")
     print(

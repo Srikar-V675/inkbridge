@@ -7,7 +7,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from inkbridge.chunker import (
+from inkbridge.canvas.chunker import (
     ChunkerConfig,
 )
 

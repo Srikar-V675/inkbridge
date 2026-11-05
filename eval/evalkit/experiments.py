@@ -3,8 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from inkbridge.chunker import chunk_scene
-from inkbridge.regions import bbox_of, content_hash, text_hash
+from inkbridge.canvas.chunker import chunk_scene
+from inkbridge.canvas.hashes import bbox_of, content_hash, text_hash
 
 from . import scoring
 from .arms import ARMS, STROKE_TOKEN_BUDGET, arm_read, build_payload

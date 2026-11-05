@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from inkbridge import ask_runner
-from inkbridge.ask_runner import (
+from inkbridge.agent import ask_runner
+from inkbridge.agent.ask_runner import (
     RUNNERS,
     AskWorker,
     ClaudeCodeRunner,

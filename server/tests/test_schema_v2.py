@@ -2,7 +2,7 @@ import json
 import shutil
 
 from inkbridge import db
-from inkbridge.regions import content_hash, stroke_hash, text_hash
+from inkbridge.canvas.hashes import content_hash, stroke_hash, text_hash
 from tests.test_regions_api import SCENE, A, B, post
 from tests.test_search import recognise, search
 

@@ -13,7 +13,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from inkbridge.regions import bbox_of
+from inkbridge.canvas.hashes import bbox_of
 
 # Elements that join chunks through other rules, not by proximity.
 _CONNECTORS = {"arrow", "line"}
