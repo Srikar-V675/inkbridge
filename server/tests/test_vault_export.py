@@ -506,6 +506,6 @@ def test_helper_runs_from_a_symlinked_skill_outside_the_repo(tmp_path):
     link.symlink_to(SCRIPT.parents[1])
     r = subprocess.run(
         [sys.executable, str(link / "scripts" / "inknote.py"), "--help"],
-        cwd=tmp_path, capture_output=True, text=True,
+        check=False, cwd=tmp_path, capture_output=True, text=True,
     )
     assert r.returncode == 0 and "validate" in r.stdout
