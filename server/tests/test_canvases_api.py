@@ -184,7 +184,9 @@ def png_size(data):
 def test_thumbnail_png_and_cache(client, monkeypatch):
     from inkbridge import config
     from inkbridge.api import canvases
+    from inkbridge.canvas import raster
 
+    rev = raster.THUMB_REVISION
     doc = new_canvas(client)
     version = save(client, doc, row("a", 3))
     calls = []
@@ -192,29 +194,33 @@ def test_thumbnail_png_and_cache(client, monkeypatch):
     monkeypatch.setattr(canvases, "render_thumbnail", lambda els: calls.append(1) or real(els))
     r = client.get(f"/documents/{doc}/thumbnail")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"
-    assert png_size(r.content)[0] == (480, 320)
-    assert r.headers["etag"] == f'"v{version}"' and r.headers["cache-control"] == "no-cache"
-    assert (config.thumbs_dir() / f"{doc}-{version}.png").is_file()
+    assert png_size(r.content)[0] == (960, 640)
+    etag = f'"r{rev}v{version}"'
+    assert r.headers["etag"] == etag and r.headers["cache-control"] == "no-cache"
+    assert (config.thumbs_dir() / f"{doc}-r{rev}-{version}.png").is_file()
     assert client.get(f"/documents/{doc}/thumbnail").status_code == 200
     assert len(calls) == 1
-    cached = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": f'"v{version}"'})
+    cached = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": etag})
     assert cached.status_code == 304 and cached.content == b""
     assert len(calls) == 1
 
 
 def test_thumbnail_follows_version(client):
     from inkbridge import config
+    from inkbridge.canvas.raster import THUMB_REVISION as rev
 
     doc = new_canvas(client)
     v1 = save(client, doc, row("a", 3))
     client.get(f"/documents/{doc}/thumbnail")
     v2 = save(client, doc, row("a", 3) + row("b", 2, y=200), version=v1)
     client.get(f"/documents/{doc}/thumbnail")
-    assert (config.thumbs_dir() / f"{doc}-{v2}.png").is_file()
-    assert not (config.thumbs_dir() / f"{doc}-{v1}.png").exists()
+    assert (config.thumbs_dir() / f"{doc}-r{rev}-{v2}.png").is_file()
+    assert not (config.thumbs_dir() / f"{doc}-r{rev}-{v1}.png").exists()
 
 
 def test_thumbnail_empty_and_draft_only_canvas(client):
+    from inkbridge.canvas import raster
+
     empty = new_canvas(client)
     drafty = new_canvas(client)
     save(client, drafty, [{**row("d", 1)[0], "customData": {"draft": True}}])
@@ -222,7 +228,8 @@ def test_thumbnail_empty_and_draft_only_canvas(client):
         r = client.get(f"/documents/{doc}/thumbnail")
         assert r.status_code == 200
         size, im = png_size(r.content)
-        assert size == (480, 320) and im.convert("L").getextrema() == (255, 255)
+        assert size == (960, 640)
+        assert [c for _, c in im.convert("RGB").getcolors()] == [raster.THUMB_BG]
 
 
 def test_thumbnail_unknown_canvas_404(client):
@@ -235,6 +242,7 @@ def test_thumbnail_unknown_canvas_404(client):
 
 def test_thumbnail_304_asks_for_the_version_only(client, monkeypatch):
     from inkbridge.api import canvases
+    from inkbridge.canvas.raster import THUMB_REVISION as rev
 
     doc = new_canvas(client)
     version = save(client, doc, row("a", 3))
@@ -243,10 +251,12 @@ def test_thumbnail_304_asks_for_the_version_only(client, monkeypatch):
         raise AssertionError("the 304 path must not load the scene")
 
     monkeypatch.setattr(canvases.db, "get_scene", boom)
-    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": f'"v{version}"'})
+    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": f'"r{rev}v{version}"'})
     assert r.status_code == 304
     assert (
-        client.get("/documents/nope/thumbnail", headers={"If-None-Match": '"v1"'}).status_code
+        client.get(
+            "/documents/nope/thumbnail", headers={"If-None-Match": f'"r{rev}v1"'}
+        ).status_code
         == 404
     )
 
@@ -260,3 +270,36 @@ def test_thumbnail_serves_the_bytes_it_rendered(client, monkeypatch):
     monkeypatch.setattr(canvases, "_store", lambda *a, **k: None)  # nothing on disk to re-read
     r = client.get(f"/documents/{doc}/thumbnail")
     assert r.status_code == 200 and r.content == b"rendered"
+
+
+def test_thumbnail_revision_replaces_old_cache(client, monkeypatch):
+    from inkbridge import config
+    from inkbridge.api import canvases
+    from inkbridge.canvas import raster
+
+    rev = raster.THUMB_REVISION
+    doc = new_canvas(client)
+    version = save(client, doc, row("a", 3))
+    old = client.get(f"/documents/{doc}/thumbnail")
+    assert old.headers["etag"] == f'"r{rev}v{version}"'
+    monkeypatch.setattr(canvases, "THUMB_REVISION", rev + 1)
+    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": old.headers["etag"]})
+    assert r.status_code == 200 and r.headers["etag"] == f'"r{rev + 1}v{version}"'
+    assert (config.thumbs_dir() / f"{doc}-r{rev + 1}-{version}.png").is_file()
+    assert not (config.thumbs_dir() / f"{doc}-r{rev}-{version}.png").exists()
+
+
+def test_thumbnail_legacy_cache_file_is_ignored_and_removed(client):
+    from inkbridge import config
+
+    doc = new_canvas(client)
+    version = save(client, doc, row("a", 3))
+    config.thumbs_dir().mkdir(parents=True, exist_ok=True)
+    legacy = config.thumbs_dir() / f"{doc}-{version}.png"
+    other = config.thumbs_dir() / "other-3.png"
+    legacy.write_bytes(b"old")
+    other.write_bytes(b"keep")
+    r = client.get(f"/documents/{doc}/thumbnail")
+    assert r.status_code == 200 and png_size(r.content)[0] == (960, 640)
+    assert not legacy.exists()
+    assert other.read_bytes() == b"keep"
