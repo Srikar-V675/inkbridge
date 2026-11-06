@@ -12,5 +12,5 @@ export default function Root() {
     // Stamps "last opened" for the Continue card; a failure only costs that.
     if (opened) void fetch(`/documents/${encodeURIComponent(opened)}/open`, { method: "POST" }).catch(() => {});
   }, [opened]);
-  return loc.kind === "home" ? <Home /> : <App key={canvasKey(loc)} route={loc} />;
+  return loc.kind === "home" ? <Home archived={loc.archived} /> : <App key={canvasKey(loc)} route={loc} />;
 }

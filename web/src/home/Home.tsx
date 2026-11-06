@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { navigate, onLinkClick } from "../lib/nav";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { backTo, navigate, onLinkClick } from "../lib/nav";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { Toast } from "../ui/Toast";
 import { CanvasMenu } from "./CanvasMenu";
 import { archiveCanvas, createCanvas, duplicateCanvas, listCanvases, pinCanvas, renameCanvas, thumbnailUrl } from "./homeApi.ts";
-import { canvasMeta, homeSections, newCanvasTitle, offerLabel, type CanvasSummary } from "./homeLogic.ts";
+import { archivedHref, canvasMeta, homeSections, newCanvasTitle, offerLabel, type CanvasSummary } from "./homeLogic.ts";
 import { MoreIcon, PinIcon, PlusIcon, SearchIcon } from "./icons";
 import "./Home.css";
 
@@ -47,7 +47,7 @@ function Item(props: {
         props.openMenu();
       }}
     >
-      <a href={href(c)} onClick={onLinkClick} className="ink-home-link-item">
+      <a href={href(c)} onClick={(e) => onLinkClick(e, (u) => navigate(u, { hint: { canvas: c.id, title: c.title } }))} className="ink-home-link-item">
         <Thumb canvas={c} className="ink-home-thumb" />
         {variant === "feature" && (
           <>
@@ -82,32 +82,32 @@ function Item(props: {
   );
 }
 
-export function Home() {
-  const [canvases, setCanvases] = useState<CanvasSummary[] | null>(null);
+export function Home({ archived }: { archived: boolean }) {
+  const [loaded, setLoaded] = useState<{ archived: boolean; list: CanvasSummary[] } | null>(null);
+  const canvases = loaded && loaded.archived === archived ? loaded.list : null; // the other view's list is not shown
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [archivedView, setArchivedView] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [toast, setToast] = useState<Toasted | null>(null);
   const [now, setNow] = useState(() => new Date());
 
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
-      setCanvases(await listCanvases(f, archivedView ? "true" : "false"));
+      const list = await listCanvases(f, archived ? "true" : "false");
+      if (mine !== seq.current) return; // a newer load (the other view) owns the screen
+      setLoaded({ archived, list });
       setNow(new Date());
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load canvases");
+      if (mine === seq.current) setError(e instanceof Error ? e.message : "Could not load canvases");
     }
-  }, [archivedView]);
+  }, [archived]);
   useEffect(() => {
+    setMenuFor(null);
     void load();
   }, [load]);
-  const showArchived = (on: boolean) => {
-    setCanvases(null); // the other list is not the one on screen
-    setMenuFor(null);
-    setArchivedView(on);
-  };
 
   const closeMenu = useCallback(() => setMenuFor(null), []);
   const dismissToast = useCallback(() => setToast(null), []);
@@ -126,7 +126,7 @@ export function Home() {
   const create = async () => {
     try {
       const made = await createCanvas(f, newCanvasTitle(new Date()));
-      navigate(`/?canvas=${encodeURIComponent(made.id)}`);
+      navigate(`/?canvas=${encodeURIComponent(made.id)}`, { hint: { canvas: made.id, title: made.title } });
     } catch (e) {
       setToast({ message: e instanceof Error ? e.message : "Could not create a canvas" });
     }
@@ -162,7 +162,7 @@ export function Home() {
     <Item key={c.id} canvas={c} variant={variant} now={now} menuOpen={menuFor === `${variant}:${c.id}`} openMenu={() => setMenuFor(`${variant}:${c.id}`)} menu={menuFrom(c)} />
   );
 
-  const sections = useMemo(() => homeSections(canvases ?? [], archivedView ? "" : query, now), [canvases, query, now, archivedView]);
+  const sections = useMemo(() => homeSections(canvases ?? [], archived ? "" : query, now), [canvases, query, now, archived]);
   const searching = query.trim() !== "";
 
   let body: React.ReactNode;
@@ -175,14 +175,14 @@ export function Home() {
     );
   } else if (!canvases) {
     body = <p className="ink-home-state">Loading</p>;
-  } else if (archivedView) {
+  } else if (archived) {
     body = (
       <section className="ink-home-section">
         <div className="ink-home-sectionhead">
           <h1 className="ink-home-h">Archived</h1>
           <span className="ink-home-count">{canvases.length}</span>
           <span className="ink-home-spacer" />
-          <button type="button" className="ink-home-textlink" onClick={() => showArchived(false)}>Back to canvases</button>
+          <a className="ink-home-textlink" href={archivedHref(false)} onClick={(e) => onLinkClick(e, backTo)}>Back to canvases</a>
         </div>
         {canvases.length === 0 ? <p className="ink-home-state">Nothing archived.</p> : <div className="ink-home-grid">{canvases.map((c) => item(c, "tile"))}</div>}
       </section>
@@ -214,7 +214,7 @@ export function Home() {
             <h2 className="ink-home-h">{searching ? "Matching canvases" : "All canvases"}</h2>
             <span className="ink-home-count">{sections.all.length}</span>
             <span className="ink-home-spacer" />
-            <button type="button" className="ink-home-textlink" onClick={() => showArchived(true)}>Archived</button>
+            <a className="ink-home-textlink" href={archivedHref(true)} onClick={onLinkClick}>Archived</a>
           </div>
           {sections.all.length === 0 ? <p className="ink-home-state">No canvas matches.</p> : <div className="ink-home-grid">{sections.all.map((c) => item(c, "tile"))}</div>}
         </section>
