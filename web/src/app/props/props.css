@@ -1,0 +1,16 @@
+/* Shapes flyout and properties card (INK-175, docs/decisions/0075). Tokens only. */
+.ink-flyout-wrap {
+  z-index: 5;
+}
+.ink-flyout.ink-card {
+  padding: var(--space-sm);
+}
+.ink-flyout__row {
+  display: flex;
+  gap: var(--space-xs);
+  touch-action: manipulation;
+}
+.ink-flyout .ink-icon-button[aria-pressed="true"] {
+  background: var(--color-charcoal);
+  color: var(--color-paper);
+}
