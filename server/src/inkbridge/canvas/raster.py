@@ -32,8 +32,7 @@ THUMB_FREEDRAW_MIN = 2.5
 FREEDRAW_BOOST = 1.25
 THUMB_STEP = 0.8  # card px: drop polyline points closer than this
 GREEK_BELOW = 5.0  # card px: text with a smaller font is drawn as bars
-TRIM = 0.05  # per-axis percentile trim for the core box
-REACH = 0.5  # a primitive within REACH * core size of the core box still counts
+REACH = 6.0  # a primitive within REACH x (median distance from the median centre) still counts
 CHARCOAL = (30, 30, 30)
 HEAD_LEN = 12  # arrowhead length, canvas units
 HEAD_ANGLE = math.radians(25)
@@ -327,21 +326,31 @@ def render_crop(
     return _png(img)
 
 
+def _median(values: list[float]) -> float:
+    v = sorted(values)
+    return v[len(v) // 2] if len(v) % 2 else (v[len(v) // 2 - 1] + v[len(v) // 2]) / 2
+
+
 def _fit_box(prims: list[dict[str, Any]]) -> tuple[float, float, float, float]:
-    """Bounds of the main body of the ink: the whole box, minus far outliers (they clip)."""
-    pts = _points_of(prims)
-    xs = sorted(p[0] for p in pts)
-    ys = sorted(p[1] for p in pts)
-    cut = int(TRIM * (len(pts) - 1))
-    cx0, cx1 = xs[cut], xs[len(xs) - 1 - cut]
-    cy0, cy1 = ys[cut], ys[len(ys) - 1 - cut]
-    pad = REACH * max(cx1 - cx0, cy1 - cy0, 1.0)
-    keep = []
-    for p in prims:
-        x0, y0, x1, y1 = _bounds([p])
-        mx, my = (x0 + x1) / 2, (y0 + y1) / 2
-        if cx0 - pad <= mx <= cx1 + pad and cy0 - pad <= my <= cy1 + pad:
-            keep.append(p)
+    """Bounds of the main body of the ink: the whole box, minus far strays (they clip).
+
+    A primitive counts when its centre is within REACH x max(MAD, median primitive size) of the
+    median centre on both axes, so a handful of strays cannot move the frame however few strokes
+    the page has.
+    """
+    boxes = [_bounds([p]) for p in prims]
+    cx = [(b[0] + b[2]) / 2 for b in boxes]
+    cy = [(b[1] + b[3]) / 2 for b in boxes]
+    size = _median([max(b[2] - b[0], b[3] - b[1]) for b in boxes])
+    limits = []
+    for axis in (cx, cy):
+        med = _median(axis)
+        limits.append((med, REACH * max(_median([abs(c - med) for c in axis]), size, 1.0)))
+    keep = [
+        p
+        for p, x, y in zip(prims, cx, cy, strict=True)
+        if abs(x - limits[0][0]) <= limits[0][1] and abs(y - limits[1][0]) <= limits[1][1]
+    ]
     return _bounds(keep or prims)
 
 
