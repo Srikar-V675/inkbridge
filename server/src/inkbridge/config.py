@@ -57,3 +57,17 @@ def chunk_containment() -> float | None:
         )
         return None
     return value
+
+
+def crop_source() -> str:
+    """INKBRIDGE_CROP_SOURCE: 'browser' (default; the tablet uploads crops) or 'server' (INK-120). Read at call time."""
+    raw = (os.environ.get("INKBRIDGE_CROP_SOURCE") or "").strip().lower()
+    if raw in ("", "browser"):
+        return "browser"
+    if raw == "server":
+        return "server"
+    print(
+        f"inkbridge: ignoring INKBRIDGE_CROP_SOURCE={raw!r} (want server or browser)",
+        file=sys.stderr,
+    )
+    return "browser"

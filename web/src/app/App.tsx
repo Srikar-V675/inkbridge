@@ -9,7 +9,7 @@ import { publishQuestion } from "../ask/ask";
 import { DraftBar } from "../drafts/DraftBar";
 import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "../drafts/draftView";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "../chunks/chunks";
-import { CropSync } from "../sync/cropSync";
+import { CropSync, serverRendersCrops } from "../sync/cropSync";
 import { type DraftElement } from "../drafts/drafts";
 import { draftOpId, dropDrafts } from "../drafts/resolve";
 import { drawOp } from "../drafts/drawOp";
@@ -206,6 +206,14 @@ export default function App() {
       },
     });
     cropRef.current = crops;
+    // The server renders the crops itself when INKBRIDGE_CROP_SOURCE=server (INK-120): switch the
+    // export and upload off. A failed health call leaves browser crops on.
+    fetch("/health")
+      .then((r) => r.json())
+      .then((h) => {
+        if (serverRendersCrops(h)) crops.dispose();
+      })
+      .catch(() => {});
     const sync = new SceneSync({
       documentId: route.canvas,
       clock,

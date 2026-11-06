@@ -7,7 +7,7 @@ reading decides between `fresh_after_reread` (same words) and `changed`.
 
 import sqlite3
 
-from inkbridge import imaging
+from inkbridge import config, imaging
 from inkbridge.db.common import DocumentNotFound
 from inkbridge.db.documents import document_exists
 from inkbridge.db.outline import chunk_outline
@@ -59,8 +59,9 @@ def resolve(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> l
 
 def needs_reading(resolved: list[tuple]) -> list[str]:
     """Live chunks whose status depends on a reading that does not exist yet and that the worker
-    can read now (fresh crop). A stale crop cannot be read until the browser re-exports it, so
-    waiting for it would only spend the whole wait: it is reported at once instead."""
+    can read now (fresh crop). In browser mode a stale crop cannot be read until the tablet
+    re-exports it, so waiting would only spend the whole wait: it is reported at once instead.
+    In server mode the worker renders it first, so it is readable (INK-120)."""
     ids = []
     for note, region, successor in resolved:
         live = region if region is not None and region["content_hash"] != note["hash"] else None
@@ -68,7 +69,7 @@ def needs_reading(resolved: list[tuple]) -> list[str]:
         if (
             live is not None
             and not live["source"]
-            and not live["png_stale"]
+            and (config.crop_source() == "server" or not live["png_stale"])
             and imaging.unreadable_reason(live["bounds"], live["stroke_count"]) is None
         ):
             ids.append(live["id"])

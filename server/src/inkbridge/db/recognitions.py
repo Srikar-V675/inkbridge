@@ -106,15 +106,18 @@ def search(
     return [dict(r) for r in conn.execute(sql, args)]
 
 
-def recognition_candidates(conn: sqlite3.Connection, document_id: str) -> list[dict]:
+def recognition_candidates(
+    conn: sqlite3.Connection, document_id: str, include_stale: bool = False
+) -> list[dict]:
     """Active regions the recognizer should read now (INK-014).
 
-    Fresh crop (png_stale = 0) and no reading of any source for the current content_hash: moved
+    Fresh crop (png_stale = 0; with include_stale the server renders it first, INK-120) and no reading of any source for the current content_hash: moved
     ink keeps its content_hash and so its reading, and a user or agent reading needs no model call.
     """
+    fresh = "" if include_stale else " AND r.png_stale = 0"
     rows = conn.execute(
         "SELECT r.id, r.content_hash, r.png_path, r.bbox, r.element_ids_json FROM regions r"
-        " WHERE r.document_id = ? AND r.status = 'active' AND r.png_stale = 0"
+        f" WHERE r.document_id = ? AND r.status = 'active'{fresh}"
         " AND r.content_hash IS NOT NULL"
         " AND NOT EXISTS (SELECT 1 FROM recognitions c"
         "  WHERE c.region_id = r.id AND c.content_hash = r.content_hash)"

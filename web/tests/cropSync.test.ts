@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { CropSync, MAX_CROP_ELEMENTS, MAX_READ_UNITS, type StaleChunk } from "../src/sync/cropSync.ts";
+import { CropSync, MAX_CROP_ELEMENTS, MAX_READ_UNITS, serverRendersCrops, type StaleChunk } from "../src/sync/cropSync.ts";
 import { setTimingSink } from "../src/lib/timing.ts";
 
 const settle = async () => {
@@ -328,5 +328,27 @@ describe("CropSync", () => {
     } finally {
       setTimingSink(() => {});
     }
+  });
+
+  it("does nothing after dispose, the switch-off App.tsx uses in server mode (INK-120)", async () => {
+    const h = harness({ start: false });
+    h.sync.dispose();
+    h.sync.start(1e9);
+    h.sync.request();
+    h.sync.activity();
+    await h.advance(30_000);
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.exported.length, 0);
+  });
+});
+
+describe("serverRendersCrops", () => {
+  it("is true only when /health says crop_source is server", () => {
+    assert.equal(serverRendersCrops({ status: "ok", crop_source: "server" }), true);
+    assert.equal(serverRendersCrops({ status: "ok", crop_source: "browser" }), false);
+    assert.equal(serverRendersCrops({ status: "ok" }), false);
+    assert.equal(serverRendersCrops(null), false);
+    assert.equal(serverRendersCrops("server"), false);
+    assert.equal(serverRendersCrops(undefined), false);
   });
 });

@@ -118,6 +118,9 @@ def list_chunks(
     return result
 
 
+MAX_RENDER_PER_OVERVIEW = 24  # server-mode crops rendered inside one overview request
+
+
 @router.get("/documents/{document_id}/overview")
 def get_overview(
     document_id: str,
@@ -137,6 +140,11 @@ def get_overview(
         raise HTTPException(404, NOT_FOUND) from None
     bands = imaging.plan_bands(chunks[offset:], max_width)
     band = bands[0] if bands else []
+    if config.crop_source() == "server":  # render what is stale, a few per call (INK-120)
+        stale = [c for c in band if c["png_stale"]][:MAX_RENDER_PER_OVERVIEW]
+        for c in stale:
+            if db.render_server_crop(conn, c["id"]):
+                c["png_stale"] = False  # the rest stay framed; a later call finishes them
     paths = {c["id"]: Path(c.pop("png_path") or "") for c in band}
 
     def load(chunk_id: str) -> bytes | None:
@@ -173,6 +181,7 @@ def refuse_orphan(conn, region_id: str, history: bool) -> None:
 def get_region_png(region_id: str, conn: Conn, history: bool = False) -> Response:
     """The stored crop byte for byte (full size); /image is the downscaled one."""
     refuse_orphan(conn, region_id, history)
+    db.ensure_crop(conn, region_id)  # server mode: render a stale or missing crop (INK-120)
     path = db.get_region_png_path(conn, region_id)
     if path is None:
         raise HTTPException(404, "region not found; GET /documents/{id}/chunks lists chunk ids")
