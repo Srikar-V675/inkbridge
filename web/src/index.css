@@ -1,1 +1,4 @@
+@import "./styles/tokens.css";
+@import "./styles/fonts.css";
 html,body,#root{margin:0;height:100%}
+body{background:var(--color-paper);color:var(--color-charcoal);font-family:var(--type-reading-family);font-size:var(--type-reading-size);line-height:var(--type-reading-line-height)}

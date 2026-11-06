@@ -1,0 +1,13 @@
+.ink-toast {
+  box-sizing: border-box;
+  background: var(--color-card);
+  color: var(--color-charcoal);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-popover);
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  min-height: var(--space-touch);
+  font: var(--type-control-weight) var(--type-control-size)/1.3 var(--type-control-family);
+}

@@ -6,6 +6,7 @@
   "scripts": {
     "predev": "node scripts/copy-fonts.mjs",
     "dev": "vite",
+    "tokens": "node scripts/design-tokens.mjs",
     "prebuild": "node scripts/copy-fonts.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",

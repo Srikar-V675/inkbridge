@@ -1,0 +1,13 @@
+.ink-status-dot {
+  box-sizing: border-box;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.ink-status-dot--sending {
+  background: var(--color-soft-ink);
+}
+.ink-status-dot--risk {
+  background: var(--color-alarm);
+}

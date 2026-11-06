@@ -1,0 +1,12 @@
+.ink-badge {
+  box-sizing: border-box;
+  display: inline-block;
+  padding: var(--component-draft-badge-padding);
+  border-radius: var(--component-draft-badge-rounded);
+  background: var(--component-draft-badge-background-color);
+  color: var(--component-draft-badge-text-color);
+  font-family: var(--type-note-family);
+  font-size: var(--type-note-size);
+  font-weight: 600;
+  line-height: 1.2;
+}

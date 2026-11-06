@@ -1,0 +1,44 @@
+.ink-button {
+  box-sizing: border-box;
+  min-height: var(--space-touch);
+  border: 0;
+  border-radius: var(--component-button-primary-rounded);
+  font: var(--type-button-weight) var(--type-button-size)/1 var(--type-button-family);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+}
+.ink-button--primary {
+  background: var(--component-button-primary-background-color);
+  color: var(--component-button-primary-text-color);
+  padding: var(--component-button-primary-padding);
+}
+.ink-button--primary:active {
+  opacity: 0.85;
+}
+.ink-button--secondary {
+  background: var(--component-button-secondary-background-color);
+  color: var(--component-button-secondary-text-color);
+  padding: var(--component-button-secondary-padding);
+}
+.ink-button--secondary:active {
+  background: var(--color-pressed);
+}
+.ink-button--quiet {
+  background: var(--component-button-quiet-background-color);
+  color: var(--component-button-quiet-text-color);
+  padding: var(--component-button-quiet-padding);
+}
+.ink-button--quiet:hover {
+  background: var(--component-button-quiet-hover-background-color);
+}
+.ink-button:focus-visible {
+  outline: 2px solid var(--color-charcoal);
+  outline-offset: 2px;
+}
+.ink-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

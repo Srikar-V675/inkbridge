@@ -1,0 +1,26 @@
+/* 36 px: the only sub-44 target, sits beside ink (DESIGN.md Layout). */
+.ink-chip {
+  box-sizing: border-box;
+  height: var(--component-offer-chip-height);
+  padding: 0 14px 0 10px;
+  border: 0;
+  border-radius: var(--component-offer-chip-rounded);
+  background: var(--component-offer-chip-background-color);
+  color: var(--component-offer-chip-text-color);
+  font: var(--type-control-weight) var(--type-control-size)/1 var(--type-control-family);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+}
+.ink-chip__dot {
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-charcoal);
+}
+.ink-chip:focus-visible {
+  outline: 2px solid var(--color-charcoal);
+  outline-offset: 2px;
+}
