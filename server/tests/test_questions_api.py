@@ -163,3 +163,22 @@ def test_focus_follows_chunk_ids_at_read_time(client):
     assert merged.status_code == 200, merged.text
     got = client.get(f"/questions/{q['id']}").json()["focus_chunk_ids"]
     assert got == [chunk_id(client)] and got != [first]
+
+
+def test_follow_up_without_focus_inherits_the_threads_focus(client):
+    seed(client)
+    cid = chunk_id(client)
+    q1 = ask(client, "first", focus_element_ids=["user-a"])
+    answer(client, q1["id"])
+    q2 = ask(client, "second", parent_id=q1["id"])  # no selection
+    assert q2["focus_element_ids"] == ["user-a"] and q2["focus_chunk_ids"] == [cid]
+    q3 = ask(client, "third", parent_id=q2["id"])  # follow-up of a follow-up: still the root's
+    assert q3["focus_element_ids"] == ["user-a"] and q3["focus_chunk_ids"] == [cid]
+
+
+def test_follow_up_with_its_own_focus_keeps_it_and_a_root_stays_empty(client):
+    seed(client)
+    q1 = ask(client, "first", focus_element_ids=["user-a"])
+    q2 = ask(client, "second", parent_id=q1["id"], focus_element_ids=["user-b"])
+    assert q2["focus_element_ids"] == ["user-b"]
+    assert ask(client, "alone")["focus_element_ids"] == []
