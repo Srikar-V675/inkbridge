@@ -35,6 +35,16 @@ def was_applied(document_id: str, save_key: str) -> bool:
     return (document_id, save_key) in _applied
 
 
+def count_live(elements: list[dict]) -> int:
+    """Elements that are neither deleted nor agent drafts: the home screen's ink count."""
+
+    def draft(e: dict) -> bool:
+        data = e.get("customData")
+        return isinstance(data, dict) and bool(data.get("draft"))
+
+    return sum(1 for e in elements if not e.get("isDeleted") and not draft(e))
+
+
 def put_scene(
     conn: sqlite3.Connection,
     document_id: str,
@@ -98,6 +108,10 @@ def put_scene(
         elements = json.loads(elements_json)
         if max_elements is not None and len(elements) > max_elements:
             raise SceneTooLarge(len(elements))
+        conn.execute(
+            "UPDATE scenes SET element_count = ? WHERE document_id = ?",
+            (count_live(elements), document_id),
+        )
         by_id = {e["id"]: e for e in elements}
         t1 = time.perf_counter()
         changed = _changed_ids(old_elements, by_id)

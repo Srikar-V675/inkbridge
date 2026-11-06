@@ -1,5 +1,6 @@
 """INK-118: canvases home (summaries, patch, open, duplicate) and the thumbnail cache."""
 
+import json
 import shutil
 
 from inkbridge import db
@@ -120,11 +121,52 @@ def test_migration_0007(tmp_path, monkeypatch):
     conn = db.connect(tmp_path / "v6.db")
     assert db.migrate(conn) == [1, 2, 3, 4, 5, 6]
     db.ensure_default_document(conn)
+    conn.execute(
+        "UPDATE scenes SET version = 1, elements_json = ? WHERE document_id = 'default'",
+        (json.dumps(ink_with_noise()),),
+    )
+    conn.commit()
     monkeypatch.undo()
     assert db.migrate(conn) == [7]
     r = conn.execute("SELECT pinned, archived_at, last_opened_at FROM documents").fetchone()
     assert (r["pinned"], r["archived_at"], r["last_opened_at"]) == (0, None, None)
+    # the stored count is backfilled: live elements only, no deleted ones and no drafts
+    assert db.list_documents(conn)[0]["element_count"] == 3
     conn.close()
+
+
+def test_list_reads_the_stored_count_not_the_scene_json(client):
+    doc = new_canvas(client)
+    version = save(client, doc, ink_with_noise())
+    conn = db.connect()
+    conn.execute("UPDATE scenes SET elements_json = 'not json' WHERE document_id = ?", (doc,))
+    conn.commit()
+    conn.close()
+    assert listing(client)[doc]["element_count"] == 3  # json_each over the text would raise
+    assert version == 1
+
+
+def test_stored_count_follows_every_save_including_deltas(client):
+    doc = new_canvas(client)
+    els = ink_with_noise()
+    save(client, doc, els)
+    gone = {**els[0], "isDeleted": True, "version": 2}
+    r = client.put(
+        f"/documents/{doc}/scene", json={"base_version": 1, "elements": [gone], "delta": True}
+    )
+    assert r.status_code == 200
+    assert listing(client)[doc]["element_count"] == 2
+    save(client, doc, [])
+    assert listing(client)[doc]["element_count"] == 0
+
+
+def test_get_one_canvas_summary(client):
+    doc = new_canvas(client, "Solo")
+    save(client, doc, row("a", 2))
+    r = client.get(f"/documents/{doc}")
+    assert r.status_code == 200 and set(r.json()) == HOME_KEYS
+    assert r.json()["title"] == "Solo" and r.json()["element_count"] == 2
+    assert client.get("/documents/nope").status_code == 404
 
 
 # --- thumbnails (Task 2) ---
@@ -189,3 +231,32 @@ def test_thumbnail_unknown_canvas_404(client):
     assert client.get("/documents/nope/thumbnail").status_code == 404
     assert client.get("/documents/..%2F..%2Fx/thumbnail").status_code == 404
     assert not config.thumbs_dir().exists() or not list(config.thumbs_dir().iterdir())
+
+
+def test_thumbnail_304_asks_for_the_version_only(client, monkeypatch):
+    from inkbridge.api import canvases
+
+    doc = new_canvas(client)
+    version = save(client, doc, row("a", 3))
+
+    def boom(*a, **k):
+        raise AssertionError("the 304 path must not load the scene")
+
+    monkeypatch.setattr(canvases.db, "get_scene", boom)
+    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": f'"v{version}"'})
+    assert r.status_code == 304
+    assert (
+        client.get("/documents/nope/thumbnail", headers={"If-None-Match": '"v1"'}).status_code
+        == 404
+    )
+
+
+def test_thumbnail_serves_the_bytes_it_rendered(client, monkeypatch):
+    from inkbridge.api import canvases
+
+    doc = new_canvas(client)
+    save(client, doc, row("a", 3))
+    monkeypatch.setattr(canvases, "render_thumbnail", lambda els: b"rendered")
+    monkeypatch.setattr(canvases, "_store", lambda *a, **k: None)  # nothing on disk to re-read
+    r = client.get(f"/documents/{doc}/thumbnail")
+    assert r.status_code == 200 and r.content == b"rendered"

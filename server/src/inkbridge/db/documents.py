@@ -32,6 +32,16 @@ def get_scene(conn: sqlite3.Connection, document_id: str) -> tuple[int, str]:
     return row["version"], row["elements_json"]
 
 
+def scene_version(conn: sqlite3.Connection, document_id: str) -> int:
+    """The stored scene version without loading the elements, or raise DocumentNotFound."""
+    row = conn.execute(
+        "SELECT version FROM scenes WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    if row is None:
+        raise DocumentNotFound(document_id)
+    return row["version"]
+
+
 def document_exists(conn: sqlite3.Connection, document_id: str) -> bool:
     return (
         conn.execute("SELECT 1 FROM documents WHERE id = ?", (document_id,)).fetchone() is not None
@@ -44,13 +54,12 @@ def document_updated_at(conn: sqlite3.Connection, document_id: str) -> str | Non
     return row["updated_at"] if row else None
 
 
-# INK-118 (decision 0069): one row per canvas for the home screen.
+# INK-118 (decision 0069): one row per canvas for the home screen. element_count is stored by
+# put_scene, so a list never parses a scene; the other counts are indexed lookups.
 _SUMMARY = """
 SELECT d.id, d.title, d.updated_at, d.pinned, d.archived_at, d.last_opened_at,
        COALESCE(s.version, 0) AS version,
-       (SELECT COUNT(*) FROM json_each(COALESCE(s.elements_json, '[]')) j
-          WHERE json_extract(j.value, '$.isDeleted') IS NOT 1
-            AND json_extract(j.value, '$.customData.draft') IS NOT 1) AS element_count,
+       COALESCE(s.element_count, 0) AS element_count,
        (SELECT COUNT(*) FROM regions r WHERE r.document_id = d.id
           AND r.created_by = 'auto' AND r.status = 'active') AS chunk_count,
        (SELECT COUNT(*) FROM agent_ops o WHERE o.document_id = d.id

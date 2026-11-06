@@ -37,6 +37,16 @@ class DocumentPatch(BaseModel):
         return self
 
 
+@router.get("/documents/{document_id}", response_model=DocumentOut)
+def get_document(document_id: str, conn: Conn) -> dict:
+    """One canvas's summary (the title for the top bar) without listing them all."""
+    try:
+        doc = db.document_summary(conn, document_id)
+    except db.DocumentNotFound:
+        raise HTTPException(404, NOT_FOUND) from None
+    return {**doc, "url": deep_link(doc["id"])}
+
+
 @router.patch("/documents/{document_id}", response_model=DocumentOut)
 def patch_document(document_id: str, body: DocumentPatch, conn: Conn) -> dict:
     try:
@@ -89,20 +99,35 @@ def _store(path: Path, png: bytes, keep_prefix: str) -> None:
             old.unlink(missing_ok=True)
 
 
+def _headers(version: int) -> dict[str, str]:
+    return {"ETag": f'"v{version}"', "Cache-Control": "no-cache"}
+
+
+def _read(path: Path) -> bytes | None:
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:  # never rendered, or another request just replaced it
+        return None
+
+
 @router.get("/documents/{document_id}/thumbnail")
 def thumbnail(document_id: str, conn: Conn, request: Request) -> Response:
     """480x320 PNG of the whole canvas, cached per scene version beside the database."""
     if not _SAFE_ID.fullmatch(document_id):
         raise HTTPException(404, NOT_FOUND)
     try:
-        version, raw = db.get_scene(conn, document_id)
+        version = db.scene_version(conn, document_id)  # the 304 path never loads the elements
     except db.DocumentNotFound:
         raise HTTPException(404, NOT_FOUND) from None
-    etag = f'"v{version}"'
-    headers = {"ETag": etag, "Cache-Control": "no-cache"}
-    if request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers=headers)
-    path = config.thumbs_dir() / f"{document_id}-{version}.png"
-    if not path.is_file():
-        _store(path, render_thumbnail(json.loads(raw)), keep_prefix=f"{document_id}-")
-    return Response(path.read_bytes(), media_type="image/png", headers=headers)
+    if request.headers.get("if-none-match") == f'"v{version}"':
+        return Response(status_code=304, headers=_headers(version))
+    png = _read(config.thumbs_dir() / f"{document_id}-{version}.png")
+    if png is None:
+        try:
+            # The scene may have moved on since the version above: key the file by what is rendered.
+            version, raw = db.get_scene(conn, document_id)
+        except db.DocumentNotFound:
+            raise HTTPException(404, NOT_FOUND) from None
+        png = render_thumbnail(json.loads(raw))
+        _store(config.thumbs_dir() / f"{document_id}-{version}.png", png, f"{document_id}-")
+    return Response(png, media_type="image/png", headers=_headers(version))

@@ -34,6 +34,7 @@ from inkbridge.db.documents import (
     list_documents,
     mark_opened,
     patch_document,
+    scene_version,
 )
 from inkbridge.db.ink import get_region_ink, get_sketch_elements, list_links
 from inkbridge.db.migrations import (
@@ -147,6 +148,7 @@ __all__ = [
     "render_server_crop",
     "save_model_reading",
     "save_recognition",
+    "scene_version",
     "scene_version_of_region",
     "search",
     "split_chunk",
