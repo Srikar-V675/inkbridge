@@ -4,29 +4,34 @@ import { fetchTitle } from "../src/app/canvasTitle.ts";
 import { createRailStore } from "../src/app/railStore.ts";
 import {
   colourNeedsPen, dotStep, HIGHLIGHTER, MIN_DOT_PX, nextZoom, paperDots, PEN, penColours, penIndex, pickShape, railTool, SHAPES,
-  toolTap, undoKey, zoomAbout, ZOOM_MAX, ZOOM_MIN,
+  TILE, toolTap, undoKey, zoomAbout, ZOOM_MAX, ZOOM_MIN,
 } from "../src/app/shellLogic.ts";
 
 describe("dotStep", () => {
+  it("tile is 36 scene units, in the 32 to 40 band", () => {
+    assert.equal(TILE, 36);
+    assert.ok(TILE >= 32 && TILE <= 40);
+  });
   it("doubles the spacing until a dot gap is at least 10 px", () => {
-    assert.equal(dotStep(1), 24);
-    assert.equal(dotStep(0.4), 48);
-    assert.equal(dotStep(0.1), 192);
-    assert.equal(dotStep(30), 24);
+    assert.equal(dotStep(1), TILE);
+    assert.equal(dotStep(0.4), TILE);
+    assert.equal(dotStep(0.25), TILE * 2);
+    assert.equal(dotStep(0.1), TILE * 4);
+    assert.equal(dotStep(30), TILE);
     for (const z of [0.1, 0.25, 0.4, 0.7, 1, 3]) assert.ok(dotStep(z) * z >= MIN_DOT_PX);
   });
 });
 
 describe("paperDots", () => {
   it("is the tile at the origin", () => {
-    assert.deepEqual(paperDots({ scrollX: 0, scrollY: 0, zoom: 1 }), { size: 24, x: 0, y: 0 });
+    assert.deepEqual(paperDots({ scrollX: 0, scrollY: 0, zoom: 1 }), { size: TILE, x: 0, y: 0 });
   });
   it("never gives a negative offset", () => {
-    assert.equal(paperDots({ scrollX: -30, scrollY: 0, zoom: 1 }).x, 18);
+    assert.equal(paperDots({ scrollX: -30, scrollY: 0, zoom: 1 }).x, TILE - 30);
   });
   it("scales with zoom", () => {
     const d = paperDots({ scrollX: 10, scrollY: 0, zoom: 2 });
-    assert.equal(d.size, 48);
+    assert.equal(d.size, TILE * 2);
     assert.equal(d.x, 20);
   });
   it("puts a dot at the centre of every scene tile", () => {
