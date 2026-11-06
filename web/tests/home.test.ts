@@ -141,7 +141,7 @@ describe("Archived is a route, not component state (INK-172)", () => {
   it("Home reads the view from its prop and links with archivedHref/backTo", () => {
     const home = src("home/Home.tsx");
     assert.ok(!home.includes("setArchivedView"));
-    assert.ok(!/useState\(false\)/.test(home));
+    assert.ok(!home.includes("archivedView"));
     assert.ok(home.includes("archivedHref("));
     assert.ok(home.includes("backTo"));
   });
