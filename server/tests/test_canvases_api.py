@@ -125,3 +125,67 @@ def test_migration_0007(tmp_path, monkeypatch):
     r = conn.execute("SELECT pinned, archived_at, last_opened_at FROM documents").fetchone()
     assert (r["pinned"], r["archived_at"], r["last_opened_at"]) == (0, None, None)
     conn.close()
+
+
+# --- thumbnails (Task 2) ---
+
+
+def png_size(data):
+    from io import BytesIO
+
+    from PIL import Image
+
+    im = Image.open(BytesIO(data))
+    return im.size, im
+
+
+def test_thumbnail_png_and_cache(client, monkeypatch):
+    from inkbridge import config
+    from inkbridge.api import canvases
+
+    doc = new_canvas(client)
+    version = save(client, doc, row("a", 3))
+    calls = []
+    real = canvases.render_thumbnail
+    monkeypatch.setattr(canvases, "render_thumbnail", lambda els: calls.append(1) or real(els))
+    r = client.get(f"/documents/{doc}/thumbnail")
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert png_size(r.content)[0] == (480, 320)
+    assert r.headers["etag"] == f'"v{version}"' and r.headers["cache-control"] == "no-cache"
+    assert (config.thumbs_dir() / f"{doc}-{version}.png").is_file()
+    assert client.get(f"/documents/{doc}/thumbnail").status_code == 200
+    assert len(calls) == 1
+    cached = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": f'"v{version}"'})
+    assert cached.status_code == 304 and cached.content == b""
+    assert len(calls) == 1
+
+
+def test_thumbnail_follows_version(client):
+    from inkbridge import config
+
+    doc = new_canvas(client)
+    v1 = save(client, doc, row("a", 3))
+    client.get(f"/documents/{doc}/thumbnail")
+    v2 = save(client, doc, row("a", 3) + row("b", 2, y=200), version=v1)
+    client.get(f"/documents/{doc}/thumbnail")
+    assert (config.thumbs_dir() / f"{doc}-{v2}.png").is_file()
+    assert not (config.thumbs_dir() / f"{doc}-{v1}.png").exists()
+
+
+def test_thumbnail_empty_and_draft_only_canvas(client):
+    empty = new_canvas(client)
+    drafty = new_canvas(client)
+    save(client, drafty, [{**row("d", 1)[0], "customData": {"draft": True}}])
+    for doc in (empty, drafty):
+        r = client.get(f"/documents/{doc}/thumbnail")
+        assert r.status_code == 200
+        size, im = png_size(r.content)
+        assert size == (480, 320) and im.convert("L").getextrema() == (255, 255)
+
+
+def test_thumbnail_unknown_canvas_404(client):
+    from inkbridge import config
+
+    assert client.get("/documents/nope/thumbnail").status_code == 404
+    assert client.get("/documents/..%2F..%2Fx/thumbnail").status_code == 404
+    assert not config.thumbs_dir().exists() or not list(config.thumbs_dir().iterdir())
