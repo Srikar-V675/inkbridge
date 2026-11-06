@@ -33,6 +33,8 @@ FREEDRAW_BOOST = 1.25
 THUMB_STEP = 0.8  # card px: drop polyline points closer than this
 GREEK_BELOW = 5.0  # card px: text with a smaller font is drawn as bars
 REACH = 6.0  # a primitive within REACH x (median distance from the median centre) still counts
+STRAY_SHARE = 0.10  # far primitives are dropped only when they are at most this share of all
+STRAY_FLOOR = 2  # ... or at most this many (a lone stray beside a tiny sketch still drops)
 CHARCOAL = (30, 30, 30)
 HEAD_LEN = 12  # arrowhead length, canvas units
 HEAD_ANGLE = math.radians(25)
@@ -280,6 +282,12 @@ def _paint(
                     draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=p["colour"])
 
 
+def _finite(p: dict[str, Any]) -> bool:
+    """A primitive with points, none of them NaN or infinite (a NaN angle must not move the fit)."""
+    pts = _points_of([p])
+    return bool(pts) and all(math.isfinite(c) for pt in pts for c in pt)
+
+
 def _prims(elements: list[Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for e in _drawable(elements):
@@ -287,7 +295,7 @@ def _prims(elements: list[Any]) -> list[dict[str, Any]]:
             out += _geometry(e)
         except (TypeError, ValueError, IndexError, KeyError):
             continue  # malformed in a way usable() could not see: skip the element
-    return [p for p in out if _points_of([p])]
+    return [p for p in out if _finite(p)]
 
 
 def _bounds(prims: list[dict[str, Any]]) -> tuple[float, float, float, float]:
@@ -336,7 +344,9 @@ def _fit_box(prims: list[dict[str, Any]]) -> tuple[float, float, float, float]:
 
     A primitive counts when its centre is within REACH x max(MAD, median primitive size) of the
     median centre on both axes, so a handful of strays cannot move the frame however few strokes
-    the page has.
+    the page has. Primitives outside that reach are dropped only when they are strays: at most
+    max(STRAY_FLOOR, STRAY_SHARE of all primitives). A bigger far group is a real second cluster
+    and the fit covers everything.
     """
     boxes = [_bounds([p]) for p in prims]
     cx = [(b[0] + b[2]) / 2 for b in boxes]
@@ -351,6 +361,8 @@ def _fit_box(prims: list[dict[str, Any]]) -> tuple[float, float, float, float]:
         for p, x, y in zip(prims, cx, cy, strict=True)
         if abs(x - limits[0][0]) <= limits[0][1] and abs(y - limits[1][0]) <= limits[1][1]
     ]
+    if len(prims) - len(keep) > max(STRAY_FLOOR, int(STRAY_SHARE * len(prims))):
+        return _bounds(prims)
     return _bounds(keep or prims)
 
 

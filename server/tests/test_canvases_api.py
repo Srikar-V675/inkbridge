@@ -197,7 +197,7 @@ def test_thumbnail_png_and_cache(client, monkeypatch):
     assert png_size(r.content)[0] == (960, 640)
     etag = f'"r{rev}v{version}"'
     assert r.headers["etag"] == etag and r.headers["cache-control"] == "no-cache"
-    assert (config.thumbs_dir() / f"{doc}-r{rev}-{version}.png").is_file()
+    assert (config.thumbs_dir() / f"{doc}.r{rev}.{version}.png").is_file()
     assert client.get(f"/documents/{doc}/thumbnail").status_code == 200
     assert len(calls) == 1
     cached = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": etag})
@@ -214,8 +214,8 @@ def test_thumbnail_follows_version(client):
     client.get(f"/documents/{doc}/thumbnail")
     v2 = save(client, doc, row("a", 3) + row("b", 2, y=200), version=v1)
     client.get(f"/documents/{doc}/thumbnail")
-    assert (config.thumbs_dir() / f"{doc}-r{rev}-{v2}.png").is_file()
-    assert not (config.thumbs_dir() / f"{doc}-r{rev}-{v1}.png").exists()
+    assert (config.thumbs_dir() / f"{doc}.r{rev}.{v2}.png").is_file()
+    assert not (config.thumbs_dir() / f"{doc}.r{rev}.{v1}.png").exists()
 
 
 def test_thumbnail_empty_and_draft_only_canvas(client):
@@ -285,8 +285,8 @@ def test_thumbnail_revision_replaces_old_cache(client, monkeypatch):
     monkeypatch.setattr(canvases, "THUMB_REVISION", rev + 1)
     r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": old.headers["etag"]})
     assert r.status_code == 200 and r.headers["etag"] == f'"r{rev + 1}v{version}"'
-    assert (config.thumbs_dir() / f"{doc}-r{rev + 1}-{version}.png").is_file()
-    assert not (config.thumbs_dir() / f"{doc}-r{rev}-{version}.png").exists()
+    assert (config.thumbs_dir() / f"{doc}.r{rev + 1}.{version}.png").is_file()
+    assert not (config.thumbs_dir() / f"{doc}.r{rev}.{version}.png").exists()
 
 
 def test_thumbnail_legacy_cache_file_is_ignored_and_removed(client):
@@ -303,3 +303,31 @@ def test_thumbnail_legacy_cache_file_is_ignored_and_removed(client):
     assert r.status_code == 200 and png_size(r.content)[0] == (960, 640)
     assert not legacy.exists()
     assert other.read_bytes() == b"keep"
+
+
+def test_thumbnail_cleanup_never_touches_a_canvas_whose_id_looks_like_a_revision(
+    tmp_path, monkeypatch
+):
+    from inkbridge import config
+    from inkbridge.api import canvases
+
+    monkeypatch.setenv("INKBRIDGE_DB", str(tmp_path / "api.db"))
+
+    d = config.thumbs_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    mine = {"x.r1.4.png", "x.r2.3.png", "x-4.png"}  # older revisions and a legacy file of "x"
+    theirs = {
+        "x-r2.r2.3.png",
+        "x-r2-3.png",
+        "x-2-1.png",
+        "y.r2.3.png",
+    }  # canvases "x-r2", "x-2", "y"
+    for name in mine | theirs:
+        (d / name).write_bytes(b"old")
+    current = canvases._thumb_path("x", 5)
+    canvases._store(current, b"new", "x")
+    assert current.read_bytes() == b"new"
+    assert {p.name for p in d.iterdir()} == theirs | {current.name}
+    other = canvases._thumb_path("x-r2", 7)
+    canvases._store(other, b"new", "x-r2")
+    assert {p.name for p in d.iterdir()} == {"x-2-1.png", "y.r2.3.png", current.name, other.name}

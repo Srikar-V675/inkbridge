@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
 from PIL import Image, ImageChops
 
 from inkbridge.canvas import raster
@@ -182,6 +183,45 @@ def test_thumbnail_keeps_a_near_neighbour():
     without = inked_box(raster.render_thumbnail(base))
     with_near = inked_box(raster.render_thumbnail([*base, near]))
     assert with_near[2] - with_near[0] > without[2] - without[0] + 100
+
+
+def block(n_cols, n_rows, x0, prefix):
+    return [
+        shape("rectangle", f"{prefix}{r}-{c}", x=x0 + c * 60, y=r * 50, w=30, h=40)
+        for r in range(n_rows)
+        for c in range(n_cols)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("second", "x0"),
+    [((3, 4), 3000), ((3, 2), 600)],  # 12 and 6 elements against a main cluster of 48
+    ids=["12-vs-48-far", "6-vs-48-near"],
+)
+def test_thumbnail_keeps_a_second_real_cluster(second, x0):
+    main = block(4, 12, 0, "m")  # 48 rectangles, about 220 x 600 units
+    other = block(*second, x0, "o")
+    alone = inked_box(raster.render_thumbnail(main))
+    both = inked_box(raster.render_thumbnail([*main, *other]))
+    assert both[2] - both[0] > 1.5 * (alone[2] - alone[0])  # the page grew to include it
+
+
+def test_thumbnail_a_lone_stray_beside_a_tiny_sketch_still_drops():
+    sketch = [shape("rectangle", f"s{k}", x=k * 120, w=100, h=100) for k in range(7)]
+    stray = shape("rectangle", "far", x=90000, y=90000, w=100, h=100)
+    alone = inked_box(raster.render_thumbnail(sketch))
+    both = inked_box(raster.render_thumbnail([*sketch, stray]))
+    assert all(abs(a - b) <= 3 for a, b in zip(both, alone, strict=True))
+
+
+def test_thumbnail_non_finite_element_does_not_disturb_the_fit():
+    good = cluster()
+    nan = shape("rectangle", "nan", x=10, y=10, w=50, h=50, angle=float("nan"))
+    inf = shape("line", "inf", w=10, h=0, points=[[0, 0], [float("inf"), 0]])
+    assert raster._prims([nan, inf]) == []  # dropped before they reach the fit or the painter
+    alone = inked_box(raster.render_thumbnail(good))
+    both = inked_box(raster.render_thumbnail([*good, nan, inf]))
+    assert both == alone
 
 
 def test_thumbnail_minimum_stroke_width():

@@ -86,27 +86,28 @@ def open_document(document_id: str, conn: Conn) -> Response:
 
 
 _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
-_OWN_FILE = re.compile(r"(?:r\d+-)?\d+")  # after "<doc>-": legacy "<version>" or "r<rev>-<version>"
+# Canvas ids hold only [A-Za-z0-9_-], so "." cannot appear in one: "<doc>.r<rev>.<version>.png"
+# never collides with another canvas's file, whatever its id ends in. The pre-0070 legacy name
+# "<doc>-<version>.png" is still recognised so it can be removed.
 
 
 def _thumb_path(document_id: str, version: int) -> Path:
-    return config.thumbs_dir() / f"{document_id}-r{THUMB_REVISION}-{version}.png"
+    return config.thumbs_dir() / f"{document_id}.r{THUMB_REVISION}.{version}.png"
 
 
 def _etag(version: int) -> str:
     return f'"r{THUMB_REVISION}v{version}"'
 
 
-def _store(path: Path, png: bytes, keep_prefix: str) -> None:
-    """Write atomically, then drop the other versions and revisions of this canvas's thumbnail."""
+def _store(path: Path, png: bytes, document_id: str) -> None:
+    """Write atomically, then drop the other versions, revisions and legacy files of this canvas."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{uuid.uuid4().hex}.tmp")
     tmp.write_bytes(png)
     os.replace(tmp, path)
-    for old in path.parent.glob(f"{keep_prefix}*.png"):
-        if old != path and _OWN_FILE.fullmatch(
-            old.stem[len(keep_prefix) :]
-        ):  # not another canvas's file
+    own = re.compile(re.escape(document_id) + r"(?:\.r\d+\.\d+|-\d+)\.png")
+    for old in path.parent.iterdir():
+        if old != path and own.fullmatch(old.name):
             old.unlink(missing_ok=True)
 
 
@@ -140,5 +141,5 @@ def thumbnail(document_id: str, conn: Conn, request: Request) -> Response:
         except db.DocumentNotFound:
             raise HTTPException(404, NOT_FOUND) from None
         png = render_thumbnail(json.loads(raw))
-        _store(_thumb_path(document_id, version), png, f"{document_id}-")
+        _store(_thumb_path(document_id, version), png, document_id)
     return Response(png, media_type="image/png", headers=_headers(version))
