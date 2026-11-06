@@ -14,8 +14,10 @@ if (import.meta.env.DEV) {
 
 startMeasure()
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+const root = createRoot(document.getElementById('root')!)
+if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('kit')) {
+  // Dev-only primitives page (INK-160). The DEV constant is folded away in a production build, so the module is not bundled.
+  void import('./ui/Kit.tsx').then((m) => root.render(<StrictMode><m.Kit /></StrictMode>))
+} else {
+  root.render(<StrictMode><App /></StrictMode>)
+}

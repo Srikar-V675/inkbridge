@@ -125,7 +125,7 @@ components:
 
 # Inkbridge design system
 
-Source of truth for how the app looks. Derived from the approved mockups (6 Nov 2026, [mockup board](https://claude.ai/artifact/7DHHtPkLuVzYuz4S5qNkDS)); local copy in `docs/tickets/v4-ref/mockups/project/` (untracked). The tokens above are the contract: web code reads them from `web/src/styles/tokens.css`, never hard-coded hex in components. Spec: [`@google/design.md`](https://github.com/google-labs-code/design.md) (alpha); check with `npx @google/design.md lint DESIGN.md`.
+Source of truth for how the app looks. Derived from the approved mockups (6 Nov 2026, [mockup board](https://claude.ai/artifact/7DHHtPkLuVzYuz4S5qNkDS)); local copy in `docs/tickets/v4-ref/mockups/project/` (untracked). The tokens above are the contract: web code reads them from `web/src/styles/tokens.css`, never hard-coded hex in components. Spec: [`@google/design.md`](https://github.com/google-labs-code/design.md) (alpha); check with `npx @google/design.md lint DESIGN.md`. Regenerate `web/src/styles/tokens.css` with `cd web && npm run tokens` after any front matter change; a test fails if the two drift.
 
 ## Overview
 
