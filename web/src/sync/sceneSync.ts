@@ -102,6 +102,7 @@ export class SceneSync {
   private saving = false;
   private failures = 0;
   private disposed = false;
+  private backedUp = false; // a backup was written during this close()
   private loaded = false;
   private inflight: Promise<void> | null = null;
   // The most recent scene Excalidraw reported, so a conflict merge never misses newer strokes.
@@ -198,10 +199,24 @@ export class SceneSync {
 
   /** Leave the canvas: send what is still unsaved, then stop. dispose() alone would drop the last edit. */
   async close() {
+    this.backedUp = false;
     try {
       await this.flushNow();
     } finally {
+      // Offline, a 5xx or a rejection leaves the edit only in memory, and a switch drops memory.
+      // A 409 already wrote the (better) local backup in resolveConflict.
+      if (this.pending && !this.backedUp) this.backup(this.pending);
       this.dispose();
+    }
+  }
+
+  /** Keep a copy of local ink in storage for manual recovery; storage may be unavailable. */
+  private backup(elements: readonly SceneElement[]) {
+    try {
+      this.o.storage?.setItem(`inkbridge-conflict-backup-${this.o.documentId}`, JSON.stringify(elements));
+      this.backedUp = true;
+    } catch {
+      // private mode: nothing more to do
     }
   }
 
@@ -314,14 +329,7 @@ export class SceneSync {
   private async resolveConflict(sent: readonly SceneElement[], lastWriter?: LastWriter) {
     // Everything the user has drawn locally, including edits made while this save was in flight.
     const local = this.pending ?? sent;
-    try {
-      this.o.storage?.setItem(
-        `inkbridge-conflict-backup-${this.o.documentId}`,
-        JSON.stringify(local),
-      );
-    } catch {
-      // storage may be unavailable (private mode); the merge below still keeps the ink
-    }
+    this.backup(local); // storage may be unavailable; the merge below still keeps the ink
     const who = lastWriter?.same_ip === false ? "device" : "tab";
     const notice = (n: number) =>
       n > 0

@@ -292,23 +292,32 @@ describe("createRailStore", () => {
 describe("fetchTitle", () => {
   const real = globalThis.fetch;
   afterEach(() => void (globalThis.fetch = real));
-  const stub = (f: () => Promise<unknown>) => void (globalThis.fetch = f as never);
+  const stub = (f: (url: string) => Promise<unknown>) => void (globalThis.fetch = f as never);
 
-  it("returns the title of the matching canvas", async () => {
-    stub(async () => ({ ok: true, json: async () => [{ id: "a", title: "A" }, { id: "b", title: "Linear models" }] }));
+  it("reads the one canvas, not the whole list", async () => {
+    const urls: string[] = [];
+    stub(async (url) => (urls.push(url), { ok: true, json: async () => ({ id: "b", title: "Linear models" }) }));
     assert.equal(await fetchTitle("b"), "Linear models");
+    assert.deepEqual(urls, ["/documents/b"]);
   });
-  it("falls back to the id when the canvas is not listed or has no title", async () => {
-    stub(async () => ({ ok: true, json: async () => [{ id: "a", title: "A" }, { id: "c", title: "" }] }));
+  it("encodes the id", async () => {
+    const urls: string[] = [];
+    stub(async (url) => (urls.push(url), { ok: false, json: async () => ({}) }));
+    await fetchTitle("a/b");
+    assert.deepEqual(urls, ["/documents/a%2Fb"]);
+  });
+  it("falls back to the id when the canvas is unknown or has no title", async () => {
+    stub(async () => ({ ok: false, json: async () => ({ detail: "document not found" }) }));
     assert.equal(await fetchTitle("zzz"), "zzz");
+    stub(async () => ({ ok: true, json: async () => ({ id: "c", title: "" }) }));
     assert.equal(await fetchTitle("c"), "c");
   });
   it("never throws", async () => {
     stub(async () => Promise.reject(new Error("offline")));
     assert.equal(await fetchTitle("x"), "x");
-    stub(async () => ({ ok: false, json: async () => [] }));
+    stub(async () => ({ ok: true, json: async () => [] }));
     assert.equal(await fetchTitle("x"), "x");
-    stub(async () => ({ ok: true, json: async () => ({ not: "a list" }) }));
+    stub(async () => ({ ok: true, json: async () => null }));
     assert.equal(await fetchTitle("x"), "x");
   });
 });

@@ -228,8 +228,8 @@ export function Home() {
         <p className="ink-home-wordmark">Inkbridge</p>
         <label className="ink-home-search">
           <SearchIcon />
-          <span className="ink-home-sr">Search canvases and ink</span>
-          <input type="search" placeholder="Search your canvases and ink" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <span className="ink-home-sr">Search canvas titles</span>
+          <input type="search" placeholder="Search canvas titles" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
         <span className="ink-home-spacer" />
         <Button variant="primary" className="ink-home-new" onClick={() => void create()}>
