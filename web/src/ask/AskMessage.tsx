@@ -55,10 +55,9 @@ function Sources(props: { api: ExcalidrawImperativeAPI; canvas: string; sources:
   );
 }
 
-export function AskMessage(props: { api: ExcalidrawImperativeAPI; canvas: string; q: Question; refetch: () => void }) {
-  const { api, canvas, q, refetch } = props;
+export function AskMessage(props: { api: ExcalidrawImperativeAPI; canvas: string; q: Question; refetch: () => void; kept: boolean; onKept: () => void }) {
+  const { api, canvas, q, refetch, kept, onKept } = props;
   const [note, setNote] = useState("");
-  const [kept, setKept] = useState(false);
   const [old, setOld] = useState(false);
   useEffect(() => {
     if (q.status !== "pending") return;
@@ -70,7 +69,7 @@ export function AskMessage(props: { api: ExcalidrawImperativeAPI; canvas: string
   const keep = async () => {
     setNote("Adding draft...");
     const r = await keepOnCanvas(q, canvas);
-    setKept(r.ok);
+    if (r.ok) onKept();
     setNote(r.ok ? "Draft added, accept it on the canvas" : `Could not add draft (${r.reason})`);
   };
   return (

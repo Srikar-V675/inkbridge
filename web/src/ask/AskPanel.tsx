@@ -27,7 +27,9 @@ function useSelection(api: ExcalidrawImperativeAPI): { ids: string[]; raw: numbe
 
 export default function AskPanel({ api, canvas, open, onClose }: { api: ExcalidrawImperativeAPI; canvas: string; open: boolean; onClose: () => void }) {
   const [qs, setQs] = useState<Question[]>([]);
-  const [text, setText] = useState("");
+  // Half-typed text is kept per view ("" is the list, otherwise the thread id), so Back does not discard it.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -49,13 +51,16 @@ export default function AskPanel({ api, canvas, open, onClose }: { api: Excalidr
 
   const threads = useMemo(() => groupThreads(qs), [qs]);
   const thread = openId ? threads.find((t) => t.id === openId) ?? null : null;
-  const view = (id: string | null) => (setOpenId(id), setText(""));
+  const viewKey = thread ? thread.id : "";
+  const text = drafts[viewKey] ?? "";
+  const setText = (t: string) => setDrafts((d) => ({ ...d, [viewKey]: t }));
+  const view = (id: string | null) => setOpenId(id);
 
   const ask = async () => {
     setBusy(true);
     try {
       const created = await askQuestion(canvas, text.trim(), sel.ids, thread ? replyTarget(thread).id : null);
-      setText("");
+      setDrafts((d) => ({ ...d, [viewKey]: "" }));
       setError("");
       setQs((l) => applyQuestionUpdate(l, created));
       setOpenId(thread ? thread.id : created.id);
@@ -73,7 +78,7 @@ export default function AskPanel({ api, canvas, open, onClose }: { api: Excalidr
   return createPortal(
     <Panel className="ink-ask">
       {thread ? (
-        <AskThread api={api} canvas={canvas} thread={thread} text={text} setText={setText} busy={busy} error={error} onSend={() => void ask()} onBack={() => view(null)} onClose={onClose} refetch={() => void refetch()} />
+        <AskThread api={api} canvas={canvas} thread={thread} text={text} setText={setText} busy={busy} error={error} onSend={() => void ask()} onBack={() => view(null)} onClose={onClose} refetch={() => void refetch()} kept={kept} onKept={(id) => setKept((k) => new Set(k).add(id))} />
       ) : (
         <AskList threads={threads} text={text} setText={setText} selected={sel.ids.length} raw={sel.raw} busy={busy} error={error} onSend={() => void ask()} onOpen={view} onClose={onClose} />
       )}

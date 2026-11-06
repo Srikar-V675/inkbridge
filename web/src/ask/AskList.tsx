@@ -1,5 +1,5 @@
 // Ask panel list view: the question form and earlier threads (INK-161, docs/decisions/0067).
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { CloseIcon, ScopeIcon, SendIcon } from "./askIcons";
@@ -11,6 +11,7 @@ export function AskList(props: {
 }) {
   const { threads, text, setText, selected, raw, busy, error, onSend, onOpen, onClose } = props;
   const ok = canSend({ text, busy, selected, followUp: false });
+  const lines = useMemo(() => threads.map(threadLine), [threads]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 60_000);
@@ -37,8 +38,8 @@ export function AskList(props: {
         </form>
         <h3 className="ink-ask__earlier">Earlier on this canvas</h3>
         {!threads.length && <p className="ink-ask__note">No questions yet</p>}
-        {threads.map((t) => {
-          const line = threadLine(t);
+        {threads.map((t, i) => {
+          const line = lines[i];
           return (
             <Button key={t.id} variant="quiet" className="ink-ask__row" onClick={() => onOpen(t.id)}>
               <span className="ink-ask__row-main">

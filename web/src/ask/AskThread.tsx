@@ -10,8 +10,9 @@ import { canSend, messageCount, threadTitle, type Thread } from "./threads";
 export function AskThread(props: {
   api: ExcalidrawImperativeAPI; canvas: string; thread: Thread; text: string; setText: (t: string) => void;
   busy: boolean; error: string; onSend: () => void; onBack: () => void; onClose: () => void; refetch: () => void;
+  kept: ReadonlySet<string>; onKept: (id: string) => void;
 }) {
-  const { api, canvas, thread, text, setText, busy, error, onSend, onBack, onClose, refetch } = props;
+  const { api, canvas, thread, text, setText, busy, error, onSend, onBack, onClose, refetch, kept, onKept } = props;
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = body.current;
@@ -30,7 +31,7 @@ export function AskThread(props: {
       </div>
       <div ref={body} className="ink-ask__body ink-ask__thread">
         {thread.items.map((q) => (
-          <AskMessage key={q.id} api={api} canvas={canvas} q={q} refetch={refetch} />
+          <AskMessage key={q.id} api={api} canvas={canvas} q={q} refetch={refetch} kept={kept.has(q.id)} onKept={() => onKept(q.id)} />
         ))}
       </div>
       {error && <p className="ink-ask__error">{error}</p>}
