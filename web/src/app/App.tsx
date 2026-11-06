@@ -148,7 +148,10 @@ export default function App() {
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
-  const closeNotice = useCallback(() => setNoticeOpen(false), []);
+  // The toast times out, but the ghost box stays until the user dismisses (INK-162 review).
+  const [ghostOpen, setGhostOpen] = useState(true);
+  const expireNotice = useCallback(() => setNoticeOpen(false), []);
+  const closeNotice = useCallback(() => (setNoticeOpen(false), setGhostOpen(false)), []);
   const [askOpen, setAskOpen] = useState(false);
   const [title, setTitle] = useState(route.canvas);
   useEffect(() => {
@@ -410,11 +413,11 @@ export default function App() {
               canvas={route.canvas}
               status={status}
               view={chunkView}
-              ghost={noticeOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
+              ghost={ghostOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
               refresh={refresh}
             />
           )}
-          {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} />}
+          {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} onExpire={expireNotice} />}
           {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
         </>
       }

@@ -8,3 +8,11 @@
   color: var(--component-status-risk-text-color);
   font-weight: 500;
 }
+.ink-status__detail {
+  max-width: 420px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.2;
+}

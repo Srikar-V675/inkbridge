@@ -53,3 +53,14 @@ describe("chunk overlay css (INK-162)", () => {
     assert.ok(!tsx.includes("Show chunks"));
   });
 });
+
+describe("jump notice and ghost (INK-162 review)", () => {
+  it("the ghost outlives the toast timeout; only the user's Dismiss closes it", () => {
+    const notice = read("chunks/JumpNotice.tsx");
+    assert.match(notice, /onDismiss=\{onExpire\}/);
+    assert.match(notice, /onAction=\{onClose\}/);
+    const app = read("app/App.tsx");
+    assert.match(app, /ghostOpen/);
+    assert.match(app, /ghost=\{ghostOpen &&/);
+  });
+});

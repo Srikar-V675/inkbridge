@@ -15,16 +15,16 @@ INK-117 put the canvas in the shell (decision [0066](0066-app-shell.md)) but lef
    | --- | --- | --- |
    | `saved` | quiet check | Saved |
    | `dirty`, `saving` | soft-ink dot | Saving… |
-   | `conflict` | soft-ink dot | Merging changes… |
+   | `conflict` | soft-ink text, no dot | Merged with another device, then the detail as a visible second line |
    | `loading` | none | Loading… |
    | `retry` | alarm dot | Ink only in memory: do not close this tab |
    | `error` | alarm dot | the error's own detail, else the same risk line |
 
-   Nothing persists ink on the device yet (the outbox is a later ticket; `sceneSync` only backs up on a conflict), so `retry` is honestly the alarm. The soft-ink "Kept on this device, sending when the network is back" view exists behind `statusView(status, onDevice = true)` and is unreachable until that ticket passes `true`. The old `": 123 ms"` detail moved to the `title` attribute.
+   Nothing persists ink on the device yet (the outbox is a later ticket; `sceneSync` only backs up on a conflict), so `retry` is honestly the alarm. The soft-ink "Kept on this device, sending when the network is back" view exists behind `statusView(status, onDevice = true)` and is unreachable until that ticket passes `true`. The old `": 123 ms"` detail moved to the `title` attribute. The `conflict` detail is visible text (a tablet has no hover) and the state is not "Merging…": `sceneSync` has already merged by the time it reports the detail, and the line stays until the next save returns the status to Saved.
 3. **No Undo on toasts.** `applyVerdict`, `acceptOp` and `rejectOp` have no undo, so toasts carry no action until INK-115 and the "Open thread" / "View thread" links are not rendered. The Reject toast reads "Draft removed." (the board's "The answer stays in the thread." would be false until threads exist). A toast shows only when `ResolveSummary.done` is not empty; `done` lists the ops whose PATCH succeeded (checked in `patchEach`, `patchAccepted`, `retryAccept`), so a failed accept never toasts success.
-4. **The jump notice is a `Toast`** with a Dismiss action and a 20 s duration; the dashed ghost box stays tied to the notice being open.
+4. **The jump notice is a `Toast`** with a Dismiss action and a 20 s duration. The toast times out on its own, but the dashed ghost box of an orphaned deep link stays until the user taps Dismiss (`JumpNotice` has `onClose` for Dismiss and `onExpire` for the timeout; `App` keeps `ghostOpen` apart from `noticeOpen`).
 5. **The chunk tab is 44 px tall** (was 32), a smaller charcoal pill inside it. Chunk colours are tokens only: soft-ink outlines, charcoal selection, never the agent colour or a pen colour. The Chunks toggle moved from the overlay to the top bar `chunks` slot; a small store (`chunks/chunkView.ts`) shares on/off and the per-turn-on `session` (which stops a stale chunk list showing on re-open) between the toggle and the overlay. The "(N)" count is gone.
-6. **Draft card per selected draft**: Draft badge, kind line, text preview (text drafts only, matched through `draftOpId`, never the tag alone), Accept and Reject. The tray's inline per-selection buttons are gone; the tray has Jump (oldest unseen draft, else the first), Accept all and Reject all.
+6. **Draft card per selected draft**: Draft badge, kind line, text preview (text drafts only, matched through `draftOpId`, never the tag alone), Accept and Reject. The tray's inline per-selection buttons are gone; the tray has Jump (oldest unseen draft, else the first; a draft with no box in the scene is skipped for the next one that has), Accept all and Reject all.
 7. `App.tsx` stays in the `LEGACY` hex list: the crop export still passes a literal white background (the crop path is out of scope). `DraftBar.tsx` and `ChunkOverlay.tsx` left the list.
 
 ## Consequences

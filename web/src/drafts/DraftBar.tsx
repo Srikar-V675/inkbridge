@@ -92,9 +92,10 @@ export function DraftBar({
   // Pans to the oldest unseen draft, else the first draft, at the current zoom (never changes it),
   // then clears it from the unseen list.
   const jump = () => {
-    const id = jumpTarget(unseen.ids(), drafts);
+    const els = api.getSceneElements() as never;
+    const id = jumpTarget(unseen.ids(), drafts, (opId) => draftBox(els, opId) !== null);
     if (id === null) return;
-    const box = draftBox(api.getSceneElements() as never, id);
+    const box = draftBox(els, id);
     if (box) {
       const s = api.getAppState();
       const t = panTarget(box, { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value, width: s.width, height: s.height });

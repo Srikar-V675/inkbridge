@@ -14,6 +14,7 @@ export function StatusSlot({ store }: { store: ReturnType<typeof createStatusSto
       {v.tone === "risk" && <StatusDot tone="risk" />}
       {v.tone === "sending" && <StatusDot tone="sending" />}
       {v.label}
+      {v.detail && <span className="ink-status__detail">{v.detail}</span>}
     </span>
   );
 }

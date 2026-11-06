@@ -19,9 +19,13 @@ export function verdictToast(verdict: Verdict, summary: Pick<ResolveSummary, "do
   return n === 1 ? "Draft removed." : `${n} drafts removed.`;
 }
 
-/** Where Jump goes: the oldest unseen draft, else the first draft. */
-export function jumpTarget(unseen: readonly string[], drafts: readonly { opId: string }[]): string | null {
-  return unseen[0] ?? drafts[0]?.opId ?? null;
+/** Where Jump goes: the oldest unseen draft, else the first draft, skipping any that has no box to pan to. */
+export function jumpTarget(
+  unseen: readonly string[],
+  drafts: readonly { opId: string }[],
+  hasBox: (opId: string) => boolean = () => true,
+): string | null {
+  return [...unseen, ...drafts.map((d) => d.opId)].find(hasBox) ?? null;
 }
 
 const PREVIEW_MAX = 200;

@@ -45,6 +45,12 @@ describe("jumpTarget", () => {
     assert.equal(jumpTarget([], [{ opId: "d1" }, { opId: "d2" }]), "d1");
     assert.equal(jumpTarget([], []), null);
   });
+  it("skips a draft that has no box and falls back to the next one that has", () => {
+    const hasBox = (id: string) => id !== "u1";
+    assert.equal(jumpTarget(["u1"], [{ opId: "d1" }], hasBox), "d1");
+    assert.equal(jumpTarget(["u1", "u2"], [{ opId: "d1" }], hasBox), "u2");
+    assert.equal(jumpTarget(["u1"], [{ opId: "u1" }], hasBox), null);
+  });
 });
 
 describe("draftCard", () => {

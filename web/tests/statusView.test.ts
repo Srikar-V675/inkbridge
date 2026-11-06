@@ -26,8 +26,14 @@ describe("statusView", () => {
     });
     assert.equal(statusView({ state: "error" }).label, RISK_LABEL);
   });
-  it("loading has no dot and conflict is sending", () => {
+  it("loading has no dot", () => {
     assert.equal(statusView({ state: "loading" }).tone, "none");
-    assert.equal(statusView({ state: "conflict", detail: "Another tab saved first" }).tone, "sending");
+  });
+  it("conflict says it merged and shows its detail as visible text, not only a hover title", () => {
+    const v = statusView({ state: "conflict", detail: "Another device saved first; merged its changes with yours" });
+    assert.equal(v.tone, "notice");
+    assert.equal(v.label, "Merged with another device");
+    assert.equal(v.detail, "Another device saved first; merged its changes with yours");
+    assert.ok(!v.label.includes("Merging"));
   });
 });

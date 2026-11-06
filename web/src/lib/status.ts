@@ -26,11 +26,13 @@ export function createStatusStore() {
 
 export const RISK_LABEL = "Ink only in memory: do not close this tab";
 
-export type StatusTone = "none" | "quiet" | "sending" | "risk";
+export type StatusTone = "none" | "quiet" | "sending" | "notice" | "risk";
 export interface StatusView {
   tone: StatusTone;
   label: string;
   title?: string;
+  /** Extra line shown as visible text (a tablet has no hover). */
+  detail?: string;
 }
 
 /** What the top bar says for a save state. `onDevice` is false until ink is stored on the device (later ticket). */
@@ -44,8 +46,8 @@ export function statusView(s: Status, onDevice = false): StatusView {
     case "dirty":
     case "saving":
       return { tone: "sending", label: "Saving…" };
-    case "conflict":
-      return { tone: "sending", label: "Merging changes…", ...title };
+    case "conflict": // the merge has already happened by the time a detail exists; it stays until the next save
+      return { tone: "notice", label: "Merged with another device", ...(s.detail ? { detail: s.detail } : {}) };
     case "retry":
       return onDevice
         ? { tone: "sending", label: "Kept on this device, sending when the network is back" }
