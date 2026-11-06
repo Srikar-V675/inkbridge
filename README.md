@@ -32,8 +32,12 @@ and [Technical reference v3](https://claude.ai/artifact/1uMmVHEyuvb2uS5Dgutaqy);
 make install
 make dev-server   # API on :8000
 make dev-web      # canvas on :5173
+make serve        # build web, then API + app on :8000 (tablet: http://<laptop>:8000/?canvas=default)
 make test
 ```
+
+The tablet URL moves from 5173 to 8000 when you use `make serve`; `make dev-web` stays for development.
+Set `INKBRIDGE_PUBLIC_URL` to the :8000 URL so vault deep links use the new port.
 
 ## Privacy
 

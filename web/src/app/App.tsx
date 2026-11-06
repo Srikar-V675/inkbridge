@@ -20,6 +20,7 @@ import { createStartupGate } from "../sync/startupGate";
 import { SceneSync, type SaveState, type SceneElement } from "../sync/sceneSync";
 import { createStatusStore } from "../lib/status";
 import { loadView, saveView, type View } from "../lib/view";
+import { initialAppState } from "../lib/excalidrawEnv";
 
 const LABEL: Record<SaveState, string> = {
   loading: "Loading…",
@@ -161,16 +162,7 @@ const Canvas = memo(function Canvas(props: {
 }) {
   const { initial, onApi, onChange } = props;
   const initialData = useMemo(
-    () => ({
-      elements: initial.elements,
-      ...(initial.view && {
-        appState: {
-          scrollX: initial.view.scrollX,
-          scrollY: initial.view.scrollY,
-          zoom: { value: initial.view.zoom as never },
-        },
-      }),
-    }),
+    () => ({ elements: initial.elements, appState: initialAppState(initial.view) }),
     [initial],
   );
   return <Excalidraw excalidrawAPI={onApi} initialData={initialData} onChange={onChange as never} />;
