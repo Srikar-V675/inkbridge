@@ -80,10 +80,13 @@ export function toolTap(tool: RailTool, currentType: string): { tool: { type: st
       patch: { currentItemOpacity: HIGHLIGHTER.opacity, currentItemStrokeWidth: HIGHLIGHTER.strokeWidth },
     };
   }
+  // Shapes and text must not inherit the highlighter's 35 percent opacity.
+  const solid = { currentItemOpacity: PEN.opacity, currentItemStrokeWidth: PEN.strokeWidth };
   if (tool === "shapes") {
     const i = (SHAPES as readonly string[]).indexOf(currentType);
-    return { tool: { type: SHAPES[(i + 1) % SHAPES.length] }, patch: {} }; // first tap: rectangle; tapping again cycles
+    return { tool: { type: SHAPES[(i + 1) % SHAPES.length] }, patch: solid }; // first tap: rectangle; tapping again cycles
   }
+  if (tool === "text") return { tool: { type: "text" }, patch: solid };
   return { tool: { type: tool === "select" ? "selection" : tool }, patch: {} };
 }
 

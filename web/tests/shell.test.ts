@@ -90,6 +90,11 @@ describe("rail tools", () => {
     assert.deepEqual(toolTap("highlighter", "selection").patch, { currentItemOpacity: 35, currentItemStrokeWidth: 4 });
     assert.deepEqual(HIGHLIGHTER, { opacity: 35, strokeWidth: 4 });
   });
+  it("shapes and text do not inherit the highlighter", () => {
+    for (const t of ["shapes", "text"] as const) {
+      assert.deepEqual(toolTap(t, "freedraw").patch, { currentItemOpacity: 100, currentItemStrokeWidth: 2 });
+    }
+  });
   it("never touches pressure state", () => {
     for (const t of ["pen", "highlighter", "eraser", "select", "shapes", "text"] as const) {
       for (const key of Object.keys(toolTap(t, "freedraw").patch)) {
@@ -173,6 +178,7 @@ function fakeEnv() {
       mac: false,
       container: () => ({ dispatchEvent: (e: unknown) => (events.push(e as KeyboardEventInit), true) }),
       makeKey: (init: KeyboardEventInit) => init as never,
+      frame: () => () => {},
     },
   };
 }
@@ -188,6 +194,30 @@ describe("createRailStore", () => {
     assert.equal(f.subs.size, 1);
     store.dispose();
     assert.equal(f.subs.size, 0);
+  });
+
+  it("waits for Excalidraw to finish loading before choosing the pen", () => {
+    const f = fakeApi({ isLoading: true });
+    const frames: (() => void)[] = [];
+    const env = { ...fakeEnv().env, frame: (cb: () => void) => (frames.push(cb), () => {}) };
+    const store = createRailStore(f.api, PENS, env as never);
+    assert.deepEqual(f.calls.tool, []);
+    assert.equal(frames.length, 1);
+    frames.shift()!(); // still loading
+    assert.deepEqual(f.calls.tool, []);
+    f.set({ isLoading: false });
+    frames.shift()!();
+    assert.deepEqual(f.calls.tool, [{ type: "freedraw" }]);
+    assert.equal(f.calls.scene.length, 1);
+    assert.equal(frames.length, 0);
+    store.dispose();
+  });
+
+  it("keeps a selection made by a deep link: the pen is not chosen over it", () => {
+    const f = fakeApi({ selectedElementIds: { a: true } });
+    createRailStore(f.api, PENS, fakeEnv().env as never);
+    assert.deepEqual(f.calls.tool, []);
+    assert.equal(f.calls.scene.length, 1); // the charcoal colour is still set
   });
 
   it("keeps the same snapshot while nothing the rail shows changes", () => {

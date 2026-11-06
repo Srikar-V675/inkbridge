@@ -21,7 +21,8 @@
 }
 
 /* Excalidraw draws on a see-through canvas and its own chrome is hidden (UIOptions cannot do it in 0.18). */
-.ink-shell .excalidraw .layer-ui__wrapper {
+.ink-shell .excalidraw .layer-ui__wrapper,
+.ink-shell .excalidraw .context-menu {
   display: none;
 }
 .ink-shell .excalidraw,

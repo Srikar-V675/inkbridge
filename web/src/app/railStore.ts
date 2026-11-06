@@ -12,6 +12,8 @@ export interface RailSnapshot {
 }
 
 interface RailState {
+  isLoading?: boolean;
+  selectedElementIds?: Record<string, boolean>;
   activeTool: { type: string };
   currentItemOpacity: number;
   currentItemStrokeColor: string;
@@ -35,7 +37,11 @@ export interface RailEnv {
   mac: boolean;
   container: () => { dispatchEvent(e: Event): boolean } | null;
   makeKey: (init: KeyboardEventInit) => Event;
+  /** requestAnimationFrame and its cancel, to wait out Excalidraw's async initialData. */
+  frame: (cb: () => void) => () => void;
 }
+
+const MAX_WAIT_FRAMES = 300; // give up waiting for Excalidraw to finish loading after about 5 s
 
 export function createRailStore(api: RailApi, pens: readonly string[], env: RailEnv) {
   const listeners = new Set<() => void>();
@@ -45,10 +51,6 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
   };
   const scene = (appState: Record<string, unknown>) => api.updateScene({ appState, captureUpdate: env.never });
 
-  // The pen is the starting tool, in charcoal.
-  api.setActiveTool({ type: "freedraw" });
-  scene({ currentItemStrokeColor: pens[0] });
-
   let snap = read();
   const refresh = () => {
     const n = read();
@@ -56,7 +58,24 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
     snap = n;
     listeners.forEach((l) => l());
   };
-  const off = api.onChange(refresh);
+  const offChange = api.onChange(refresh);
+
+  // The pen is the starting tool, in charcoal. Excalidraw applies initialData asynchronously after
+  // its API handle exists and would overwrite this, so wait until it has finished loading.
+  let cancelFrame = () => {};
+  let frames = 0;
+  const begin = () => {
+    if (api.getAppState().isLoading && frames++ < MAX_WAIT_FRAMES) {
+      cancelFrame = env.frame(begin);
+      return;
+    }
+    // A deep link may already have selected a chunk; picking the pen would clear that selection.
+    const selected = Object.values(api.getAppState().selectedElementIds ?? {}).some(Boolean);
+    if (!selected) api.setActiveTool({ type: "freedraw" });
+    scene({ currentItemStrokeColor: pens[0] });
+    refresh();
+  };
+  begin();
 
   const key = (kind: "undo" | "redo") => env.container()?.dispatchEvent(env.makeKey(undoKey(kind, env.mac)));
 
@@ -86,6 +105,9 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
     },
     undo: () => key("undo"),
     redo: () => key("redo"),
-    dispose: off,
+    dispose() {
+      cancelFrame();
+      offChange();
+    },
   };
 }

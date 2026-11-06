@@ -1,12 +1,12 @@
 // The app shell (INK-117, docs/decisions/0066): dotted paper, top bar, tool rail and zoom control
 // around the Excalidraw canvas, whose own chrome is hidden by shell.css.
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { PaperDots } from "./PaperDots";
 import { createRailStore } from "./railStore";
 import { penColours } from "./shellLogic";
-import { ToolRail } from "./ToolRail";
+import { ToolRail, type RailStore } from "./ToolRail";
 import { TopBar } from "./TopBar";
 import { ZoomControl } from "./ZoomControl";
 import "./shell.css";
@@ -22,17 +22,27 @@ export interface ShellProps {
 }
 
 export function Shell({ api, title, status, chunks, onAsk, askOpen, children }: ShellProps) {
-  const store = useMemo(() => {
-    if (!api) return null;
+  // Built in an effect: creating it calls the API, which must not happen while React renders.
+  const [store, setStore] = useState<RailStore | null>(null);
+  useEffect(() => {
+    if (!api) return;
     const css = getComputedStyle(document.documentElement);
-    return createRailStore(api as never, penColours((n) => css.getPropertyValue(n)), {
+    const s = createRailStore(api as never, penColours((n) => css.getPropertyValue(n)), {
       never: CaptureUpdateAction.NEVER,
       mac: /Mac|iPhone|iPad/.test(navigator.platform),
       container: () => document.querySelector(".excalidraw"),
       makeKey: (init) => new KeyboardEvent("keydown", init),
+      frame: (cb) => {
+        const id = requestAnimationFrame(cb);
+        return () => cancelAnimationFrame(id);
+      },
     });
+    setStore(s);
+    return () => {
+      s.dispose();
+      setStore(null);
+    };
   }, [api]);
-  useEffect(() => () => store?.dispose(), [store]);
 
   return (
     <div className="ink-shell">
