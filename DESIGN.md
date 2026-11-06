@@ -168,8 +168,9 @@ One family, Instrument Sans (Google Fonts, self-host for the tablet: no network 
 ## Layout
 
 - Canvas first: the canvas fills the viewport; chrome floats over it.
-- Top bar 64 px, transparent: Canvases (back to home), canvas title, saved status, Focus, Ask; zoom control bottom right.
-- Tool rail: left, 16 px from the edge, 60 px wide, 8 px padding, 4 px gap: pen, highlighter, eraser, lasso, shapes, text, three ink colours, undo, redo.
+- Top bar 64 px, transparent: Canvases (back to home), canvas title, saved status, Focus, Ask. Zoom control: compact pill, bottom right, 36 px tall visual with a 44 px hit area.
+- Tool rail: left, 16 px from the edge (8 px on tablets), 72 px under the top edge on tablets and short screens; capped to the viewport (`100dvh`) and scrolls when still too tall; gaps pack to 0 under 720 px of height. 60 px wide, 8 px padding, 4 px gap: pen, highlighter, eraser, lasso, shapes, text, three ink colours, undo, redo.
+- Tablet density: under 1300 px or on a coarse pointer the top bar title is 18 px and status 13 px. Touch targets stay 44 px (decision 0074).
 - Side panel (Ask, threads): right, 440 px, full height under the bar. The canvas does not resize; it pans to keep the working area visible.
 - Home: 76 px header with wordmark, search and New canvas; 40 px side margins; Continue card, Recent list, All canvases grid, Archived.
 - Spacing scale 4, 8, 16, 24, 40. **Every touch target is 44 px or larger** (the tablet is the primary device); 36 px chips only when they sit on the canvas next to ink.
