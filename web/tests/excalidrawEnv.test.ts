@@ -19,11 +19,12 @@ describe("configureExcalidraw", () => {
 
 describe("initialAppState", () => {
   it("is pen mode even with no remembered view", () => {
-    assert.deepEqual(initialAppState(null), { penMode: true });
+    assert.deepEqual(initialAppState(null), { penMode: true, viewBackgroundColor: "transparent" });
   });
   it("keeps the remembered view next to pen mode", () => {
     const a = initialAppState({ scrollX: 5, scrollY: -7, zoom: 1.5 }) as Record<string, unknown>;
     assert.equal(a.penMode, true);
+    assert.equal(a.viewBackgroundColor, "transparent");
     assert.deepEqual([a.scrollX, a.scrollY, a.zoom], [5, -7, { value: 1.5 }]);
   });
   it("never carries elements", () => {
