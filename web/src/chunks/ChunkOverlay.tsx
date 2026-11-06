@@ -131,7 +131,7 @@ function OverrideActions(props: {
       style={{
         position: "absolute",
         right: 12,
-        bottom: 104,
+        bottom: 120,
         zIndex: 10,
         display: "flex",
         flexDirection: "column",
@@ -277,7 +277,7 @@ export function ChunkOverlay(props: {
         style={{
           position: "absolute",
           right: 12,
-          bottom: 60,
+          bottom: 76,
           zIndex: 10,
           padding: "4px 10px",
           borderRadius: 6,
