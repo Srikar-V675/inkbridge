@@ -1,5 +1,6 @@
 /* App shell (INK-117). Tokens only; the paper layer is the one gradient outside ui/. */
 .ink-shell {
+  --ink-rail-top: 88px;
   position: relative;
   height: 100dvh;
   overflow: hidden;
@@ -111,7 +112,13 @@
 .ink-rail {
   position: absolute;
   left: var(--space-md);
-  top: 88px;
+  top: var(--ink-rail-top);
+  max-height: calc(100vh - var(--ink-rail-top) - var(--space-md)); /* fallback */
+  max-height: calc(100dvh - var(--ink-rail-top) - var(--space-md));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   z-index: 5;
   width: var(--component-tool-rail-width);
   box-sizing: border-box;
@@ -161,4 +168,11 @@
   min-width: 48px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* Short screens (tablet landscape with browser chrome is about 600 to 700 px): the rail packs tighter. Touch targets stay 44 px. */
+@media (max-height: 720px) {
+  .ink-shell { --ink-rail-top: 72px; }
+  .ink-rail { gap: 0; padding-block: var(--space-xs); }
+  .ink-rail__gap { height: 6px; }
 }
