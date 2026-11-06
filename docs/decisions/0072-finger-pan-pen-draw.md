@@ -30,6 +30,8 @@ Routing (pinned by `web/tests/touchRouting.test.ts`):
 | touch | any other tool | pan |
 
 - Palm grace `PEN_GRACE_MS = 600`. Pen hover sends `pointermove`, so a hovering pen keeps palms ignored; a pen pointerdown also ends any finger pan in progress.
+- A tap (one finger, under 300 ms, under 8 px of movement, never joined by a second finger) on empty canvas with the selection tool clears the selection through `updateScene({selectedElementIds: {}})`, because Excalidraw no longer sees that finger and would not deselect.
+- Stuck-state safety net: window `blur`, `visibilitychange` (page hidden) drop every pan, passed and ignored finger and forget the pen; `lostpointercapture` drops that finger. A pen "down" with no pen event for 3 s (`PEN_DOWN_MAX_MS`) expires as a lost pen-up; pen events while down keep it alive, and a pen `lostpointercapture` counts as the pen lifting.
 - Pinch scales by finger spread about the centre, clamped to `ZOOM_MIN`/`ZOOM_MAX` of `shellLogic`; lifting one finger re-anchors so the view does not jump.
 - "Finger draws" (quiet toggle left of Chunks, off by default; localStorage `inkbridge-finger-draws`, `1`/`0`) maps to `penMode = !on` and `penDetected = on` through `updateScene`, applied once Excalidraw has finished loading (and again on change). With it on, the router passes touch through and Excalidraw lets a finger draw, for use without a stylus.
 
@@ -38,6 +40,8 @@ Touch drag on the pen tool pans by exactly drag / zoom with no element added; tw
 
 ## Known limits
 - The selection hit test is a bounding box grown by 16 screen pixels, ignoring rotation.
+- Known gap: a finger on a resize or rotate handle, or inside a multi-selection's empty interior, pans instead of transforming (the hit test only knows element boxes). Use the pen or mouse for those, or turn Finger draws on.
+- The router only touches the canvas whose class is `excalidraw__canvas interactive` inside `.excalidraw`; `touchRouting.test.ts` pins that predicate and checks the installed Excalidraw still renders that class, so a rename fails a test instead of silently disabling the router.
 - With the text tool, or the selection tool on an element, the finger goes to Excalidraw, so pinch is Excalidraw's there.
 - A stylus that reports `pointerType: "touch"` (some Android browsers) is treated as a finger; the toggle is the escape hatch.
 - Palm protection relies on pen hover moves; without them only pen-down and the 600 ms tail protect writing (tune `PEN_GRACE_MS`).
