@@ -1,7 +1,7 @@
 // Pure logic for the app shell (INK-117, docs/decisions/0066): paper dots, zoom, rail tools.
 // No React, DOM or Excalidraw imports, so the Node test runner can load it.
 
-export const TILE = 24; // scene units between dots (Main board: 24 px at 100 percent)
+export const TILE = 36; // scene units between dots (INK-170: finer than the Main board's 24, decision 0074)
 export const MIN_DOT_PX = 10; // below this, double the spacing
 
 /** Smallest TILE * 2^n whose on-screen size is at least MIN_DOT_PX. */
@@ -49,7 +49,10 @@ export function zoomAbout(v: { scrollX: number; scrollY: number; zoom: number; w
 }
 
 export type RailTool = "pen" | "highlighter" | "eraser" | "select" | "shapes" | "text";
-export const SHAPES = ["rectangle", "ellipse", "diamond", "arrow"] as const;
+// Flyout order. The Shapes button picks the last chosen one (INK-175, docs/decisions/0075).
+export const SHAPES = ["rectangle", "diamond", "ellipse", "arrow", "line"] as const;
+export type ShapeTool = (typeof SHAPES)[number];
+export const isShape = (t: string): t is ShapeTool => (SHAPES as readonly string[]).includes(t);
 export const HIGHLIGHTER = { opacity: 35, strokeWidth: 4 };
 export const PEN = { opacity: 100, strokeWidth: 2 };
 
@@ -76,7 +79,7 @@ export function railTool(a: { activeTool: { type: string }; currentItemOpacity: 
 }
 
 /** Arguments for api.setActiveTool and the appState patch to apply with it, for a tap on a rail tool. */
-export function toolTap(tool: RailTool, currentType: string): { tool: { type: string }; patch: Record<string, number> } {
+export function toolTap(tool: RailTool, currentType: string, lastShape: ShapeTool = "rectangle"): { tool: { type: string }; patch: Record<string, number> } {
   if (tool === "pen") {
     return { tool: { type: "freedraw" }, patch: { currentItemOpacity: PEN.opacity, currentItemStrokeWidth: PEN.strokeWidth } };
   }
@@ -89,11 +92,16 @@ export function toolTap(tool: RailTool, currentType: string): { tool: { type: st
   // Shapes and text must not inherit the highlighter's 35 percent opacity.
   const solid = { currentItemOpacity: PEN.opacity, currentItemStrokeWidth: PEN.strokeWidth };
   if (tool === "shapes") {
-    const i = (SHAPES as readonly string[]).indexOf(currentType);
-    return { tool: { type: SHAPES[(i + 1) % SHAPES.length] }, patch: solid }; // first tap: rectangle; tapping again cycles
+    // A shape already active stays, and keeps the width the user picked.
+    return { tool: { type: isShape(currentType) ? currentType : lastShape }, patch: isShape(currentType) ? {} : solid };
   }
   if (tool === "text") return { tool: { type: "text" }, patch: solid };
   return { tool: { type: tool === "select" ? "selection" : tool }, patch: {} };
+}
+
+/** A pick from the shapes flyout: the shape, and the solid patch only when coming from a non-shape tool. */
+export function pickShape(shape: ShapeTool, currentType: string): { tool: { type: string }; patch: Record<string, number> } {
+  return { tool: { type: shape }, patch: isShape(currentType) ? {} : { currentItemOpacity: PEN.opacity, currentItemStrokeWidth: PEN.strokeWidth } };
 }
 
 /** Picking an ink colour while the eraser or selection is active switches to the pen. */

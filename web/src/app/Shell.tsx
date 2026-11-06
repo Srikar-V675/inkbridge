@@ -5,6 +5,7 @@ import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { readRoute } from "../lib/route";
 import { PaperDots } from "./PaperDots";
+import { PropsHost } from "./props/PropsCard";
 import { createRailStore } from "./railStore";
 import { penColours } from "./shellLogic";
 import { ToolRail, type RailStore } from "./ToolRail";
@@ -55,6 +56,8 @@ export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, ch
       {store && <ToolRail store={store} />}
       {store && <ZoomControl store={store} />}
       <div className="ink-shell__overlays">{overlays}</div>
+      {/* After the overlays at the same layer, so the card sits above chunk chips (INK-175, 0075). */}
+      {api && <PropsHost api={api} />}
     </div>
   );
 }

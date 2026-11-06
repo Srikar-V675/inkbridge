@@ -2,13 +2,14 @@
 // useSyncExternalStore reads it, and get() returns the same object until a shown field changes,
 // so a stroke (hundreds of onChange calls) never re-renders the rail.
 import {
-  colourNeedsPen, nextZoom, penIndex, railTool, toolTap, undoKey, zoomAbout, type RailTool,
+  colourNeedsPen, isShape, nextZoom, penIndex, pickShape, railTool, toolTap, undoKey, zoomAbout, type RailTool, type ShapeTool,
 } from "./shellLogic.ts";
 
 export interface RailSnapshot {
   tool: RailTool | null;
   pen: number; // index into the pen colours, -1 if the current colour is none of them
   zoom: number;
+  shape: ShapeTool; // last chosen shape: the Shapes button icon and the next tap
 }
 
 interface RailState {
@@ -47,16 +48,21 @@ const MAX_WAIT_FRAMES = 300; // give up waiting for Excalidraw to finish loading
 
 export function createRailStore(api: RailApi, pens: readonly string[], env: RailEnv) {
   const listeners = new Set<() => void>();
+  let lastShape: ShapeTool = "rectangle";
+  let lastPen = 0; // the rail's last chosen pen colour; pen and highlighter return to it (INK-175)
   const read = (): RailSnapshot => {
     const a = api.getAppState();
-    return { tool: railTool(a), pen: penIndex(a.currentItemStrokeColor, pens), zoom: a.zoom.value };
+    const pi = penIndex(a.currentItemStrokeColor, pens);
+    if (pi >= 0) lastPen = pi;
+    if (isShape(a.activeTool.type)) lastShape = a.activeTool.type;
+    return { tool: railTool(a), pen: penIndex(a.currentItemStrokeColor, pens), zoom: a.zoom.value, shape: lastShape };
   };
   const scene = (appState: Record<string, unknown>) => api.updateScene({ appState, captureUpdate: env.never });
 
   let snap = read();
   const refresh = () => {
     const n = read();
-    if (n.tool === snap.tool && n.pen === snap.pen && n.zoom === snap.zoom) return;
+    if (n.tool === snap.tool && n.pen === snap.pen && n.zoom === snap.zoom && n.shape === snap.shape) return;
     snap = n;
     listeners.forEach((l) => l());
   };
@@ -88,13 +94,27 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
       return () => void listeners.delete(l);
     },
     tap(tool: RailTool) {
-      const { tool: t, patch } = toolTap(tool, api.getAppState().activeTool.type);
+      const { tool: t, patch: base } = toolTap(tool, api.getAppState().activeTool.type, lastShape);
+      // A shape or text tool card may have set a background, fill or soft-ink stroke: freedraw copies all
+      // three at the start of a stroke, so the pen and highlighter reset them.
+      const patch: Record<string, unknown> =
+        tool === "pen" || tool === "highlighter"
+          ? { ...base, currentItemBackgroundColor: "transparent", currentItemFillStyle: "solid", currentItemStrokeColor: pens[lastPen] }
+          : base;
       api.setActiveTool(t);
+      if (Object.keys(patch).length) scene(patch);
+      refresh();
+    },
+    pickShape(shape: ShapeTool) {
+      const { tool, patch } = pickShape(shape, api.getAppState().activeTool.type);
+      lastShape = shape;
+      api.setActiveTool(tool);
       if (Object.keys(patch).length) scene(patch);
       refresh();
     },
     setPen(i: number) {
       if (colourNeedsPen(api.getAppState().activeTool.type)) api.setActiveTool({ type: "freedraw" });
+      lastPen = i;
       scene({ currentItemStrokeColor: pens[i] });
       refresh();
     },

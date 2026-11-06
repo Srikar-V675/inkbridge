@@ -1,5 +1,6 @@
 /* App shell (INK-117). Tokens only; the paper layer is the one gradient outside ui/. */
 .ink-shell {
+  --ink-rail-top: 88px;
   position: relative;
   height: 100dvh;
   overflow: hidden;
@@ -15,12 +16,12 @@
 /* One tile larger than the view on the left and top, moved by transform only while panning (INK-174). */
 .ink-paper__dots {
   position: absolute;
-  left: calc(-1 * var(--ink-dot-size, 24px));
-  top: calc(-1 * var(--ink-dot-size, 24px));
-  width: calc(100% + var(--ink-dot-size, 24px));
-  height: calc(100% + var(--ink-dot-size, 24px));
-  background-image: radial-gradient(circle, var(--color-dot) 1.4px, transparent 1.7px);
-  background-size: var(--ink-dot-size, 24px) var(--ink-dot-size, 24px);
+  left: calc(-1 * var(--ink-dot-size, 36px));
+  top: calc(-1 * var(--ink-dot-size, 36px));
+  width: calc(100% + var(--ink-dot-size, 36px));
+  height: calc(100% + var(--ink-dot-size, 36px));
+  background-image: radial-gradient(circle, var(--color-paper-dot) 1px, transparent 1.3px);
+  background-size: var(--ink-dot-size, 36px) var(--ink-dot-size, 36px);
   will-change: transform;
 }
 .ink-shell__canvas {
@@ -120,7 +121,13 @@
 .ink-rail {
   position: absolute;
   left: var(--space-md);
-  top: 88px;
+  top: var(--ink-rail-top);
+  max-height: calc(100vh - var(--ink-rail-top) - var(--space-md)); /* fallback */
+  max-height: calc(100dvh - var(--ink-rail-top) - var(--space-md));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   z-index: 5;
   width: var(--component-tool-rail-width);
   box-sizing: border-box;
@@ -157,17 +164,47 @@
   right: 20px;
   bottom: 20px;
   z-index: 5;
-  height: var(--space-touch);
+  height: 36px;
   padding: 0 var(--space-xs);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-pill);
   background: var(--color-panel);
   display: flex;
   align-items: center;
-  gap: 2px;
-  font: var(--type-control-weight) var(--type-control-size)/1 var(--type-control-family);
+  gap: 0;
+  font: var(--type-note-weight) var(--type-note-size)/1 var(--type-note-family);
+  color: var(--color-soft-ink);
+}
+.ink-zoom .ink-icon-button {
+  position: relative;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  color: var(--color-soft-ink);
+}
+.ink-zoom .ink-icon-button::after { /* 44 px hit area around the 32 px button */
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 .ink-zoom__value {
-  min-width: 48px;
+  min-width: 40px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* Short screens (tablet landscape with browser chrome is about 600 to 700 px): the rail packs tighter. Touch targets stay 44 px. */
+@media (max-height: 720px) {
+  .ink-shell { --ink-rail-top: 72px; }
+  .ink-rail { gap: 0; padding-block: var(--space-xs); }
+  .ink-rail__gap { height: 6px; }
+}
+
+/* Tablet density (INK-170): smaller type and tighter spacing; touch targets stay 44 px. */
+@media (pointer: coarse), (max-width: 1300px) {
+  .ink-topbar { gap: var(--space-sm); }
+  .ink-topbar__title { font-size: 18px; }
+  .ink-topbar__status { font-size: 13px; }
+  .ink-shell { --ink-rail-top: 72px; }
+  .ink-rail { left: var(--space-sm); }
 }
