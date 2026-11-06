@@ -1,12 +1,11 @@
-/** The canvas title from GET /documents, or the canvas id; never throws. INK-118 owns a proper list. */
+/** The canvas title from GET /documents/{id} (archived canvases too), or the canvas id; never throws. */
 export async function fetchTitle(canvas: string): Promise<string> {
   try {
-    const r = await fetch("/documents");
+    const r = await fetch(`/documents/${encodeURIComponent(canvas)}`);
     if (!r.ok) return canvas;
-    const list: unknown = await r.json();
-    if (!Array.isArray(list)) return canvas;
-    const hit = list.find((d) => d && d.id === canvas);
-    return typeof hit?.title === "string" && hit.title ? hit.title : canvas;
+    const doc: unknown = await r.json();
+    const title = (doc as { title?: unknown } | null)?.title;
+    return typeof title === "string" && title ? title : canvas;
   } catch {
     return canvas;
   }

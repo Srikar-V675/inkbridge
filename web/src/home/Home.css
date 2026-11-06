@@ -1,0 +1,307 @@
+/* Canvases home (INK-118). Tokens only; layout from the Home board at 1280x800. */
+.ink-home {
+  min-height: 100dvh;
+  box-sizing: border-box;
+  background: var(--color-paper);
+  color: var(--color-charcoal);
+  font-family: var(--type-control-family);
+}
+.ink-home-header {
+  height: 76px;
+  padding: 0 var(--space-xl);
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+}
+.ink-home-wordmark {
+  margin: 0;
+  font: var(--type-wordmark-weight) var(--type-wordmark-size)/1 var(--type-wordmark-family);
+  letter-spacing: var(--type-wordmark-tracking);
+}
+.ink-home-search {
+  flex: 1;
+  max-width: 460px;
+  margin-left: var(--space-lg);
+  height: 48px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  border-radius: var(--radius-card);
+  background: var(--color-panel);
+  color: var(--color-soft-ink);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ink-home-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font: 400 16px var(--type-control-family);
+  color: var(--color-charcoal);
+  outline-offset: 4px;
+}
+.ink-home-search input::placeholder {
+  color: var(--color-soft-ink);
+}
+.ink-home-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.ink-home-spacer {
+  flex: 1;
+}
+.ink-home-new {
+  height: 48px;
+}
+
+.ink-home-body {
+  padding: 12px var(--space-xl) var(--space-xl);
+}
+.ink-home-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: var(--space-xl);
+}
+@media (max-width: 900px) {
+  .ink-home-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ink-home-header {
+    padding: 0 var(--space-md);
+    gap: var(--space-md);
+  }
+  .ink-home-search {
+    margin-left: 0;
+  }
+  .ink-home-body {
+    padding: 12px var(--space-md) var(--space-xl);
+  }
+}
+.ink-home-h {
+  margin: 0 0 14px;
+  font: var(--type-title-weight) var(--type-title-size)/1.2 var(--type-title-family);
+}
+h2.ink-home-h {
+  margin-bottom: var(--space-sm);
+}
+.ink-home-section {
+  padding-top: 32px;
+}
+.ink-home-main + .ink-home-section {
+  padding-top: 32px;
+}
+.ink-home-sectionhead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-md);
+  margin-bottom: 14px;
+}
+.ink-home-sectionhead .ink-home-h {
+  margin: 0;
+}
+.ink-home-count {
+  font-size: 15px;
+  color: var(--color-soft-ink);
+}
+.ink-home-textlink {
+  min-height: var(--space-touch);
+  padding: 0 var(--space-sm);
+  border: 0;
+  background: transparent;
+  color: var(--color-charcoal);
+  font: var(--type-control-weight) var(--type-control-size) var(--type-control-family);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ink-home-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-md);
+  margin: var(--space-xl) 0;
+  color: var(--color-soft-ink);
+}
+
+/* One canvas: a link plus its actions button (and menu). */
+.ink-home-item {
+  position: relative;
+}
+.ink-home-link-item {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+}
+.ink-home-thumb {
+  display: block;
+  background: var(--color-panel);
+  overflow: hidden;
+}
+.ink-home-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.ink-home-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+.ink-home-meta {
+  display: block;
+  color: var(--color-soft-ink);
+}
+.ink-home-pin {
+  display: inline-flex;
+  color: var(--color-soft-ink);
+}
+.ink-home-more {
+  position: absolute;
+}
+
+/* Continue card */
+.ink-home-item--feature .ink-home-thumb {
+  height: 300px;
+  border-radius: var(--radius-panel);
+}
+.ink-home-item--feature .ink-home-link-item:hover .ink-home-thumb {
+  background: var(--color-pressed);
+}
+.ink-home-feature__offers {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+}
+.ink-home-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 52px 0 4px;
+  min-height: var(--space-touch);
+}
+.ink-home-caption .ink-home-title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.ink-home-caption .ink-home-meta {
+  font-size: 15px;
+}
+.ink-home-item--feature .ink-home-more {
+  right: 0;
+  bottom: 0;
+}
+
+/* Recent rows */
+.ink-home-item--row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-card);
+}
+.ink-home-item--row:hover {
+  background: var(--color-panel);
+}
+.ink-home-item--row .ink-home-link-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0 12px 14px;
+  min-height: 56px;
+  box-sizing: border-box;
+}
+.ink-home-item--row .ink-home-thumb {
+  flex: none;
+  width: 56px;
+  height: 44px;
+  border-radius: var(--radius-control);
+}
+.ink-home-item--row .ink-home-text {
+  flex: 1;
+  min-width: 0;
+}
+.ink-home-item--row .ink-home-title {
+  font-size: var(--type-reading-size);
+}
+.ink-home-item--row .ink-home-meta {
+  font-size: var(--type-note-size);
+}
+.ink-home-item--row .ink-home-more {
+  position: static;
+  flex: none;
+}
+
+/* All canvases grid */
+.ink-home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 20px;
+}
+.ink-home-item--tile .ink-home-thumb {
+  height: 120px;
+  border-radius: var(--radius-card);
+}
+.ink-home-item--tile .ink-home-link-item:hover .ink-home-thumb {
+  background: var(--color-pressed);
+}
+.ink-home-item--tile .ink-home-title {
+  margin: 10px 2px 0;
+  font-size: 16px;
+}
+.ink-home-tile__offers {
+  position: absolute;
+  top: var(--space-sm);
+  left: var(--space-sm);
+}
+.ink-home-item--tile .ink-home-more {
+  top: 0;
+  right: 0;
+  border-radius: var(--radius-control);
+}
+.ink-home-item--tile .ink-home-more:hover {
+  background: var(--color-card);
+}
+
+/* Actions menu */
+.ink-home-menu {
+  position: absolute;
+  z-index: 10;
+  top: var(--space-touch);
+  right: 0;
+  min-width: 200px;
+  padding: var(--space-sm);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--color-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-popover);
+}
+.ink-home-menu .ink-button {
+  justify-content: flex-start;
+}
+.ink-home-menu__input {
+  height: var(--space-touch);
+  box-sizing: border-box;
+  padding: 0 12px;
+  border: 1px solid var(--color-dot);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  color: var(--color-charcoal);
+  font: 400 16px var(--type-control-family);
+}
+
+.ink-home-toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-lg);
+  transform: translateX(-50%);
+  z-index: 20;
+}

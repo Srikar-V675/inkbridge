@@ -59,6 +59,12 @@ class DocumentOut(Out):
     updated_at: str
     version: int
     url: str
+    pinned: bool
+    archived: bool
+    element_count: int
+    chunk_count: int
+    open_offers: int
+    last_opened_at: str | None
 
 
 NOT_FOUND = "document not found; GET /documents lists the canvases"
@@ -97,8 +103,9 @@ def create_document(body: DocumentIn, conn: Conn) -> dict:
 
 
 @router.get("/documents", response_model=list[DocumentOut])
-def list_documents(conn: Conn) -> list[dict]:
-    return [{**d, "url": deep_link(d["id"])} for d in outline.list_documents(conn)]
+def list_documents(conn: Conn, archived: Literal["true", "false", "all"] = "false") -> list[dict]:
+    """Canvases, newest edit first. Archived ones are hidden unless ?archived=true or all."""
+    return [{**d, "url": deep_link(d["id"])} for d in db.list_documents(conn, archived)]
 
 
 @router.get("/documents/{document_id}/chunks", response_model=ChunkOutline)

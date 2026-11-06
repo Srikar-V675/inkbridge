@@ -16,7 +16,7 @@ import { type DraftElement } from "../drafts/drafts";
 import { draftOpId, dropDrafts } from "../drafts/resolve";
 import { drawOp } from "../drafts/drawOp";
 import { OpsSocket } from "../sync/opsSocket";
-import { readRoute } from "../lib/route";
+import type { Location } from "../lib/route";
 import { createLoadClock } from "../sync/loadClock";
 import { createStartupGate } from "../sync/startupGate";
 import { SceneSync, type SceneElement } from "../sync/sceneSync";
@@ -122,8 +122,7 @@ const Canvas = memo(function Canvas(props: {
   return <Excalidraw excalidrawAPI={onApi} initialData={initialData} onChange={onChange as never} UIOptions={UI_OPTIONS} />;
 });
 
-export default function App() {
-  const route = useMemo(() => readRoute(), []);
+export default function App({ route }: { route: Extract<Location, { kind: "canvas" }> }) {
   const status = useMemo(() => createStatusStore(), []);
   const refresh = useMemo(() => createRefresh(), []);
   const chunkView = useMemo(() => createChunkView(), []);
@@ -143,7 +142,7 @@ export default function App() {
   const unseen = useMemo(() => createUnseen(), []);
   const sceneReady = useRef(false);
   const clock = useMemo(() => createLoadClock(), []);
-  // Once per mount: switching canvases needs a page reload, so the gate never reopens.
+  // Once per canvas view: a switch remounts this component, so the gate is per canvas.
   const gate = useMemo(() => createStartupGate(), []);
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
@@ -208,9 +207,11 @@ export default function App() {
         const live = new Set<unknown>(api.getSceneElementsIncludingDeleted());
         const restored = restoreElements(elements.filter((e) => !live.has(e)) as never, null);
         const byId = new Map(restored.map((e) => [e.id, e]));
-        api.updateScene({
-          elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
-        });
+        try {
+          api.updateScene({
+            elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
+          });
+        } catch {} // the final save on leave (sync.close) can land after Excalidraw unmounted
       },
     });
     syncRef.current = sync;
@@ -266,7 +267,7 @@ export default function App() {
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onUp, true);
       window.removeEventListener("blur", onBlur);
-      sync.dispose();
+      void sync.close();
       crops.dispose();
     };
   }, [route.canvas, route.chunk, status, clock]);

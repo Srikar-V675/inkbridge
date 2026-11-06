@@ -423,6 +423,64 @@ describe("SceneSync", () => {
     await p;
     assert.equal(h.states.length, before);
   });
+  it("close() flushes a pending edit, then disposes", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    await h.sync.close();
+    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 1);
+    assert.equal(h.sync.settledVersion(), null, "disposed");
+  });
+
+  it("close() backs the unsaved edits up when the final flush fails", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), new Error("offline")]);
+    await h.sync.load();
+    h.sync.notify([el("a"), el("b")]);
+    await h.sync.close();
+    const kept = JSON.parse(h.stored["inkbridge-conflict-backup-default"] ?? "null");
+    assert.deepEqual(kept.map((e: SceneElement) => e.id), ["a", "b"]);
+    assert.equal(h.sync.settledVersion(), null, "disposed");
+  });
+
+  it("close() backs the edits up on a server error and a rejection too", async () => {
+    for (const status of [503, 422]) {
+      const h = harness([json(200, { version: 0, elements: [] }), json(status, {})]);
+      await h.sync.load();
+      h.sync.notify([el("a")]);
+      await h.sync.close();
+      assert.ok(h.stored["inkbridge-conflict-backup-default"], `status ${status}`);
+    }
+  });
+
+  it("close() after a 409 keeps the local ink backup", async () => {
+    const h = harness([
+      json(200, { version: 0, elements: [] }),
+      json(409, { detail: { current_version: 5 } }),
+      json(200, { version: 5, elements: [el("theirs")] }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("mine")]);
+    await h.sync.close();
+    const kept = JSON.parse(h.stored["inkbridge-conflict-backup-default"] ?? "null");
+    assert.deepEqual(kept.map((e: SceneElement) => e.id), ["mine"], "the backup is the local scene, not the merge");
+  });
+
+  it("close() writes no backup when the flush lands", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    await h.sync.close();
+    assert.equal(h.stored["inkbridge-conflict-backup-default"], undefined);
+  });
+
+  it("close() with nothing pending sends nothing", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    await h.sync.close();
+    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 0);
+    assert.equal(h.sync.settledVersion(), null);
+  });
+
   it("settledVersion is the saved version only when nothing is pending or in flight", async () => {
     const save = deferred();
     const h = harness([json(200, { version: 3, elements: [el("a")] }), save.next]);
