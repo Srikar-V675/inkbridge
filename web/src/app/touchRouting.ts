@@ -25,8 +25,10 @@ export function routePointer(i: RouteInput): Route {
 }
 
 export const PEN_GRACE_MS = 600;
-/** Pen proximity: down, or any pen event within the grace window (hover keeps sending moves). */
-export function createPenTracker(now: () => number, graceMs = PEN_GRACE_MS) {
+/** A pen "down" with no pen event at all for this long is a lost pen-up (hover or stroke keeps sending moves). */
+export const PEN_DOWN_MAX_MS = 3000;
+/** Pen proximity: down (while events keep coming), or any pen event within the grace window (hover keeps sending moves). */
+export function createPenTracker(now: () => number, graceMs = PEN_GRACE_MS, downMaxMs = PEN_DOWN_MAX_MS) {
   let down = false;
   let last = -Infinity;
   return {
@@ -34,10 +36,21 @@ export function createPenTracker(now: () => number, graceMs = PEN_GRACE_MS) {
       if (e.pointerType !== "pen") return;
       last = now();
       if (e.type === "pointerdown") down = true;
-      if (e.type === "pointerup" || e.type === "pointercancel") down = false;
+      if (e.type === "pointerup" || e.type === "pointercancel" || e.type === "lostpointercapture") down = false;
     },
-    active: () => down || now() - last < graceMs,
+    active: () => now() - last < graceMs || (down && now() - last < downMaxMs),
+    /** Forget the pen (window blur, page hidden): its pointerup may never arrive. */
+    reset() {
+      down = false;
+      last = -Infinity;
+    },
   };
+}
+
+/** The Excalidraw interactive canvas, the only place touch is routed. Structural so Node can test it. */
+export function isExcalidrawCanvas(t: unknown): boolean {
+  const n = t as { tagName?: string; classList?: { contains(c: string): boolean }; closest?(s: string): unknown } | null;
+  return !!n && n.tagName === "CANVAS" && !!n.classList?.contains("interactive") && !!n.closest?.(".excalidraw");
 }
 
 export interface BoxElement { x: number; y: number; width: number; height: number; isDeleted?: boolean }

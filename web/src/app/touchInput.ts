@@ -27,11 +27,15 @@ export interface TouchDeps {
   setView(v: ViewState): void; // api.updateScene({ appState, captureUpdate: NEVER })
   elements(): readonly BoxElement[]; // api.getSceneElements()
   fingerDraws(): boolean;
+  clearSelection(): void; // api.updateScene({ appState: { selectedElementIds: {} }, captureUpdate: NEVER })
+  hidden(): boolean; // document.hidden
   now(): number;
   schedule(cb: () => void): () => void; // requestAnimationFrame / cancel; tests run it synchronously
 }
 
-const EVENTS = ["pointerdown", "pointermove", "pointerup", "pointercancel"] as const;
+const EVENTS = ["pointerdown", "pointermove", "pointerup", "pointercancel", "lostpointercapture", "blur", "visibilitychange"] as const;
+const TAP_MAX_MS = 300; // a finger that lands and lifts within this, hardly moving, is a tap
+const TAP_MAX_PX = 8;
 const HIT_PAD_PX = 16; // a finger is coarse: grow element boxes by this many screen pixels
 
 export function installTouchInput(d: TouchDeps): () => void {
@@ -43,6 +47,8 @@ export function installTouchInput(d: TouchDeps): () => void {
   let cancelFrame: (() => void) | null = null;
   let scheduled = false;
   let dirty = false;
+  // The first finger of a pan, until it lifts: a tap (short, still, alone) on empty canvas deselects.
+  let tap: { t: number; x: number; y: number; ok: boolean } | null = null;
 
   const write = () => {
     scheduled = false;
@@ -63,6 +69,18 @@ export function installTouchInput(d: TouchDeps): () => void {
     pan.clear();
     anchor = null;
     dirty = false;
+    tap = null;
+  };
+  // Window blur or a hidden page can swallow pointerups: forget every finger and the pen.
+  const resetAll = () => {
+    flush();
+    pan.clear();
+    passed.clear();
+    ignored.clear();
+    anchor = null;
+    dirty = false;
+    tap = null;
+    pen.reset();
   };
   const point = (e: PtrEvent): Pt => {
     const v = d.view();
@@ -70,6 +88,8 @@ export function installTouchInput(d: TouchDeps): () => void {
   };
 
   const onEvent = (e: PtrEvent) => {
+    if (e.type === "blur" || (e.type === "visibilitychange" && d.hidden())) return resetAll();
+    if (e.type === "visibilitychange") return;
     if (e.pointerType === "pen") {
       pen.observe(e);
       if (e.type === "pointerdown") endPan();
@@ -99,6 +119,7 @@ export function installTouchInput(d: TouchDeps): () => void {
       } else {
         e.stopPropagation();
         flush();
+        tap = pan.size === 0 ? { t: d.now(), x: p.x, y: p.y, ok: true } : tap && { ...tap, ok: false };
         pan.set(id, p);
         reanchor();
       }
@@ -108,7 +129,9 @@ export function installTouchInput(d: TouchDeps): () => void {
     if (e.type === "pointermove") {
       if (pan.has(id)) {
         e.stopPropagation();
-        pan.set(id, point(e));
+        const p = point(e);
+        pan.set(id, p);
+        if (tap && Math.hypot(p.x - tap.x, p.y - tap.y) >= TAP_MAX_PX) tap.ok = false;
         dirty = true;
         if (!scheduled) {
           scheduled = true;
@@ -118,14 +141,32 @@ export function installTouchInput(d: TouchDeps): () => void {
       return;
     }
 
+    if (e.type === "lostpointercapture") {
+      // Not ours to stop: just forget this finger so no state outlives it.
+      if (pan.has(id)) {
+        flush();
+        pan.delete(id);
+        reanchor();
+        tap = null;
+      }
+      ignored.delete(id);
+      passed.delete(id);
+      return;
+    }
+
     // pointerup, pointercancel
     if (pan.has(id)) {
       e.stopPropagation();
-      pan.set(id, point(e));
+      const p = point(e);
+      const isTap = e.type === "pointerup" && pan.size === 1 && !!tap && tap.ok
+        && d.now() - tap.t < TAP_MAX_MS && Math.hypot(p.x - tap.x, p.y - tap.y) < TAP_MAX_PX;
+      pan.set(id, p);
       dirty = true;
       flush();
       pan.delete(id);
       reanchor();
+      if (isTap && d.tool() === "selection") d.clearSelection();
+      if (pan.size === 0 || e.type === "pointercancel") tap = null;
     } else if (ignored.has(id)) {
       e.stopPropagation();
       ignored.delete(id);

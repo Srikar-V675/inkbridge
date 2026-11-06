@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
-  anchorFor, createPenTracker, hitsElement, penPatch, routePointer, viewFor,
+  anchorFor, createPenTracker, hitsElement, isExcalidrawCanvas, penPatch, routePointer, viewFor, PEN_DOWN_MAX_MS,
   type Route, type RouteInput,
 } from "../src/app/touchRouting.ts";
 import { ZOOM_MAX, ZOOM_MIN } from "../src/app/shellLogic.ts";
@@ -41,17 +42,34 @@ describe("routePointer", () => {
 });
 
 describe("createPenTracker", () => {
-  it("stays active while the pen is down however long", () => {
+  it("stays active while the pen is down and events keep coming, then 600 ms after the up", () => {
     let t = 0;
     const p = createPenTracker(() => t);
     p.observe({ type: "pointerdown", pointerType: "pen" });
-    t = 10_000;
+    for (let i = 1; i <= 10; i++) { t = i * 1000; p.observe({ type: "pointermove", pointerType: "pen" }); }
     assert.equal(p.active(), true);
     p.observe({ type: "pointerup", pointerType: "pen" });
+    t = 10_000 + 599;
     assert.equal(p.active(), true);
-    t = 10_599;
+    t = 10_000 + 600;
+    assert.equal(p.active(), false);
+  });
+  it("a lost pen-up expires the down state after PEN_DOWN_MAX_MS of silence", () => {
+    let t = 0;
+    const p = createPenTracker(() => t);
+    p.observe({ type: "pointerdown", pointerType: "pen" });
+    t = PEN_DOWN_MAX_MS - 1;
     assert.equal(p.active(), true);
-    t = 10_600;
+    t = PEN_DOWN_MAX_MS;
+    assert.equal(p.active(), false);
+    p.observe({ type: "pointermove", pointerType: "pen" });
+    assert.equal(p.active(), true); // the pen is back: hover or stroke
+  });
+  it("reset forgets a pen that is down", () => {
+    let t = 0;
+    const p = createPenTracker(() => t);
+    p.observe({ type: "pointerdown", pointerType: "pen" });
+    p.reset();
     assert.equal(p.active(), false);
   });
   it("is inactive until a pen event, and hover keeps it active", () => {
@@ -131,5 +149,26 @@ describe("penPatch", () => {
   it("maps Finger draws to penMode and penDetected", () => {
     assert.deepEqual(penPatch(true), { penMode: false, penDetected: true });
     assert.deepEqual(penPatch(false), { penMode: true, penDetected: false });
+  });
+});
+
+describe("isExcalidrawCanvas", () => {
+  const node = (cls: string[], tag = "CANVAS", inside = true) => ({
+    tagName: tag,
+    classList: { contains: (c: string) => cls.includes(c) },
+    closest: (sel: string) => (inside && sel === ".excalidraw" ? {} : null),
+  });
+  it("accepts only the interactive canvas inside .excalidraw", () => {
+    assert.equal(isExcalidrawCanvas(node(["excalidraw__canvas", "interactive"])), true);
+    assert.equal(isExcalidrawCanvas(node(["excalidraw__canvas", "static"])), false);
+    assert.equal(isExcalidrawCanvas(node(["interactive"], "DIV")), false);
+    assert.equal(isExcalidrawCanvas(node(["interactive"], "CANVAS", false)), false);
+    assert.equal(isExcalidrawCanvas(null), false);
+    assert.equal(isExcalidrawCanvas("canvas"), false);
+  });
+  it("the installed Excalidraw still renders the class the router looks for", () => {
+    const src = readFileSync(new URL("../node_modules/@excalidraw/excalidraw/dist/dev/index.js", import.meta.url), "utf8");
+    assert.ok(src.includes('className: "excalidraw__canvas interactive"'), "Excalidraw renamed its interactive canvas class");
+    assert.ok(src.includes('"excalidraw excalidraw-container"'), "Excalidraw container class changed");
   });
 });
