@@ -423,6 +423,23 @@ describe("SceneSync", () => {
     await p;
     assert.equal(h.states.length, before);
   });
+  it("close() flushes a pending edit, then disposes", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    await h.sync.close();
+    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 1);
+    assert.equal(h.sync.settledVersion(), null, "disposed");
+  });
+
+  it("close() with nothing pending sends nothing", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    await h.sync.close();
+    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 0);
+    assert.equal(h.sync.settledVersion(), null);
+  });
+
   it("settledVersion is the saved version only when nothing is pending or in flight", async () => {
     const save = deferred();
     const h = harness([json(200, { version: 3, elements: [el("a")] }), save.next]);

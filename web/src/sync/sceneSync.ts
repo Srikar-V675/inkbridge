@@ -196,6 +196,15 @@ export class SceneSync {
     return ids.every((id) => this.savedIds.has(id));
   }
 
+  /** Leave the canvas: send what is still unsaved, then stop. dispose() alone would drop the last edit. */
+  async close() {
+    try {
+      await this.flushNow();
+    } finally {
+      this.dispose();
+    }
+  }
+
   dispose() {
     this.disposed = true;
     if (this.timer) clearTimeout(this.timer);
