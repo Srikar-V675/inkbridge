@@ -12,7 +12,7 @@ now holds the runner decision.
    prompt goes on stdin (not argv: no leak in `ps`, no length limit). The child reaches the API
    only through the MCP server and its own `answer_question` call, so the transition guard of 0035
    is the only writer. Anything the model prints is discarded.
-3. **Allow-list.** A page or a vault note can contain instructions (prompt injection) and the
+3. **Allow-list** (vault tool matching and failure reporting: decision 0060). A page or a vault note can contain instructions (prompt injection) and the
    backend never writes the vault. The command has `--strict-mcp-config`, an explicit
    `--allowedTools` (`read_canvas`, `get_region`, `search`, `answer_question`, plus vault tools from
    `INKBRIDGE_RUNNER_VAULT_TOOLS`) and a `--disallowedTools` list (Bash, Edit, Write, web, and the

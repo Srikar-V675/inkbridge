@@ -2,7 +2,9 @@
 
 The backend only stores the question and the answer an agent hands back. Nothing here starts a
 process or calls a model, so a row leaves `pending` only through answer or cancel.
-Lifecycle: pending -> answered | cancelled.
+A follow-up without a selection stores its parent's focus (INK-104), so the thread root's ink.
+Lifecycle: pending -> answered | cancelled. The Ask runner state (`runner_status`, `runner_error`,
+INK-103) is only meaningful while `status='pending'`.
 """
 
 import json
@@ -14,6 +16,7 @@ from inkbridge.db.documents import document_exists
 
 HISTORY_MAX = 5  # earlier question/answer pairs of a thread sent along with a question
 STATUSES = ("pending", "answered", "cancelled")
+RUNNER_STATUSES = ("pending", "running", "failed")
 
 
 class QuestionNotFound(Exception):
@@ -39,13 +42,17 @@ def create_question(
 ) -> dict:
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
-    if (
-        parent_id is not None
-        and not conn.execute(
-            "SELECT 1 FROM questions WHERE id = ? AND document_id = ?", (parent_id, document_id)
+    if parent_id is not None:
+        parent = conn.execute(
+            "SELECT focus_element_ids FROM questions WHERE id = ? AND document_id = ?",
+            (parent_id, document_id),
         ).fetchone()
-    ):
-        raise ParentNotFound(parent_id)
+        if parent is None:
+            raise ParentNotFound(parent_id)
+        # A follow-up without a selection keeps asking about the same ink (INK-104). The parent
+        # stored its own inherited focus, so this is the thread root's focus.
+        if not focus_element_ids:
+            focus_element_ids = json.loads(parent["focus_element_ids"])
     qid = uuid.uuid4().hex[:12]
     conn.execute(
         "INSERT INTO questions (id, document_id, parent_id, text, focus_element_ids, status,"
@@ -106,6 +113,29 @@ def cancel_question(conn: sqlite3.Connection, question_id: str) -> dict:
     return _finish(conn, question_id, cur.rowcount)
 
 
+def set_runner(
+    conn: sqlite3.Connection, question_id: str, status: str, error: str | None = None
+) -> dict:
+    """Set the runner state of a still-pending question (the guard keeps an answered row untouched)."""
+    assert status in RUNNER_STATUSES
+    conn.execute(
+        "UPDATE questions SET runner_status = ?, runner_error = ? WHERE id = ? AND status = 'pending'",
+        (status, error[:200] if error else None, question_id),
+    )
+    conn.commit()
+    return get_question(conn, question_id)
+
+
+def reset_runner(conn: sqlite3.Connection, status: str, error: str | None) -> None:
+    """At API start: failure counts live in memory, so every pending question gets a fresh state."""
+    assert status in RUNNER_STATUSES
+    conn.execute(
+        "UPDATE questions SET runner_status = ?, runner_error = ? WHERE status = 'pending'",
+        (status, error[:200] if error else None),
+    )
+    conn.commit()
+
+
 def _finish(conn: sqlite3.Connection, question_id: str, changed: int) -> dict:
     if not changed:
         row = conn.execute("SELECT status FROM questions WHERE id = ?", (question_id,)).fetchone()
@@ -140,6 +170,8 @@ def _full(conn: sqlite3.Connection, row: sqlite3.Row, chunks: list[tuple[str, se
         "answer_md": row["answer_md"],
         "sources": json.loads(row["sources_json"]) if row["sources_json"] else [],
         "history": _history(conn, row),
+        "runner_status": row["runner_status"],
+        "runner_error": row["runner_error"],
         "created_at": row["created_at"],
     }
 

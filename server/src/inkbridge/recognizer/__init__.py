@@ -33,6 +33,10 @@ class RateLimited(RecognizerError):
     """The provider answered 429 (free-tier limits)."""
 
 
+class ServiceUnavailable(RecognizerError):
+    """The provider answered 503 (overloaded or down); every chunk would hit it too."""
+
+
 class RecognizerTimeout(RecognizerError):
     """The provider did not answer in time."""
 

@@ -18,6 +18,35 @@ export interface Question {
   answer_md: string | null;
   sources: Source[];
   created_at: string;
+  runner_status: "pending" | "running" | "failed";
+  runner_error: string | null;
+}
+
+export function applyQuestionUpdate(list: Question[], q: Question): Question[] {
+  const i = list.findIndex((x) => x.id === q.id);
+  if (i < 0) return [...list, q]; // the list is oldest first
+  const next = list.slice();
+  next[i] = q;
+  return next;
+}
+
+// App.tsx feeds the socket into this; AskPanel listens. null = refetch (the socket reconnected).
+type Listener = (q: Question | null) => void;
+const listeners = new Set<Listener>();
+export function subscribeQuestions(fn: Listener): () => void {
+  listeners.add(fn);
+  return () => void listeners.delete(fn);
+}
+export function publishQuestion(q: Question | null) {
+  listeners.forEach((fn) => fn(q));
+}
+
+/** Runner state of a pending question (INK-103 fields). The reason is path-free server text. */
+export function runnerLine(q: Question): string | null {
+  if (q.status !== "pending") return null;
+  if (q.runner_status === "failed") return `The answering agent failed: ${q.runner_error ?? "unknown reason"}`;
+  if (q.runner_status === "running") return "Answering...";
+  return q.runner_error ? `Retrying after: ${q.runner_error}` : null;
 }
 
 export const MAX_FOCUS = 200; // API limit

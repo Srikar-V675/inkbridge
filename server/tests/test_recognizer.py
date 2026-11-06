@@ -13,6 +13,7 @@ from inkbridge.recognizer import (
     Recognition,
     RecognizerError,
     RecognizerTimeout,
+    ServiceUnavailable,
 )
 from inkbridge.recognizer.gemini import DEFAULT_MODEL, GeminiRecognizer
 
@@ -266,6 +267,7 @@ def test_google_transport_returns_the_reply_text(monkeypatch):
         (api_error(400, "API key not valid. Please pass a valid API key."), InvalidApiKey),
         (api_error(504, "Deadline exceeded"), RecognizerTimeout),
         (api_error(408), RecognizerTimeout),
+        (api_error(503, "overloaded"), ServiceUnavailable),
         (api_error(404, "model not found"), RecognizerError),
     ],
 )

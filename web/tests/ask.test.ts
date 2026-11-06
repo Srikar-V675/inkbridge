@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { fileName, focusIds, keepOnCanvas, keepOp, plainText, type Question } from "../src/ask/ask.ts";
+import {
+  applyQuestionUpdate, fileName, focusIds, keepOnCanvas, keepOp, plainText, publishQuestion, runnerLine,
+  subscribeQuestions, type Question,
+} from "../src/ask/ask.ts";
 
 const q = (over: Partial<Question> = {}): Question => ({
   id: "abc123", document_id: "c", parent_id: null, text: "t", focus_element_ids: [], focus_chunk_ids: [],
-  status: "answered", answer_md: "Hello **world**", sources: [], created_at: "", ...over,
+  status: "answered", answer_md: "Hello **world**", sources: [], created_at: "",
+  runner_status: "pending", runner_error: null, ...over,
 });
 
 describe("focusIds", () => {
@@ -98,5 +102,37 @@ describe("keepOnCanvas", () => {
     assert.ok(r.ok);
     assert.equal(posts.length, 2);
     assert.ok(!("anchor" in posts[1]));
+  });
+});
+
+describe("question push", () => {
+  it("applyQuestionUpdate replaces by id, appends a new one, keeps order", () => {
+    const a = q({ id: "a" }), b = q({ id: "b", status: "pending" });
+    const got = applyQuestionUpdate([a, b], { ...b, status: "answered", answer_md: "x" });
+    assert.deepEqual(got.map((x) => x.id), ["a", "b"]);
+    assert.equal(got[1].status, "answered");
+    assert.deepEqual(applyQuestionUpdate([a], b).map((x) => x.id), ["a", "b"]);
+  });
+  it("the bus delivers a push, null means refetch, and unsubscribe stops it", () => {
+    const seen: unknown[] = [];
+    const off = subscribeQuestions((x) => seen.push(x));
+    const p = q({ id: "p" });
+    publishQuestion(p);
+    publishQuestion(null);
+    off();
+    publishQuestion(p);
+    assert.deepEqual(seen, [p, null]);
+  });
+});
+
+describe("runnerLine", () => {
+  it("says nothing for answered rows and plain pending ones", () => {
+    assert.equal(runnerLine(q({ status: "answered", runner_status: "failed", runner_error: "x" })), null);
+    assert.equal(runnerLine(q({ status: "pending" })), null);
+  });
+  it("shows the failure reason, the retry reason and running", () => {
+    assert.match(runnerLine(q({ status: "pending", runner_status: "failed", runner_error: "exit 2" }))!, /failed.*exit 2/);
+    assert.match(runnerLine(q({ status: "pending", runner_error: "timeout after 180s" }))!, /timeout after 180s/);
+    assert.match(runnerLine(q({ status: "pending", runner_status: "running" }))!, /Answering/);
   });
 });

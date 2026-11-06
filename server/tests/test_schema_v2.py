@@ -36,6 +36,8 @@ def test_v2_tables_and_columns(tmp_path):
         "sources_json",
         "status",
         "runner_ref",
+        "runner_status",
+        "runner_error",
         "created_at",
     }
     assert {"document_id", "created_at", "result_json", "error"} <= cols(conn, "agent_ops")
@@ -116,7 +118,7 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     )
     conn.commit()
     monkeypatch.undo()  # back to the real migrations directory
-    assert db.migrate(conn) == [4, 5]
+    assert db.migrate(conn) == [4, 5, 6]
     region = db.get_region(conn, "r1")
     assert region["content_hash"] == content_hash([A])
     assert region["text"] == "kept reading"
