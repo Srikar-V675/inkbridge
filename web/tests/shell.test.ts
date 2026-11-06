@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
+import { fetchTitle } from "../src/app/canvasTitle.ts";
+import { createRailStore } from "../src/app/railStore.ts";
 import {
   colourNeedsPen, dotStep, HIGHLIGHTER, MIN_DOT_PX, nextZoom, paperDots, PEN, penColours, penIndex, railTool, toolTap,
   undoKey, zoomAbout, ZOOM_MAX, ZOOM_MIN,
@@ -125,5 +127,151 @@ describe("pens and undo keys", () => {
     assert.equal(undo.metaKey, true);
     assert.equal(undo.ctrlKey, false);
     assert.equal(undo.key, "z");
+  });
+});
+
+const PENS = ["#2E2D2B", "#2F55B8", "#A63D2A"];
+const NEVER = "NEVER";
+
+function fakeApi(start: Record<string, unknown> = {}) {
+  let state: Record<string, unknown> = {
+    activeTool: { type: "selection" },
+    currentItemOpacity: 100,
+    currentItemStrokeColor: "#000000",
+    scrollX: 0,
+    scrollY: 0,
+    zoom: { value: 1 },
+    width: 1000,
+    height: 600,
+    ...start,
+  };
+  const subs = new Set<(els: unknown[], a: Record<string, unknown>) => void>();
+  const calls: { tool: unknown[]; scene: Record<string, unknown>[] } = { tool: [], scene: [] };
+  const api = {
+    getAppState: () => state,
+    onChange: (cb: (els: unknown[], a: Record<string, unknown>) => void) => (subs.add(cb), () => void subs.delete(cb)),
+    setActiveTool: (t: unknown) => void calls.tool.push(t),
+    updateScene: (s: Record<string, unknown>) => void calls.scene.push(s),
+  };
+  return {
+    api: api as never,
+    calls,
+    subs,
+    set(next: Record<string, unknown>) {
+      state = { ...state, ...next };
+      subs.forEach((cb) => cb([], state));
+    },
+  };
+}
+
+function fakeEnv() {
+  const events: KeyboardEventInit[] = [];
+  return {
+    events,
+    env: {
+      never: NEVER,
+      mac: false,
+      container: () => ({ dispatchEvent: (e: unknown) => (events.push(e as KeyboardEventInit), true) }),
+      makeKey: (init: KeyboardEventInit) => init as never,
+    },
+  };
+}
+
+describe("createRailStore", () => {
+  it("starts with the pen and charcoal, once, and subscribes", () => {
+    const f = fakeApi();
+    const { env } = fakeEnv();
+    const store = createRailStore(f.api, PENS, env as never);
+    assert.deepEqual(f.calls.tool, [{ type: "freedraw" }]);
+    assert.equal(f.calls.scene.length, 1);
+    assert.deepEqual((f.calls.scene[0].appState as Record<string, unknown>).currentItemStrokeColor, "#2E2D2B");
+    assert.equal(f.subs.size, 1);
+    store.dispose();
+    assert.equal(f.subs.size, 0);
+  });
+
+  it("keeps the same snapshot while nothing the rail shows changes", () => {
+    const f = fakeApi({ activeTool: { type: "freedraw" }, currentItemStrokeColor: "#2E2D2B" });
+    const { env } = fakeEnv();
+    const store = createRailStore(f.api, PENS, env as never);
+    const first = store.get();
+    let runs = 0;
+    store.subscribe(() => runs++);
+    for (let i = 0; i < 100; i++) f.set({ scrollX: i });
+    assert.equal(runs, 0);
+    assert.equal(store.get(), first);
+    f.set({ activeTool: { type: "eraser" } });
+    assert.equal(runs, 1);
+    assert.equal(store.get().tool, "eraser");
+    assert.notEqual(store.get(), first);
+  });
+
+  it("highlighter sets freedraw at 35 percent, width 4, without history", () => {
+    const f = fakeApi();
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    f.calls.tool.length = 0;
+    f.calls.scene.length = 0;
+    store.tap("highlighter");
+    assert.deepEqual(f.calls.tool, [{ type: "freedraw" }]);
+    assert.deepEqual(f.calls.scene, [{ appState: { currentItemOpacity: 35, currentItemStrokeWidth: 4 }, captureUpdate: NEVER }]);
+  });
+
+  it("a pen colour sets the stroke colour, via the pen when another tool is active", () => {
+    const f = fakeApi({ activeTool: { type: "eraser" } });
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    f.calls.tool.length = 0;
+    f.calls.scene.length = 0;
+    store.setPen(1);
+    assert.deepEqual(f.calls.tool, [{ type: "freedraw" }]);
+    assert.deepEqual(f.calls.scene, [{ appState: { currentItemStrokeColor: "#2F55B8" }, captureUpdate: NEVER }]);
+    f.set({ activeTool: { type: "freedraw" } });
+    f.calls.tool.length = 0;
+    store.setPen(2);
+    assert.deepEqual(f.calls.tool, []);
+  });
+
+  it("zoom buttons zoom about the centre without history", () => {
+    const f = fakeApi({ zoom: { value: 1 }, scrollX: 10, scrollY: 20 });
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    f.calls.scene.length = 0;
+    store.zoomBy(1);
+    const z = zoomAbout({ scrollX: 10, scrollY: 20, zoom: 1, width: 1000, height: 600 }, 1.25);
+    assert.deepEqual(f.calls.scene, [{ appState: { zoom: { value: 1.25 }, scrollX: z.scrollX, scrollY: z.scrollY }, captureUpdate: NEVER }]);
+  });
+
+  it("undo and redo send a key event to the canvas container", () => {
+    const f = fakeApi();
+    const e = fakeEnv();
+    const store = createRailStore(f.api, PENS, e.env as never);
+    store.undo();
+    store.redo();
+    assert.equal(e.events[0].key, "z");
+    assert.equal(e.events[0].shiftKey, false);
+    assert.equal(e.events[1].key, "Z");
+    assert.equal(e.events[1].shiftKey, true);
+  });
+});
+
+describe("fetchTitle", () => {
+  const real = globalThis.fetch;
+  afterEach(() => void (globalThis.fetch = real));
+  const stub = (f: () => Promise<unknown>) => void (globalThis.fetch = f as never);
+
+  it("returns the title of the matching canvas", async () => {
+    stub(async () => ({ ok: true, json: async () => [{ id: "a", title: "A" }, { id: "b", title: "Linear models" }] }));
+    assert.equal(await fetchTitle("b"), "Linear models");
+  });
+  it("falls back to the id when the canvas is not listed or has no title", async () => {
+    stub(async () => ({ ok: true, json: async () => [{ id: "a", title: "A" }, { id: "c", title: "" }] }));
+    assert.equal(await fetchTitle("zzz"), "zzz");
+    assert.equal(await fetchTitle("c"), "c");
+  });
+  it("never throws", async () => {
+    stub(async () => Promise.reject(new Error("offline")));
+    assert.equal(await fetchTitle("x"), "x");
+    stub(async () => ({ ok: false, json: async () => [] }));
+    assert.equal(await fetchTitle("x"), "x");
+    stub(async () => ({ ok: true, json: async () => ({ not: "a list" }) }));
+    assert.equal(await fetchTitle("x"), "x");
   });
 });
