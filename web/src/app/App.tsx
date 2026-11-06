@@ -2,7 +2,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
-import { ChunkOverlay } from "../chunks/ChunkOverlay";
+import { ChunkOverlay, ChunkToggle } from "../chunks/ChunkOverlay";
+import { createChunkView } from "../chunks/chunkView";
 import { JumpNotice } from "../chunks/JumpNotice";
 import { createRefresh, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
@@ -125,6 +126,7 @@ export default function App() {
   const route = useMemo(() => readRoute(), []);
   const status = useMemo(() => createStatusStore(), []);
   const refresh = useMemo(() => createRefresh(), []);
+  const chunkView = useMemo(() => createChunkView(), []);
   useEffect(() => () => refresh.dispose(), [refresh]); // drop a pending refetch on unmount
   const [initial, setInitial] = useState<Initial>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
@@ -399,8 +401,19 @@ export default function App() {
       api={api}
       title={title}
       status={<StatusSlot store={status} />}
+      chunks={<ChunkToggle view={chunkView} />}
       overlays={
         <>
+          {api && initial && initial !== "failed" && (
+            <ChunkOverlay
+              api={api}
+              canvas={route.canvas}
+              status={status}
+              view={chunkView}
+              ghost={noticeOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
+              refresh={refresh}
+            />
+          )}
           {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} />}
           {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
         </>
@@ -409,15 +422,6 @@ export default function App() {
       askOpen={askOpen}
     >
       {initial && initial !== "failed" && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
-      {api && initial && initial !== "failed" && (
-        <ChunkOverlay
-          api={api}
-          canvas={route.canvas}
-          status={status}
-          ghost={noticeOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
-          refresh={refresh}
-        />
-      )}
       {api && initial && initial !== "failed" && (
         <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
       )}

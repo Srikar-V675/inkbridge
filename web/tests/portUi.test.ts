@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { parseTokenCss, resolveVar } from "../src/ui/tokenTable.ts";
 
 const read = (p: string) => readFileSync(fileURLToPath(new URL(`../src/${p}`, import.meta.url)), "utf8");
 const zOf = (css: string, selector: string): number => {
@@ -34,5 +35,21 @@ describe("draft bar css (INK-162)", () => {
     const tsx = read("drafts/DraftBar.tsx");
     assert.ok(!tsx.includes("<button"));
     for (const name of ["Button", "Badge", "Chip", "Toast", "DraftDot"]) assert.ok(tsx.includes(name), name);
+  });
+});
+
+describe("chunk overlay css (INK-162)", () => {
+  const css = read("chunks/ChunkOverlay.css");
+  const tokens = parseTokenCss(read("styles/tokens.css"));
+  const px = (v: string) => Number(/^(-?[\d.]+)px$/.exec(resolveVar(tokens, v.trim()))?.[1]);
+  it("the chunk tab is a 44 px target", () => {
+    const rule = /\.ink-chunk-tab\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    assert.ok(px(/min-height:\s*([^;]+)/.exec(rule)?.[1] ?? "") >= 44);
+    assert.ok(px(/min-width:\s*([^;]+)/.exec(rule)?.[1] ?? "") >= 44);
+  });
+  it("ChunkOverlay has no raw colours or inline styles for chrome", () => {
+    const tsx = read("chunks/ChunkOverlay.tsx");
+    assert.ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(tsx));
+    assert.ok(!tsx.includes("Show chunks"));
   });
 });

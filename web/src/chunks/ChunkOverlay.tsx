@@ -1,11 +1,15 @@
 // Chunk boxes and ids drawn as plain DOM over the canvas. UI state only: nothing here touches the
 // Excalidraw scene, so the overlay can never be autosaved (docs/decisions/0014). The merge and
 // split actions only call the API (docs/decisions/0024); they never change elements either.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "./chunks";
 import { chunkMark, connectorIds, overrideUi, planOverride, sendOverride, toggleChunk } from "./overrides";
 import type { Refresh } from "../sync/chunkRefresh";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import type { ChunkView } from "./chunkView";
+import "./ChunkOverlay.css";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
 
@@ -88,18 +92,7 @@ function useChunks(
   return [on && chunks.session === session ? chunks.rows : [], reload];
 }
 
-const actionButton = (enabled: boolean): React.CSSProperties => ({
-  minHeight: 44,
-  padding: "8px 14px",
-  borderRadius: 6,
-  border: "1px solid #ced4da",
-  font: "12px system-ui, sans-serif",
-  background: "#fff",
-  color: enabled ? "#202124" : "#adb5bd",
-  opacity: enabled ? 1 : 0.5,
-});
-
-/** "Merge chunks" and "Split selection" for the current selection, next to the overlay toggle. */
+/** "Merge chunks" and "Split selection" for the current selection, above the zoom control. */
 function OverrideActions(props: {
   api: ExcalidrawImperativeAPI;
   canvas: string;
@@ -127,36 +120,18 @@ function OverrideActions(props: {
   const merge = ui.canMerge && !busy;
   const split = ui.canSplit && !busy;
   return (
-    <div
-      style={{
-        position: "absolute",
-        right: 12,
-        bottom: 120,
-        zIndex: 10,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-end",
-        gap: 6,
-        maxWidth: "calc(100% - 24px)",
-      }}
-    >
-      {message && (
-        <div role="status" style={{ font: "12px system-ui, sans-serif", background: "#fff", padding: "2px 8px", borderRadius: 4 }}>
-          {message}
-        </div>
-      )}
-      <div data-testid="override-hint" style={{ font: "12px system-ui, sans-serif", background: "#fff", padding: "2px 8px", borderRadius: 4 }}>
-        {ui.hint}
-      </div>
-      <div style={{ display: "flex", gap: 6 }}>
-        <button type="button" disabled={!merge} onClick={() => void run()} style={actionButton(merge)}>
+    <Card className="ink-chunk-actions">
+      {message && <p role="status">{message}</p>}
+      <p data-testid="override-hint">{ui.hint}</p>
+      <div className="ink-chunk-actions__row">
+        <Button variant="secondary" disabled={!merge} onClick={() => void run()}>
           Merge chunks
-        </button>
-        <button type="button" disabled={!split} onClick={() => void run()} style={actionButton(split)}>
+        </Button>
+        <Button variant="secondary" disabled={!split} onClick={() => void run()}>
           Split selection
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -165,39 +140,29 @@ const box = (b: Bounds, v: View): React.CSSProperties => {
   return { position: "absolute", left: s.left, top: s.top, width: s.width, height: s.height, boxSizing: "border-box" };
 };
 
-/** The label chip is the tap target: big enough for a finger, the only part of a box that takes input. */
-const chip: React.CSSProperties = {
-  position: "absolute",
-  left: -1,
-  display: "flex",
-  alignItems: "center",
-  minWidth: 44,
-  minHeight: 32,
-  padding: "0 6px",
-  margin: 0,
-  border: 0,
-  font: "11px ui-monospace, monospace",
-  whiteSpace: "nowrap",
-  background: "#1971c2",
-  color: "#fff",
-  borderRadius: "3px 3px 0 0",
-  pointerEvents: "auto",
-  touchAction: "manipulation",
-  cursor: "pointer",
-};
+/** The quiet "Chunks" toggle that lives in the top bar; the overlay reads the same store. */
+export function ChunkToggle({ view }: { view: ChunkView }) {
+  const { on } = useSyncExternalStore(view.subscribe, view.get);
+  return (
+    <Button variant="quiet" className="ink-chunk-toggle" aria-pressed={on} onClick={view.toggle}>
+      Chunks
+    </Button>
+  );
+}
 
 export function ChunkOverlay(props: {
   api: ExcalidrawImperativeAPI;
   canvas: string;
   status: StatusStore;
+  /** On/off and session, shared with the top bar toggle. */
+  view: ChunkView;
   /** Old bounds of an orphaned deep-linked chunk, shown until the notice is dismissed. */
   ghost: Bounds | null;
   refresh: Refresh;
 }) {
-  const { api, canvas, status, ghost, refresh } = props;
-  const [on, setOn] = useState(false);
-  const [session, setSession] = useState(0);
-  const view = useView(api);
+  const { api, canvas, status, view, ghost, refresh } = props;
+  const { on, session } = useSyncExternalStore(view.subscribe, view.get);
+  const scroll = useView(api);
   const selected = useSelection(api);
   const [chunks, reload] = useChunks(canvas, on, session, status, refresh);
   // Read the scene only when the selection or the list changes, never per stroke point.
@@ -217,79 +182,41 @@ export function ChunkOverlay(props: {
   return (
     <>
       {(on || ghost) && (
-        <div
-          data-testid="chunk-overlay"
-          style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 4 }}
-        >
+        <div data-testid="chunk-overlay" className="ink-chunk-layer">
           {on &&
             chunks.map((c) => {
               const mark = chunkMark(selected, c, connectors);
-              const edge =
-                mark === "full"
-                  ? "3px solid #e8590c"
-                  : mark === "partial"
-                    ? "1.5px dashed #e8590c"
-                    : `${c.pinned ? 2.5 : 1.5}px solid #1971c2`;
               return (
                 <div
                   key={c.id}
                   data-chunk-id={c.id}
                   data-pinned={c.pinned ? "true" : undefined}
                   data-selected={mark}
-                  style={{
-                    ...box(c.bounds, view),
-                    border: edge,
-                    background: mark === "full" ? "rgba(232,89,12,0.12)" : undefined,
-                  }}
+                  className={`ink-chunk ink-chunk--${mark}${c.pinned ? " ink-chunk--pinned" : ""}`}
+                  style={box(c.bounds, scroll)}
                 >
                   {/* Above the box, or inside it when the box touches the top edge. */}
                   <button
                     type="button"
+                    className="ink-chunk-tab"
                     aria-pressed={mark === "full"}
                     data-testid={`chunk-tab-${c.id}`}
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={() => select(c)}
-                    style={{ ...chip, top: toScreen(c.bounds, view).top < 32 ? 0 : -32 }}
+                    style={{ top: toScreen(c.bounds, scroll).top < 44 ? 0 : -44 }}
                   >
-                    {c.id}
-                    {c.pinned ? " · manual" : ""}
+                    <span className="ink-chunk-tab__label">
+                      {c.id}
+                      {c.pinned ? " · manual" : ""}
+                    </span>
                   </button>
                 </div>
               );
             })}
-          {ghost && (
-            <div
-              data-testid="chunk-ghost"
-              aria-hidden
-              style={{ ...box(ghost, view), border: "2px dashed #e8590c" }}
-            />
-          )}
+          {ghost && <div data-testid="chunk-ghost" aria-hidden className="ink-chunk-ghost" style={box(ghost, scroll)} />}
         </div>
       )}
       {on && <OverrideActions api={api} canvas={canvas} selected={selected} chunks={chunks} onDone={reload} />}
-      <button
-        type="button"
-        aria-pressed={on}
-        onClick={() => {
-          if (!on) setSession((s) => s + 1);
-          setOn(!on);
-        }}
-        style={{
-          position: "absolute",
-          right: 12,
-          bottom: 76,
-          zIndex: 10,
-          padding: "4px 10px",
-          borderRadius: 6,
-          border: "1px solid #ced4da",
-          font: "12px system-ui, sans-serif",
-          background: on ? "#1971c2" : "#fff",
-          color: on ? "#fff" : "#202124",
-        }}
-      >
-        {on ? "Hide chunks" : "Show chunks"}
-        {on && chunks.length > 0 ? ` (${chunks.length})` : ""}
-      </button>
     </>
   );
 }
