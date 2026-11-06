@@ -3,11 +3,20 @@
 import io
 import math
 import random
+import sys
 import time
+from pathlib import Path
 
-from PIL import Image
+import pytest
+from PIL import Image, ImageChops
 
 from inkbridge.canvas import raster
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "eval" / "fixtures"))
+
+BG = raster.THUMB_BG
+CROP_THIN_INK = 196  # ink pixels of render_crop(stroke(width=1)) before INK-171
 
 
 def img(png: bytes) -> Image.Image:
@@ -123,17 +132,146 @@ def test_rotation_moves_the_ink():
     assert abs(turned[0] - flat[1]) <= 2 and abs(turned[1] - flat[0]) <= 2
 
 
+def inked_box(png: bytes):
+    """Bounding box of the pixels that differ from the thumbnail background, or None."""
+    im = img(png)
+    return ImageChops.difference(im, Image.new("RGB", im.size, BG)).getbbox()
+
+
+def cluster(cols=8, rows=4, dx=140, dy=160):
+    """A grid of small rectangles; the default spans about 1000 x 600 units."""
+    return [
+        shape("rectangle", f"c{r}-{c}", x=c * dx, y=r * dy, w=40, h=100)
+        for r in range(rows)
+        for c in range(cols)
+    ]
+
+
 def test_thumbnail_is_fitted_and_empty_canvas_is_blank():
     els = [shape("rectangle", w=2000, h=500)]
     thumb = img(raster.render_thumbnail(els))
-    assert thumb.size == (480, 320)
-    box = thumb.point(lambda v: 255 - v).getbbox()  # bounds of the non-white pixels
+    assert thumb.size == (960, 640)
+    box = inked_box(raster.render_thumbnail(els))
     w, h = box[2] - box[0], box[3] - box[1]
-    assert w <= 480 and h <= 320 and abs(w / h - 4.0) < 0.2
-    blank = img(raster.render_thumbnail([]))
-    assert blank.size == (480, 320) and ink(raster.render_thumbnail([])) == 0
+    assert w <= 960 and h <= 640 and abs(w / h - 4.0) < 0.2
+    assert inked_box(raster.render_thumbnail([])) is None
     draft = stroke("d", customData={"draft": True})
-    assert ink(raster.render_thumbnail([draft])) == 0
+    assert inked_box(raster.render_thumbnail([draft])) is None
+
+
+def test_thumbnail_is_960x640_on_the_panel_colour():
+    assert raster.THUMB_BG == (234, 228, 215)
+    draft = stroke("d", customData={"draft": True})
+    for els in ([], [draft]):
+        im = img(raster.render_thumbnail(els))
+        assert im.size == (960, 640)
+        assert im.getcolors() == [(960 * 640, BG)]
+
+
+def test_thumbnail_far_outlier_does_not_shrink_the_cluster():
+    base = cluster()
+    far = shape("rectangle", "far", x=200000, y=200000, w=10, h=10)
+    without = inked_box(raster.render_thumbnail(base))
+    with_far = inked_box(raster.render_thumbnail([*base, far]))
+    assert with_far[2] - with_far[0] > 0.8 * 960
+    assert all(abs(a - b) <= 3 for a, b in zip(with_far, without, strict=True))
+
+
+def test_thumbnail_keeps_a_near_neighbour():
+    base = cluster(cols=4, rows=2, dx=100, dy=100)  # about 340 x 200 units: drawn at 2 px a unit
+    near = shape("rectangle", "near", x=340 + 300, y=0, w=40, h=100)  # 300 units from the edge
+    without = inked_box(raster.render_thumbnail(base))
+    with_near = inked_box(raster.render_thumbnail([*base, near]))
+    assert with_near[2] - with_near[0] > without[2] - without[0] + 100
+
+
+def block(n_cols, n_rows, x0, prefix):
+    return [
+        shape("rectangle", f"{prefix}{r}-{c}", x=x0 + c * 60, y=r * 50, w=30, h=40)
+        for r in range(n_rows)
+        for c in range(n_cols)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("second", "x0"),
+    [((3, 4), 3000), ((3, 2), 600)],  # 12 and 6 elements against a main cluster of 48
+    ids=["12-vs-48-far", "6-vs-48-near"],
+)
+def test_thumbnail_keeps_a_second_real_cluster(second, x0):
+    main = block(4, 12, 0, "m")  # 48 rectangles, about 220 x 600 units
+    other = block(*second, x0, "o")
+    alone = inked_box(raster.render_thumbnail(main))
+    both = inked_box(raster.render_thumbnail([*main, *other]))
+    assert both[2] - both[0] > 1.5 * (alone[2] - alone[0])  # the page grew to include it
+
+
+def test_thumbnail_a_lone_stray_beside_a_tiny_sketch_still_drops():
+    sketch = [shape("rectangle", f"s{k}", x=k * 120, w=100, h=100) for k in range(7)]
+    stray = shape("rectangle", "far", x=90000, y=90000, w=100, h=100)
+    alone = inked_box(raster.render_thumbnail(sketch))
+    both = inked_box(raster.render_thumbnail([*sketch, stray]))
+    assert all(abs(a - b) <= 3 for a, b in zip(both, alone, strict=True))
+
+
+def test_thumbnail_non_finite_element_does_not_disturb_the_fit():
+    good = cluster()
+    nan = shape("rectangle", "nan", x=10, y=10, w=50, h=50, angle=float("nan"))
+    inf = shape("line", "inf", w=10, h=0, points=[[0, 0], [float("inf"), 0]])
+    assert raster._prims([nan, inf]) == []  # dropped before they reach the fit or the painter
+    alone = inked_box(raster.render_thumbnail(good))
+    both = inked_box(raster.render_thumbnail([*good, nan, inf]))
+    assert both == alone
+
+
+def test_thumbnail_minimum_stroke_width():
+    line = shape("line", "l", w=1000, h=0, points=[[0, 0], [1000, 0]], strokeWidth=1)
+    free = stroke("f", n=200, width=1) | {
+        "points": [[k * 5, 0] for k in range(200)],
+        "pressures": [0.5] * 200,
+    }
+
+    def column(els):
+        im = img(raster.render_thumbnail(els))
+        return sum(1 for y in range(im.size[1]) if im.getpixel((480, y)) != BG)
+
+    n_line, n_free = column([line]), column([free])
+    assert n_line >= 4
+    assert n_free >= 5 and n_free > n_line
+
+
+def test_thumbnail_tiny_text_is_a_bar_not_glyphs(monkeypatch):
+    big = shape("rectangle", "big", w=6000, h=3000)
+    text = {**shape("text", "t", x=2000, y=1000, w=200, h=25), "text": "tiny words", "fontSize": 20}
+    monkeypatch.setattr(
+        raster, "_font", lambda size: (_ for _ in ()).throw(AssertionError("glyph font used"))
+    )
+    with_text = raster.render_thumbnail([big, text])
+    monkeypatch.undo()
+    assert ink_diff(with_text, raster.render_thumbnail([big])) > 0
+
+
+def ink_diff(a: bytes, b: bytes) -> int:
+    d = ImageChops.difference(img(a), img(b)).convert("L")
+    return sum(d.histogram()[1:])
+
+
+def test_thumbnail_fixture_under_300_ms():
+    import make_real_scale
+
+    els = make_real_scale.build()
+    best = float("inf")
+    for _ in range(3):
+        t = time.perf_counter()
+        png = raster.render_thumbnail(els)
+        best = min(best, time.perf_counter() - t)
+    assert best < 0.3
+    assert img(png).size == (960, 640) and inked_box(png) is not None
+
+
+def test_crop_keeps_its_old_size_and_widths():
+    assert img(raster.render_crop([stroke()])).size == (215, 21)
+    assert ink(raster.render_crop([stroke(width=1)])) == CROP_THIN_INK
 
 
 def test_malformed_elements_are_skipped():
