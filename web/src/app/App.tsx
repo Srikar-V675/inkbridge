@@ -107,21 +107,21 @@ const UI_OPTIONS = {
   tools: { image: false },
 } as const;
 
+// What Excalidraw starts with; null when the canvas did not open (it is unmounted then).
+type InitialData = { elements: Restored; appState: ReturnType<typeof initialAppState> } | null;
+
 // Memoised so nothing outside the canvas (save status, route) can re-render it mid-stroke.
+// It takes a promise: Excalidraw starts initialising now, while the scene is still downloading.
 const Canvas = memo(function Canvas(props: {
-  initial: { elements: Restored; view: View | null };
+  initialData: Promise<InitialData>;
   onApi: (api: ExcalidrawImperativeAPI) => void;
   onChange: (
     elements: readonly unknown[],
     appState: { scrollX: number; scrollY: number; zoom: { value: number }; cursorButton?: string; newElement?: unknown },
   ) => void;
 }) {
-  const { initial, onApi, onChange } = props;
-  const initialData = useMemo(
-    () => ({ elements: initial.elements, appState: initialAppState(initial.view) }),
-    [initial],
-  );
-  return <Excalidraw excalidrawAPI={onApi} initialData={initialData} onChange={onChange as never} UIOptions={UI_OPTIONS} />;
+  const { initialData, onApi, onChange } = props;
+  return <Excalidraw excalidrawAPI={onApi} initialData={initialData as never} onChange={onChange as never} UIOptions={UI_OPTIONS} />;
 });
 
 export default function App({ route }: { route: Extract<Location, { kind: "canvas" }> }) {
@@ -130,6 +130,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const chunkView = useMemo(() => createChunkView(), []);
   useEffect(() => () => refresh.dispose(), [refresh]); // drop a pending refetch on unmount
   const [initial, setInitial] = useState<Initial>(null);
+  const sceneData = useMemo(() => deferred<InitialData>(), []);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
   const cropRef = useRef<CropSync | null>(null);
@@ -235,13 +236,17 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     }
     void sync.load().then((elements) => {
       if (cancelled) return;
-      if (!elements) return setInitial(sync.notFound ? "missing" : "failed");
+      if (!elements) {
+        sceneData.resolve(null);
+        return setInitial(sync.notFound ? "missing" : "failed");
+      }
       // A link wins over the remembered view (it is fitted to all ink until the chunk arrives).
       const view = route.chunk ? null : loadView(window.localStorage, route.canvas);
       const restored = restoreElements(elements as never, null);
       clock.mark("restore", { elements: restored.length });
       // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
       fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
+      sceneData.resolve({ elements: restored, appState: initialAppState(view) });
       setInitial({ elements: restored, view });
     });
     const onHide = () => {
@@ -276,7 +281,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       void sync.close();
       crops.dispose();
     };
-  }, [route.canvas, route.chunk, status, clock]);
+  }, [route.canvas, route.chunk, status, clock, sceneData]);
 
   // Resolves once Excalidraw hands over its API, so an op that arrives first waits instead of failing.
   const apiReady = useMemo(() => deferred<ExcalidrawImperativeAPI>(), []);
@@ -292,6 +297,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   // Agent ops arrive over the WebSocket once the canvas exists; they are drawn as dashed drafts.
   const open = initial !== null && initial !== "failed" && initial !== "missing";
   const canvasReady = open;
+  // Excalidraw is up before the scene arrives, but not when the canvas did not open: no rail then.
+  const liveApi = open || initial === null ? api : null;
   useEffect(() => {
     if (!canvasReady) return;
     const sweep = (opId: string) => {
@@ -417,7 +424,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
 
   return (
     <Shell
-      api={api}
+      api={liveApi}
       title={initial === "missing" ? "Canvas not found" : title}
       status={<StatusSlot store={status} />}
       chunks={<ChunkToggle view={chunkView} />}
@@ -434,7 +441,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
             />
           )}
           {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} onExpire={expireNotice} />}
-          {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
+          {liveApi && <DraftBar api={liveApi} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
         </>
       }
       onAsk={() => setAskOpen((o) => !o)}
@@ -443,7 +450,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       {(initial === "missing" || initial === "failed") && (
         <CanvasState kind={initial === "missing" ? "missing" : "error"} canvas={route.canvas} />
       )}
-      {open && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
+      {open || initial === null ? <Canvas initialData={sceneData.promise} onApi={onApi} onChange={onChange} /> : null}
       {api && open && (
         <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
       )}

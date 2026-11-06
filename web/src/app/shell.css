@@ -57,6 +57,9 @@
 .ink-shell .excalidraw .context-menu {
   display: none;
 }
+.ink-shell .LoadingMessage {
+  display: none; /* Excalidraw starts before the scene arrives (INK-172): the top bar says "Loading…" */
+}
 .ink-shell .excalidraw,
 .ink-shell .excalidraw .canvas-container {
   background: transparent;
