@@ -22,12 +22,12 @@ def crops_dir() -> Path:
     return db_path().parent / "crops"
 
 
-DEFAULT_PUBLIC_URL = "http://localhost:5173"
+DEFAULT_PUBLIC_URL = "http://localhost:8000"
 
 
 def public_url() -> str:
-    """Base of chunk deep links: the web app as the vault's reader reaches it (a .local name
-    survives an IP change). INKBRIDGE_PUBLIC_URL, default the Vite dev server on this machine."""
+    """Base of chunk deep links: the web app as the vault's reader reaches it. Default the API's
+    own served origin (INK-100); set a .local name so the tablet can open links (survives an IP change)."""
     return (os.environ.get("INKBRIDGE_PUBLIC_URL") or DEFAULT_PUBLIC_URL).rstrip("/")
 
 

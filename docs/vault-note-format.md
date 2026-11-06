@@ -22,7 +22,7 @@ Anything the user writes here is theirs and is never touched.
 
 - update: $\theta \leftarrow \theta - \eta \nabla L$
 
-[Open in Inkbridge](http://laptop.local:5173/?canvas=default&chunk=9f2a41c07b3e)
+[Open in Inkbridge](http://laptop.local:8000/?canvas=default&chunk=9f2a41c07b3e)
 > [!ink]- Source ink
 > ![[attachments/inkbridge/9f2a41c07b3e-51a8f2c0d9e1.png]]
 <!-- /ink -->

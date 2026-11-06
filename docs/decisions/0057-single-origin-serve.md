@@ -22,7 +22,7 @@ build runs React StrictMode so the canvas loads twice, and the proxy hides the d
 ## What it does not do
 - `/__log` stays Vite-dev-only (it lives in `configureServer`, never in `dist`); a test asserts the API
   does not answer it (CLAUDE.md "dev-only helpers stay dev-only").
-- `DEFAULT_PUBLIC_URL` stays `http://localhost:5173` so existing links keep working; owners set
+- `DEFAULT_PUBLIC_URL` stays `http://localhost:5173` so existing links keep working (superseded by 0062); owners set
   `INKBRIDGE_PUBLIC_URL` to the :8000 URL.
 - No supervisor (systemd user unit), no fonts from esm.sh and no `EXCALIDRAW_ASSET_PATH` change (separate
   ticket). Nothing in `web/` changes: the socket URL already comes from `window.location.host`.
