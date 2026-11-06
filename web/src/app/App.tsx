@@ -3,6 +3,7 @@ import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay, ChunkToggle } from "../chunks/ChunkOverlay";
+import { FingerToggle, TouchRouting } from "./TouchLayer";
 import { createChunkView } from "../chunks/chunkView";
 import { JumpNotice } from "../chunks/JumpNotice";
 import { createRefresh, wireRefresh } from "../sync/chunkRefresh";
@@ -413,9 +414,10 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       api={api}
       title={title}
       status={<StatusSlot store={status} />}
-      chunks={<ChunkToggle view={chunkView} />}
+      chunks={<><FingerToggle /><ChunkToggle view={chunkView} /></>}
       overlays={
         <>
+          {api && <TouchRouting api={api} />}
           {api && initial && initial !== "failed" && (
             <ChunkOverlay
               api={api}
