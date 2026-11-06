@@ -12,6 +12,7 @@ from inkbridge.db.sync import needs_reading
 from tests.test_chunk_persistence import Canvas, row
 from tests.test_chunker import rect
 from tests.test_recognition_worker import FakeModel, worker
+from tests.test_regions_api import PNG
 
 
 def server_mode(monkeypatch):
@@ -114,3 +115,73 @@ def test_check_sync_waits_for_stale_chunks_only_in_server_mode(monkeypatch):
     assert needs_reading(resolved) == []
     server_mode(monkeypatch)
     assert needs_reading(resolved) == ["r"]
+
+
+def crop_file(rid: str) -> Path:
+    return Path(os.environ["INKBRIDGE_DB"]).parent / "crops" / f"{rid}.png"
+
+
+def test_health_reports_the_crop_source(client, monkeypatch):
+    assert client.get("/health").json() == {"status": "ok", "crop_source": "browser"}
+    server_mode(monkeypatch)
+    assert client.get("/health").json() == {"status": "ok", "crop_source": "server"}
+
+
+def test_image_png_and_overview_render_on_demand_in_server_mode(client, monkeypatch):
+    canvas = Canvas(client, row("a", 4) + row("b", 3, y=500))
+    first, second = (c["id"] for c in canvas.chunks("active"))
+    assert client.get(f"/regions/{first}/png").status_code == 404  # browser mode: unchanged
+    server_mode(monkeypatch)
+    image = client.get(f"/regions/{first}/image")
+    assert image.status_code == 200 and is_png(image.content)
+    png = client.get(f"/regions/{first}/png")
+    assert png.status_code == 200 and is_png(png.content)
+    assert client.get("/documents/default/overview").status_code == 200
+    assert (
+        client.get("/documents/default/chunks", params={"png_stale": "true"}).json()["chunks"] == []
+    )
+    assert crop_file(second).exists()
+
+
+def test_upload_is_refused_in_server_mode(client, monkeypatch):
+    canvas = Canvas(client, row("a", 3))
+    rid = canvas.chunks("active")[0]["id"]
+    files = {"image": ("c.png", PNG, "image/png")}
+    server_mode(monkeypatch)
+    r = client.put(
+        f"/regions/{rid}/image", data={"scene_version": str(canvas.version)}, files=files
+    )
+    assert r.status_code == 403 and "server" in r.json()["detail"]
+    assert not crop_file(rid).exists()
+    monkeypatch.delenv("INKBRIDGE_CROP_SOURCE")
+    r = client.put(
+        f"/regions/{rid}/image", data={"scene_version": str(canvas.version)}, files=files
+    )
+    assert r.status_code == 200
+
+
+def test_overview_renders_at_most_24_stale_chunks_per_call(client, monkeypatch):
+    server_mode(monkeypatch)
+    monkeypatch.setattr("inkbridge.api.chunks.MAX_RENDER_PER_OVERVIEW", 2)
+    canvas = Canvas(client, [s for k in range(4) for s in row(f"c{k}", 3, y=k * 500)])
+    assert client.get("/documents/default/overview").status_code == 200
+    assert len([c for c in canvas.chunks("active") if not c["png_stale"]]) == 2
+    assert client.get("/documents/default/overview").status_code == 200
+    assert len([c for c in canvas.chunks("active") if not c["png_stale"]]) == 4  # finishes later
+
+
+def test_orphaned_region_with_history_returns_existing_crop_and_does_not_render(
+    client, monkeypatch
+):
+    server_mode(monkeypatch)
+    canvas = Canvas(client, row("a", 3) + row("b", 3, y=500))
+    old = canvas.chunk_of("a0")["id"]
+    assert client.get(f"/regions/{old}/png").status_code == 200
+    before = crop_file(old).read_bytes()
+    canvas.elements = [e for e in canvas.elements if e["id"].startswith("b")]
+    canvas.put()  # chunk a is orphaned; its crop file stays
+    assert client.get(f"/regions/{old}/png").status_code == 410
+    assert client.get(f"/regions/{old}/png", params={"history": "true"}).content == before
+    crop_file(old).unlink()
+    assert client.get(f"/regions/{old}/png", params={"history": "true"}).status_code == 404
+    assert not crop_file(old).exists()  # an orphan is never rendered

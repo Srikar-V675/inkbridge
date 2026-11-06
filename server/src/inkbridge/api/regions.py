@@ -139,6 +139,8 @@ async def replace_region_image(
     scene_version is the scene the browser rendered the crop from. If the scene has moved on, the
     crop may show older ink: 409 with current_version and nothing is written (decision 0015).
     """
+    if config.crop_source() == "server":
+        raise HTTPException(403, "crops are rendered by the server (INKBRIDGE_CROP_SOURCE=server)")
     png = await _read_png(image)
     return await run_in_threadpool(_replace_image, conn, region_id, png, scene_version)
 
@@ -187,6 +189,7 @@ def get_region_image(
 ) -> Response:
     """The crop, downscaled to max_width (default 1024). The stored file is never modified."""
     refuse_orphan(conn, region_id, history)
+    db.ensure_crop(conn, region_id)  # server mode: render a stale or missing crop (INK-120)
     path = db.get_region_png_path(conn, region_id)
     if path is None or not Path(path).exists():
         raise HTTPException(404, "image not found")
