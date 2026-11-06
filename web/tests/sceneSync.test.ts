@@ -108,6 +108,30 @@ describe("SceneSync", () => {
     assert.equal(h.states.at(-1), "error");
   });
 
+  it("tells an unknown canvas (404) from a failed load", async () => {
+    const h404 = harness([json(404, { detail: "no" })]);
+    assert.equal(h404.sync.notFound, false);
+    await h404.sync.load();
+    assert.equal(h404.sync.notFound, true);
+    const h500 = harness([json(500, { detail: "boom" })]);
+    await h500.sync.load();
+    assert.equal(h500.sync.notFound, false);
+    const hDown = harness([new Error("down")]);
+    await hDown.sync.load();
+    assert.equal(hDown.sync.notFound, false);
+  });
+
+  it("never saves or backs up before the scene is loaded", async () => {
+    const h = harness([]);
+    assert.equal(h.sync.notify([el("a", 1)]), false);
+    mock.timers.tick(5000);
+    await settle();
+    await h.sync.flushNow();
+    await h.sync.close();
+    assert.equal(h.calls.length, 0);
+    assert.deepEqual(h.stored, {});
+  });
+
   it("ignores onChange calls that did not change any element", async () => {
     const h = harness([json(200, { version: 1, elements: [el("a", 3)] })]);
     await h.sync.load();

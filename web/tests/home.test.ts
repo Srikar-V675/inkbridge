@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
-import { canvasMeta, homeSections, newCanvasTitle, offerLabel, relativeTime, type CanvasSummary } from "../src/home/homeLogic.ts";
+import { archivedHref, canvasMeta, homeSections, newCanvasTitle, offerLabel, relativeTime, type CanvasSummary } from "../src/home/homeLogic.ts";
 import {
   archiveCanvas,
   createCanvas,
@@ -124,5 +126,29 @@ describe("homeApi", () => {
     await assert.rejects(renameCanvas(fake(422, { detail: "title must not be blank" }).f, "x", " "), /title must not be blank/);
     await assert.rejects(duplicateCanvas(fake(409, { detail: { code: "too_many_canvases", msg: "full" } }).f, "x"), /full/);
     await assert.rejects(listCanvases(fake(500, {}).f, "false"), /500/);
+  });
+});
+
+describe("archivedHref", () => {
+  it("is a real URL for the archived view and plain home otherwise", () => {
+    assert.equal(archivedHref(true), "/?view=archived");
+    assert.equal(archivedHref(false), "/");
+  });
+});
+
+describe("Archived is a route, not component state (INK-172)", () => {
+  const src = (p: string) => readFileSync(fileURLToPath(new URL(`../src/${p}`, import.meta.url)), "utf8");
+  it("Home reads the view from its prop and links with archivedHref/backTo", () => {
+    const home = src("home/Home.tsx");
+    assert.ok(!home.includes("setArchivedView"));
+    assert.ok(!home.includes("archivedView"));
+    assert.ok(home.includes("archivedHref("));
+    assert.ok(home.includes("backTo"));
+  });
+  it("the top bar Canvases link steps back when it can", () => {
+    assert.ok(src("app/TopBar.tsx").includes("backTo"));
+  });
+  it("Root passes the archived flag from the location", () => {
+    assert.ok(src("app/Root.tsx").includes("archived={loc.archived}"));
   });
 });

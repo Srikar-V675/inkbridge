@@ -108,6 +108,8 @@ h2.ink-home-h {
   color: var(--color-soft-ink);
 }
 .ink-home-textlink {
+  display: inline-flex;
+  align-items: center;
   min-height: var(--space-touch);
   padding: 0 var(--space-sm);
   border: 0;

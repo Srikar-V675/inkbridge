@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import { onLinkClick } from "../lib/nav";
+import { backTo, onLinkClick } from "../lib/nav";
 import { Button } from "../ui/Button";
 import { AskIcon, BackIcon } from "./icons";
 
 export function TopBar(props: { title: string; status: ReactNode; chunks?: ReactNode; onAsk: () => void; askOpen: boolean }) {
   return (
     <header className="ink-topbar">
-      <a href="/" onClick={onLinkClick} className="ink-button ink-button--quiet ink-topbar__back">
+      <a href="/" onClick={(e) => onLinkClick(e, backTo)} className="ink-button ink-button--quiet ink-topbar__back">
         <BackIcon />
         Canvases
       </a>

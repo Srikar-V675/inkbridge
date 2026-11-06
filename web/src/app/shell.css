@@ -19,6 +19,38 @@
   inset: 0;
   z-index: 1;
 }
+/* While the scene loads Excalidraw is already mounted: this catches pen and touch so nothing is drawn into it. */
+.ink-shell__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  touch-action: none;
+}
+/* The canvas did not open (INK-172): soft ink on paper, one way home. */
+.ink-shell__state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  background: var(--color-paper);
+  color: var(--color-soft-ink);
+  text-align: center;
+}
+.ink-shell__state p {
+  margin: 0;
+}
+.ink-shell__state .ink-button {
+  text-decoration: none;
+}
+.ink-shell__state-title {
+  margin: 0;
+  color: var(--color-charcoal);
+  font: var(--type-title-weight) var(--type-title-size)/1.2 var(--type-title-family);
+}
 /* Chunk chips, draft tray and notices: above the rail and zoom control, below the top bar (INK-162, 0068). */
 .ink-shell__overlays {
   position: absolute;
@@ -31,6 +63,9 @@
 .ink-shell .excalidraw .layer-ui__wrapper,
 .ink-shell .excalidraw .context-menu {
   display: none;
+}
+.ink-shell .LoadingMessage {
+  display: none; /* Excalidraw starts before the scene arrives (INK-172): the top bar says "Loading…" */
 }
 .ink-shell .excalidraw,
 .ink-shell .excalidraw .canvas-container {
