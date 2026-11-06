@@ -18,8 +18,10 @@ from inkbridge.db.chunks import (
 )
 from inkbridge.db.common import AUTO, DEFAULT_DOCUMENT_ID, DocumentNotFound, _now, connect
 from inkbridge.db.crops import (
+    ensure_crop,
     mark_png_fresh,
     read_fresh_crop,
+    render_server_crop,
     scene_version_of_region,
     stale_crop_ids,
 )
@@ -118,6 +120,7 @@ __all__ = [
     "create_region",
     "document_exists",
     "document_updated_at",
+    "ensure_crop",
     "ensure_default_document",
     "get_region",
     "get_region_ink",
@@ -133,6 +136,7 @@ __all__ = [
     "put_scene",
     "read_fresh_crop",
     "recognition_candidates",
+    "render_server_crop",
     "save_model_reading",
     "save_recognition",
     "scene_version_of_region",
