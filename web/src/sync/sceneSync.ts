@@ -168,7 +168,8 @@ export class SceneSync {
   /** Call from onChange with every element including deleted ones. Cheap when nothing changed.
    *  Returns true if the elements really changed. */
   notify(elements: readonly SceneElement[]): boolean {
-    if (this.disposed) return false;
+    // Before the scene is loaded the canvas is not the saved scene: saving it would overwrite it.
+    if (this.disposed || !this.loaded) return false;
     this.latest = elements;
     const sig = signature(elements);
     // Excalidraw re-fires onChange after every re-render: only a real change restarts the debounce.

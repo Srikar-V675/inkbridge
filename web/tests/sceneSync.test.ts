@@ -121,6 +121,17 @@ describe("SceneSync", () => {
     assert.equal(hDown.sync.notFound, false);
   });
 
+  it("never saves or backs up before the scene is loaded", async () => {
+    const h = harness([]);
+    assert.equal(h.sync.notify([el("a", 1)]), false);
+    mock.timers.tick(5000);
+    await settle();
+    await h.sync.flushNow();
+    await h.sync.close();
+    assert.equal(h.calls.length, 0);
+    assert.deepEqual(h.stored, {});
+  });
+
   it("ignores onChange calls that did not change any element", async () => {
     const h = harness([json(200, { version: 1, elements: [el("a", 3)] })]);
     await h.sync.load();
