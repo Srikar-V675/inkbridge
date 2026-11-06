@@ -1,7 +1,7 @@
 // Pure logic for the app shell (INK-117, docs/decisions/0066): paper dots, zoom, rail tools.
 // No React, DOM or Excalidraw imports, so the Node test runner can load it.
 
-export const TILE = 24; // scene units between dots (Main board: 24 px at 100 percent)
+export const TILE = 36; // scene units between dots (INK-170: finer than the Main board's 24, decision 0074)
 export const MIN_DOT_PX = 10; // below this, double the spacing
 
 /** Smallest TILE * 2^n whose on-screen size is at least MIN_DOT_PX. */
