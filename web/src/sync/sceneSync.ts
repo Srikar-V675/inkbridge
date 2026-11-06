@@ -46,7 +46,7 @@ interface SaveRequest {
   key: string;
   body: string;
   sent: readonly SceneElement[];
-  sentSig: string;
+  sentSig: Sig;
   sentVersions: Map<string, number>;
   changed: SceneElement[] | null;
 }
@@ -57,8 +57,30 @@ interface LastWriter {
 }
 const RETRY_MS = [2000, 4000, 8000, 16000, 30000];
 
-// Two element lists are "the same" if every element has the same id and version.
-const signature = (els: readonly SceneElement[]) => els.map((e) => `${e.id}:${e.version}`).join("|");
+// Two element lists are "the same" if every element has the same id and version, in the same order.
+// notify() runs on every Excalidraw onChange (every pen point and pan frame), so the common answer
+// "nothing changed" is a loop over ids and versions that allocates nothing (INK-174, decision 0073).
+interface Sig {
+  ids: string[];
+  vers: Float64Array;
+}
+const EMPTY_SIG: Sig = { ids: [], vers: new Float64Array(0) };
+const sigOf = (els: readonly SceneElement[]): Sig => {
+  const n = els.length;
+  const ids = new Array<string>(n);
+  const vers = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    ids[i] = els[i].id;
+    vers[i] = els[i].version;
+  }
+  return { ids, vers };
+};
+const sigMatches = (s: Sig, els: readonly SceneElement[]): boolean => {
+  if (s.ids.length !== els.length) return false;
+  for (let i = 0; i < els.length; i++) if (!Object.is(els[i].version, s.vers[i]) || els[i].id !== s.ids[i]) return false; // Object.is: NaN equals itself
+  return true;
+};
+const sameSig = (a: Sig, b: Sig) => a.ids.length === b.ids.length && a.ids.every((id, i) => id === b.ids[i] && Object.is(a.vers[i], b.vers[i]));
 
 const nonce = (e: SceneElement) => (e.versionNonce as number | undefined) ?? 0;
 // Excalidraw's undo and edits always bump `version` (never reuse an older number), so deltaFor stays safe.
@@ -95,9 +117,9 @@ export class SceneSync {
   private readonly o: SyncOptions;
   private fetchFn: typeof fetch;
   private version = 0;
-  private lastSig = "";
+  private lastSig: Sig = EMPTY_SIG;
   private pending: readonly SceneElement[] | null = null;
-  private pendingSig = "";
+  private pendingSig: Sig = EMPTY_SIG;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private saving = false;
   private failures = 0;
@@ -150,7 +172,7 @@ export class SceneSync {
       const body = (await r.json()) as { version: number; elements: SceneElement[] };
       this.o.clock?.mark("parse", { elements: body.elements.length }); // body download + parse
       this.version = body.version;
-      this.lastSig = signature(body.elements);
+      this.lastSig = sigOf(body.elements);
       this.savedIds = liveIds(body.elements);
       this.baseline = versions(body.elements);
       this.pending = null;
@@ -171,13 +193,12 @@ export class SceneSync {
     // Before the scene is loaded the canvas is not the saved scene: saving it would overwrite it.
     if (this.disposed || !this.loaded) return false;
     this.latest = elements;
-    const sig = signature(elements);
     // Excalidraw re-fires onChange after every re-render: only a real change restarts the debounce.
     // Compare with the newest known state: while a save is pending, going back to the last saved
     // scene (an undo) is itself a change that must be saved.
-    if (sig === (this.pending ? this.pendingSig : this.lastSig)) return false;
+    if (sigMatches(this.pending ? this.pendingSig : this.lastSig, elements)) return false;
     this.pending = elements;
-    this.pendingSig = sig;
+    this.pendingSig = sigOf(elements);
     this.emit("dirty");
     this.schedule(this.o.debounceMs ?? 1500);
     return true;
@@ -257,7 +278,7 @@ export class SceneSync {
       key: `${this.tabId}:${++this.seq}`,
       body,
       sent,
-      sentSig: signature(sent),
+      sentSig: sigOf(sent),
       sentVersions: versions(sent),
       changed,
     };
@@ -297,7 +318,7 @@ export class SceneSync {
           ...serverParts(saved.timing),
           ...netParts(lastResource(this.url(), t0)),
         });
-        if (this.pendingSig === sentSig) this.pending = null;
+        if (sameSig(this.pendingSig, sentSig)) this.pending = null;
         if (this.pending) {
           this.emit("dirty");
           this.schedule(this.o.debounceMs ?? 1500);
@@ -343,14 +364,14 @@ export class SceneSync {
     // load() replaces the baseline, so keep the one from before: it tells which edits were ours.
     const before = this.baseline;
     this.pending = null;
-    this.pendingSig = "";
+    this.pendingSig = EMPTY_SIG;
     this.emit("conflict", notice(0));
     const fresh = await this.load();
     // The canvas stays live during the reload: merge whatever the user has drawn since, too.
     const newest = this.latest ?? local;
     if (!fresh) {
       this.pending = newest; // could not reload: keep the ink in memory, nothing is discarded
-      this.pendingSig = signature(newest);
+      this.pendingSig = sigOf(newest);
       this.retryLater(); // the retry PUT conflicts again and so reloads again
       return;
     }
@@ -362,9 +383,9 @@ export class SceneSync {
     this.emit("conflict", notice(edited));
     // A local tie win carries the same version the server holds: force it into the next delta.
     for (const id of kept) this.baseline?.set(id, -1);
-    if (kept.length > 0 || signature(merged) !== this.lastSig) {
+    if (kept.length > 0 || !sigMatches(this.lastSig, merged)) {
       this.pending = merged;
-      this.pendingSig = signature(merged);
+      this.pendingSig = sigOf(merged);
       this.schedule(this.o.debounceMs ?? 1500);
     }
   }

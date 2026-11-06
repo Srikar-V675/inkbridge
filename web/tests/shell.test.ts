@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, it } from "node:test";
 import { fetchTitle } from "../src/app/canvasTitle.ts";
 import { createRailStore } from "../src/app/railStore.ts";
 import {
-  colourNeedsPen, dotStep, HIGHLIGHTER, MIN_DOT_PX, nextZoom, paperDots, PEN, penColours, penIndex, pickShape, railTool, SHAPES,
-  TILE, toolTap, undoKey, zoomAbout, ZOOM_MAX, ZOOM_MIN,
+  colourNeedsPen, dotStep, HIGHLIGHTER, MIN_DOT_PX, nextZoom, paperDots, paperLayer, PEN, penColours, penIndex, pickShape, railTool,
+  SHAPES, TILE, toolTap, undoKey, zoomAbout, ZOOM_MAX, ZOOM_MIN,
 } from "../src/app/shellLogic.ts";
 
 describe("dotStep", () => {
@@ -19,6 +20,37 @@ describe("dotStep", () => {
     assert.equal(dotStep(0.1), TILE * 4);
     assert.equal(dotStep(30), TILE);
     for (const z of [0.1, 0.25, 0.4, 0.7, 1, 3]) assert.ok(dotStep(z) * z >= MIN_DOT_PX);
+  });
+});
+
+describe("paperLayer", () => {
+  it("moves by x, y in [0, size) and reports the size only when it changed", () => {
+    const v = { scrollX: -30, scrollY: 7, zoom: 1 };
+    const x = ((-30 % TILE) + TILE) % TILE;
+    assert.deepEqual(paperLayer(v, null), { size: TILE, x, y: 7 });
+    assert.deepEqual(paperLayer(v, TILE), { size: null, x, y: 7 }); // pan: the size var is not rewritten
+    assert.equal(paperLayer({ ...v, zoom: 2 }, TILE).size, TILE * 2); // zoom: it is
+  });
+  it("agrees with paperDots", () => {
+    for (const z of [0.1, 0.4, 1, 2.5]) {
+      const v = { scrollX: -123.4, scrollY: 55.5, zoom: z };
+      const a = paperDots(v);
+      const b = paperLayer(v, null);
+      assert.deepEqual([b.size, b.x, b.y], [a.size, a.x, a.y]);
+    }
+  });
+});
+
+describe("paper layer CSS (INK-174)", () => {
+  const css = readFileSync(new URL("../src/app/shell.css", import.meta.url), "utf8");
+  const tsx = readFileSync(new URL("../src/app/PaperDots.tsx", import.meta.url), "utf8");
+  it("moves the dots by a compositor layer: will-change transform, no background-position", () => {
+    const rule = /\.ink-paper__dots\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    assert.match(rule, /will-change:\s*transform/);
+    for (const text of [css, tsx]) {
+      assert.doesNotMatch(text, /background-position/);
+      assert.doesNotMatch(text, /--ink-dot-x|--ink-dot-y/);
+    }
   });
 });
 

@@ -724,3 +724,84 @@ describe("SceneSync idempotent saves (INK-083)", () => {
     });
   }
 });
+
+// INK-174 (decision 0073): notify runs on every Excalidraw onChange, so an unchanged scene must cost
+// no allocation. Derived as 3 times the measured median of 5 batches of 2000 unchanged notifies over
+// 640 elements with the typed-array comparison (10.5 ms on the dev laptop, about 5 microseconds a
+// call); the string signature it replaced took 68 to 80 ms, so the test fails if it comes back.
+const NOTIFY_BUDGET_MS_PER_2000 = 30;
+
+describe("SceneSync.notify cost and exactness (INK-174)", () => {
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
+  afterEach(() => mock.timers.reset());
+  const scene = (n: number) => Array.from({ length: n }, (_, i) => el(`e${i}`, 1));
+  const loaded = async (elements: SceneElement[]) => {
+    const h = harness([json(200, { version: 1, elements }), json(200, { version: 2 }), json(200, { version: 3 })]);
+    await h.sync.load();
+    return h;
+  };
+
+  it("an unchanged list is not a change and emits no second dirty", async () => {
+    const h = await loaded([]);
+    const els = [el("a"), el("b")];
+    assert.equal(h.sync.notify(els), true);
+    assert.equal(h.sync.notify(els), false);
+    assert.equal(h.states.filter((s) => s === "dirty").length, 1);
+  });
+
+  it("a bumped version is a change, including in-place mutation of the same object", async () => {
+    const h = await loaded([el("a")]);
+    const a = el("a");
+    assert.equal(h.sync.notify([a]), false); // same as loaded
+    a.version = 2; // Excalidraw mutates the stroke it is drawing in place
+    assert.equal(h.sync.notify([a]), true);
+    a.version = 3;
+    assert.equal(h.sync.notify([a]), true); // while pending, compared with the newest known state
+    await h.sync.flushNow();
+    a.version = 4; // after a save
+    assert.equal(h.sync.notify([a]), true);
+  });
+
+  it("a NaN version equals itself: an unchanged list never counts as a change (no re-save loop)", async () => {
+    const h = await loaded([]);
+    const els = [el("a", Number.NaN)];
+    assert.equal(h.sync.notify(els), true);
+    assert.equal(h.sync.notify(els), false);
+    await h.sync.flushNow(); // sameSig(pending, sent) must also hold, or the save would stay pending
+    assert.equal(h.sync.notify(els), false);
+    assert.equal(h.sync.settledVersion(), 2);
+  });
+
+  it("a reorder, or the same version under another id, is a change", async () => {
+    const h = await loaded([el("a"), el("b")]);
+    assert.equal(h.sync.notify([el("b"), el("a")]), true);
+    const h2 = await loaded([el("a"), el("b")]);
+    assert.equal(h2.sync.notify([el("a"), el("c")]), true);
+  });
+
+  it("going back to the last saved scene while a save is pending is a change", async () => {
+    const h = await loaded([el("a", 1)]);
+    assert.equal(h.sync.notify([el("a", 2)]), true);
+    assert.equal(h.sync.notify([el("a", 1)]), true); // an undo of an unsaved edit still has to be saved
+  });
+
+  it("is not settled while a change is pending", async () => {
+    const h = await loaded([el("a")]);
+    assert.equal(h.sync.settledVersion(), 1);
+    h.sync.notify([el("a"), el("m")]);
+    assert.equal(h.sync.settledVersion(), null);
+  });
+
+  it(`costs under ${NOTIFY_BUDGET_MS_PER_2000} ms for 2000 unchanged notifies of 640 elements`, async () => {
+    const els = scene(640);
+    const h = await loaded(els);
+    const times: number[] = [];
+    for (let batch = 0; batch < 5; batch++) {
+      const t = performance.now();
+      for (let i = 0; i < 2000; i++) h.sync.notify(els);
+      times.push(performance.now() - t);
+    }
+    times.sort((a, b) => a - b);
+    assert.ok(times[2] < NOTIFY_BUDGET_MS_PER_2000, `median ${times[2].toFixed(2)} ms`);
+  });
+});

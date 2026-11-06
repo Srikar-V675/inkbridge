@@ -7,6 +7,7 @@ import { draftBox, inView, panTarget, type Unseen } from "./draftView";
 import type { DraftElement } from "./drafts";
 import { draftCard, failureText, jumpTarget, trayLabel, verdictToast } from "./draftUi";
 import { applyVerdict, draftOpId, draftOps, fetchAppliedOps, patchOp, retryAccept, type Verdict } from "./resolve";
+import { createGate } from "../lib/changeGate";
 import type { SceneSync } from "../sync/sceneSync";
 import { Badge, DraftDot } from "../ui/Badge";
 import { Button } from "../ui/Button";
@@ -30,27 +31,36 @@ function useDraftOps(api: ExcalidrawImperativeAPI): { opId: string; count: numbe
       setOps(next);
     };
     update(api.getSceneElementsIncludingDeleted());
-    return api.onChange((els) => update(els));
+    // Relies on an Excalidraw invariant: insert, erase and every updateScene({ elements }) hand out a
+    // NEW array, while a pen point or pan frame returns the same one, so identical means nothing to
+    // rescan (INK-174). An in-place `isDeleted` mutation of a draft would leave the bar stale.
+    const same = createGate();
+    return api.onChange((els) => {
+      if (same(els)) return;
+      update(els);
+    });
   }, [api]);
   return ops;
 }
 
 function useSelectedOps(api: ExcalidrawImperativeAPI, drafts: { opId: string }[]): string[] {
   const [selected, setSelected] = useState<string[]>([]);
-  useEffect(
-    () =>
-      api.onChange((els, appState) => {
-        const sel = new Set(Object.keys(appState.selectedElementIds).filter((id) => appState.selectedElementIds[id]));
-        const ops = new Set<string>();
-        for (const e of els as readonly DraftElement[]) {
-          const opId = draftOpId(e);
-          if (opId !== null && sel.has(e.id)) ops.add(opId);
-        }
-        const next = [...ops].sort();
-        setSelected((prev) => (prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next));
-      }),
-    [api],
-  );
+  useEffect(() => {
+    // A selection change replaces selectedElementIds and an element change replaces the array, so
+    // identical refs cannot change the answer (INK-174).
+    const same = createGate();
+    return api.onChange((els, appState) => {
+      if (same(els, appState.selectedElementIds)) return;
+      const sel = new Set(Object.keys(appState.selectedElementIds).filter((id) => appState.selectedElementIds[id]));
+      const ops = new Set<string>();
+      for (const e of els as readonly DraftElement[]) {
+        const opId = draftOpId(e);
+        if (opId !== null && sel.has(e.id)) ops.add(opId);
+      }
+      const next = [...ops].sort();
+      setSelected((prev) => (prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next));
+    });
+  }, [api]);
   const live = new Set(drafts.map((d) => d.opId));
   return selected.filter((id) => live.has(id));
 }

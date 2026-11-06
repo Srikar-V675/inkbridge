@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
-  anchorFor, createPenTracker, hitsElement, isExcalidrawCanvas, penPatch, routePointer, viewFor, PEN_DOWN_MAX_MS,
+  anchorFor, createPenTracker, hitsElement, isExcalidrawCanvas, penPatch, routePointer, viewFor, viewPatch, PEN_DOWN_MAX_MS,
   type Route, type RouteInput,
 } from "../src/app/touchRouting.ts";
 import { ZOOM_MAX, ZOOM_MIN } from "../src/app/shellLogic.ts";
@@ -170,5 +170,16 @@ describe("isExcalidrawCanvas", () => {
     const src = readFileSync(new URL("../node_modules/@excalidraw/excalidraw/dist/dev/index.js", import.meta.url), "utf8");
     assert.ok(src.includes('className: "excalidraw__canvas interactive"'), "Excalidraw renamed its interactive canvas class");
     assert.ok(src.includes('"excalidraw excalidraw-container"'), "Excalidraw container class changed");
+  });
+});
+
+describe("viewPatch (INK-174)", () => {
+  it("leaves the zoom out when a pan did not change it, so Excalidraw gets no new zoom object per frame", () => {
+    const p = viewPatch({ scrollX: 5, scrollY: 6, zoom: 1.5 }, 1.5);
+    assert.deepEqual(p, { scrollX: 5, scrollY: 6 });
+    assert.equal("zoom" in p, false);
+  });
+  it("carries the zoom when a pinch changed it", () => {
+    assert.deepEqual(viewPatch({ scrollX: 5, scrollY: 6, zoom: 2 }, 1.5), { scrollX: 5, scrollY: 6, zoom: { value: 2 } });
   });
 });

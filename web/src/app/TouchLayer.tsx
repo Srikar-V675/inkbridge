@@ -4,7 +4,7 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { Button } from "../ui/Button";
 import { createFingerDraws } from "./fingerDraws";
 import { installTouchInput, whenLoaded } from "./touchInput";
-import { isExcalidrawCanvas, penPatch } from "./touchRouting";
+import { isExcalidrawCanvas, penPatch, viewPatch } from "./touchRouting";
 
 // One finger pans, two pinch, the pen draws (INK-173, docs/decisions/0072). The router lives in
 // touchInput.ts; this file only wires it to Excalidraw and the top bar.
@@ -36,7 +36,7 @@ export function TouchRouting({ api }: { api: ExcalidrawImperativeAPI }) {
         },
         setView: (v) =>
           api.updateScene({
-            appState: { scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom as never } },
+            appState: viewPatch(v, api.getAppState().zoom.value) as never,
             captureUpdate: CaptureUpdateAction.NEVER,
           }),
         elements: () => api.getSceneElements() as never,
