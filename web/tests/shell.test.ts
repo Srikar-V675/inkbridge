@@ -3,8 +3,8 @@ import { afterEach, describe, it } from "node:test";
 import { fetchTitle } from "../src/app/canvasTitle.ts";
 import { createRailStore } from "../src/app/railStore.ts";
 import {
-  colourNeedsPen, dotStep, HIGHLIGHTER, MIN_DOT_PX, nextZoom, paperDots, PEN, penColours, penIndex, railTool, TILE, toolTap,
-  undoKey, zoomAbout, ZOOM_MAX, ZOOM_MIN,
+  colourNeedsPen, dotStep, HIGHLIGHTER, MIN_DOT_PX, nextZoom, paperDots, PEN, penColours, penIndex, pickShape, railTool, SHAPES,
+  TILE, toolTap, undoKey, zoomAbout, ZOOM_MAX, ZOOM_MIN,
 } from "../src/app/shellLogic.ts";
 
 describe("dotStep", () => {
@@ -81,12 +81,20 @@ describe("rail tools", () => {
   it("select is the selection tool (no lasso in Excalidraw 0.18)", () => {
     assert.deepEqual(toolTap("select", "freedraw").tool, { type: "selection" });
   });
-  it("shapes cycle from rectangle", () => {
+  it("shapes are the flyout order", () => {
+    assert.deepEqual([...SHAPES], ["rectangle", "diamond", "ellipse", "arrow", "line"]);
+  });
+  it("the shapes button picks the last chosen shape, solid, and keeps a shape already active", () => {
+    const solid = { currentItemOpacity: 100, currentItemStrokeWidth: 2 };
     assert.equal(toolTap("shapes", "freedraw").tool.type, "rectangle");
-    assert.equal(toolTap("shapes", "rectangle").tool.type, "ellipse");
-    assert.equal(toolTap("shapes", "ellipse").tool.type, "diamond");
-    assert.equal(toolTap("shapes", "diamond").tool.type, "arrow");
-    assert.equal(toolTap("shapes", "arrow").tool.type, "rectangle");
+    assert.deepEqual(toolTap("shapes", "freedraw").patch, solid);
+    assert.equal(toolTap("shapes", "freedraw", "ellipse").tool.type, "ellipse");
+    assert.equal(toolTap("shapes", "diamond").tool.type, "diamond");
+    assert.deepEqual(toolTap("shapes", "diamond").patch, {});
+  });
+  it("pickShape resets the width only when leaving a non-shape tool", () => {
+    assert.deepEqual(pickShape("arrow", "freedraw"), { tool: { type: "arrow" }, patch: { currentItemOpacity: 100, currentItemStrokeWidth: 2 } });
+    assert.deepEqual(pickShape("line", "rectangle").patch, {});
   });
   it("pen and highlighter set opacity and width", () => {
     assert.deepEqual(toolTap("pen", "selection").patch, { currentItemOpacity: PEN.opacity, currentItemStrokeWidth: PEN.strokeWidth });
@@ -189,6 +197,22 @@ function fakeEnv() {
 }
 
 describe("createRailStore", () => {
+  it("remembers the last chosen shape for the Shapes button", () => {
+    const f = fakeApi({ activeTool: { type: "freedraw" } });
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    assert.equal(store.get().shape, "rectangle");
+    f.set({ activeTool: { type: "ellipse" } });
+    assert.equal(store.get().shape, "ellipse");
+    f.set({ activeTool: { type: "freedraw" } });
+    assert.equal(store.get().shape, "ellipse");
+    f.calls.tool.length = 0;
+    store.pickShape("line");
+    assert.deepEqual(f.calls.tool, [{ type: "line" }]);
+    assert.equal(store.get().shape, "line");
+    store.tap("shapes");
+    assert.deepEqual(f.calls.tool[1], { type: "line" });
+  });
+
   it("starts with the pen and charcoal, once, and subscribes", () => {
     const f = fakeApi();
     const { env } = fakeEnv();
@@ -255,7 +279,46 @@ describe("createRailStore", () => {
     f.calls.scene.length = 0;
     store.tap("highlighter");
     assert.deepEqual(f.calls.tool, [{ type: "freedraw" }]);
-    assert.deepEqual(f.calls.scene, [{ appState: { currentItemOpacity: 35, currentItemStrokeWidth: 4 }, captureUpdate: NEVER }]);
+    assert.deepEqual(f.calls.scene, [{
+      appState: {
+        currentItemOpacity: 35, currentItemStrokeWidth: 4, currentItemBackgroundColor: "transparent",
+        currentItemFillStyle: "solid", currentItemStrokeColor: PENS[0],
+      },
+      captureUpdate: NEVER,
+    }]);
+  });
+
+  it("pen after a shape drops the shape card's colours and fill (INK-175)", () => {
+    const f = fakeApi({ activeTool: { type: "rectangle" }, currentItemBackgroundColor: "#2F55B8", currentItemFillStyle: "hachure", currentItemStrokeColor: "#625C52" });
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    store.setPen(1); // the rail's last chosen pen colour: blue
+    f.calls.scene.length = 0;
+    for (const tool of ["pen", "highlighter"] as const) {
+      store.tap(tool);
+      const patch = (f.calls.scene.pop() as { appState: Record<string, unknown> }).appState;
+      assert.equal(patch.currentItemBackgroundColor, "transparent");
+      assert.equal(patch.currentItemFillStyle, "solid");
+      assert.equal(patch.currentItemStrokeColor, PENS[1]);
+    }
+  });
+
+  it("a stroke colour set on a shape tool that is a pen colour becomes the pen to return to; soft ink does not", () => {
+    const f = fakeApi({ activeTool: { type: "rectangle" } });
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    f.set({ currentItemStrokeColor: "#A63D2A" });
+    f.set({ currentItemStrokeColor: "#625C52" }); // soft ink: not a pen colour
+    f.calls.scene.length = 0;
+    store.tap("pen");
+    assert.equal((f.calls.scene[0].appState as Record<string, unknown>).currentItemStrokeColor, PENS[2]);
+  });
+
+  it("eraser and select tap leave the defaults alone", () => {
+    const f = fakeApi();
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    f.calls.scene.length = 0;
+    store.tap("eraser");
+    store.tap("select");
+    assert.deepEqual(f.calls.scene, []);
   });
 
   it("a pen colour sets the stroke colour, via the pen when another tool is active", () => {

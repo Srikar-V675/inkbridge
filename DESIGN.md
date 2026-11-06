@@ -175,6 +175,7 @@ One family, Instrument Sans (Google Fonts, self-host for the tablet: no network 
 - Home: 76 px header with wordmark, search and New canvas; 40 px side margins; Continue card, Recent list, All canvases grid, Archived.
 - Spacing scale 4, 8, 16, 24, 40. **Every touch target is 44 px or larger** (the tablet is the primary device); 36 px chips only when they sit on the canvas next to ink.
 - The canvas background is a CSS dot layer (`paper-dot`, 1 px radius, one dot per 36 scene units, doubled while the gap is under 10 px) that follows pan and zoom, under a transparent Excalidraw canvas. Excalidraw's own toolbar and menus are hidden.
+- Shapes flyout and properties card: the Shapes button opens a card of five shape buttons beside the rail; selecting an element, or choosing a shape or text tool, opens a 280 px properties card to the right of the rail (layer 6, above the chunk chips and under the top bar and Ask panel; the flyout paints over it), card colour, radius 12, rows of 44 px options with a `note` label, collapsible to its header; stroke palette is the three pen colours plus soft-ink and dot; pen and highlighter never open it; scrolls when the screen is short.
 
 ## Elevation & Depth
 
@@ -197,6 +198,7 @@ Rounded, never pill-shaped except the offer chip. Radii: badge 6, control 10, ca
 - **Touch.** A quiet "Finger draws" toggle sits left of "Chunks" (off by default); a finger pans and pinches, only the pen draws.
 - **Canvas card (home).** Card background, radius 12, 120 px thumbnail, title, "Edited 12 minutes ago, 11 chunks", optional "1 draft, 2 notes" or "Note stale" tag. The thumbnail is a 960 x 640 PNG on the panel colour (shown at 480 x 320), fitted to the ink without far outliers, strokes at least 2 px at card size, never drafts. Decision 0070.
 - **Canvas state.** When a canvas does not open, the canvas area shows a centred block on paper: a charcoal title ("Canvas not found" for an unknown id, "Could not open this canvas" for a failed load), one soft-ink line and a secondary "Back to canvases" button. No lime, no alarm colour (the top bar status already carries the failure). INK-172, decision 0071.
+- **Properties card.** (INK-175, decision 0075) A card, not a panel: card colour, radius 12, 280 px wide, with the element kind as its title ("Rectangle", "3 selected", "Arrow tool") and a 44 px Collapse button. Rows by element kind, each a `note` label over 44 px options: stroke colour (charcoal, blue, brick, soft-ink, dot), background, fill style, stroke width, stroke style, sloppiness, edges, arrowheads and arrow type, opacity (a slider with a 28 px charcoal thumb), and for text font (Hand, Normal, Code), size (S, M, L, XL) and alignment; a selection adds layers, Duplicate, Delete and Lock. The pressed option is a charcoal fill with a paper icon, as on the rail. Delete is charcoal, not alarm (alarm is only for ink at risk and failures). It never shows for the pen, highlighter or eraser, nor for a selection that holds an agent draft.
 
 ## Do's and Don'ts
 
