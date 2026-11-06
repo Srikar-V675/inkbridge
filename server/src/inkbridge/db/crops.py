@@ -1,12 +1,18 @@
 """Chunk crop images: freshness and reads for the recognition worker."""
 
+import json
 import logging
 import sqlite3
+import uuid
 from pathlib import Path
+
+from inkbridge import config, imaging
+from inkbridge.canvas import raster
 
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 
-from inkbridge.db.regions import get_region
+from inkbridge.db.documents import get_scene
+from inkbridge.db.regions import get_region, get_region_png_path
 
 
 def scene_version_of_region(conn: sqlite3.Connection, region_id: str) -> int | None:
@@ -69,3 +75,56 @@ def read_fresh_crop(conn: sqlite3.Connection, region_id: str, content_hash_: str
             return None  # no crop file yet: nothing to read until the browser saves one
     finally:
         conn.rollback()  # read-only: release the lock
+
+
+def render_server_crop(conn: sqlite3.Connection, region_id: str) -> bool:
+    """Render an active chunk's crop from the stored scene and install it; True if it is now fresh.
+
+    Order matters: scene first, region second, then the version check under the write lock, so a
+    save between the two reads shows up as a version mismatch (the crop is dropped, png_stale stays
+    set, the next pass retries). Rendering happens outside the lock; saves are never blocked by it.
+    Too-large chunks (decision 0052) are never rendered.
+    """
+    row = conn.execute("SELECT document_id FROM regions WHERE id = ?", (region_id,)).fetchone()
+    if row is None:
+        return False
+    version, elements_json = get_scene(conn, row["document_id"])  # 1. scene
+    region = get_region(conn, region_id)  # 2. region (at least as new as the scene)
+    if region is None or region["status"] != "active":
+        return False
+    if imaging.unreadable_reason(region["bounds"], len(region["element_ids"])):
+        return False
+    by_id = {e["id"]: e for e in json.loads(elements_json) if isinstance(e, dict) and "id" in e}
+    png = raster.render_crop([by_id[i] for i in region["element_ids"] if i in by_id])
+    if png is None:
+        return False
+    path = Path(get_region_png_path(conn, region_id))
+    tmp = Path(f"{path}.{uuid.uuid4().hex[:8]}.tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp.write_bytes(png)
+        conn.execute("BEGIN IMMEDIATE")  # the lock saves and uploads take
+        try:
+            if scene_version_of_region(conn, region_id) != version:
+                conn.rollback()
+                return False
+            tmp.replace(path)
+            return mark_png_fresh(conn, region_id, version) is not None  # commits; CAS on version
+        except BaseException:
+            conn.rollback()
+            raise
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def ensure_crop(conn: sqlite3.Connection, region_id: str) -> None:
+    """Server mode only: render the crop if the region is png_stale or its file is missing."""
+    if config.crop_source() != "server":
+        return
+    row = conn.execute(
+        "SELECT png_stale, png_path FROM regions WHERE id = ? AND status = 'active'", (region_id,)
+    ).fetchone()
+    if row is None:
+        return
+    if row["png_stale"] or not row["png_path"] or not Path(row["png_path"]).exists():
+        render_server_crop(conn, region_id)

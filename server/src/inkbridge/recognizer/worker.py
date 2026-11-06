@@ -1,7 +1,8 @@
 """Background recognition of chunks (tech ref 6 and 9.5, decision 0017).
 
 A daemon thread with its own SQLite connection wakes every `poll_s`, and for each opted-in canvas
-that has been idle for `idle_s` reads the active regions whose crop is fresh (png_stale = 0) and
+that has been idle for `idle_s` reads the active regions whose crop is fresh (png_stale = 0; in
+server mode, INKBRIDGE_CROP_SOURCE=server, it renders a stale crop itself first, INK-120) and
 whose content_hash has no reading yet. Readings are a cache keyed by (region, content_hash), so
 unchanged or merely moved ink never calls the model. Model failures back off per (region, hash),
 a 429, 503 or timeout pauses the whole worker, and both are only logged; drawing never waits on this
@@ -20,7 +21,7 @@ import time
 from collections.abc import Callable, Iterable
 from datetime import datetime
 
-from inkbridge import db, imaging
+from inkbridge import config, db, imaging
 from inkbridge.recognizer import (
     PermanentError,
     RateLimited,
@@ -190,7 +191,8 @@ class RecognitionWorker:
 
     def _read_document(self, conn, document_id: str) -> int:
         calls, recognized = 0, []
-        candidates = db.recognition_candidates(conn, document_id)
+        server = config.crop_source() == "server"
+        candidates = db.recognition_candidates(conn, document_id, include_stale=server)
         keys = {(c["id"], c["content_hash"]) for c in candidates}
         for store in (self._failures, self._unsaved):
             for key in [k for k in store if k not in keys]:
@@ -218,6 +220,12 @@ class RecognitionWorker:
                     continue
                 reading = self._unsaved.pop(key, None)
                 if reading is None:
+                    if server:
+                        try:
+                            db.render_server_crop(conn, region["id"])  # False on a scene race
+                        except (sqlite3.OperationalError, OSError) as e:
+                            log.warning("rendering %s failed (%s); will retry", key[0], e)
+                            continue
                     # Re-checked under the lock crop uploads take: the ink may have changed
                     # since the candidates were listed (earlier calls take seconds).
                     try:
