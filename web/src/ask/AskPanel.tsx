@@ -158,7 +158,7 @@ export default function AskPanel({ api, canvas, open, onClose }: { api: Excalidr
     }
   };
 
-  const wrap = { position: "absolute", top: 60, right: 12, zIndex: 10, pointerEvents: "none", font: "12px system-ui, sans-serif", color: "#202124" } as const;
+  const wrap = { position: "absolute", top: 64, right: 12, zIndex: 10, pointerEvents: "none", font: "12px system-ui, sans-serif", color: "#202124" } as const;
   if (!open) return null;
   const ordered = [...qs].reverse();
   return (

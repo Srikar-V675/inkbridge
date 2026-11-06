@@ -39,6 +39,8 @@ export interface RailEnv {
   makeKey: (init: KeyboardEventInit) => Event;
   /** requestAnimationFrame and its cancel, to wait out Excalidraw's async initialData. */
   frame: (cb: () => void) => () => void;
+  /** The route holds a chunk deep link: its selection may arrive after load, so never pick the pen over it. */
+  deepLink?: boolean;
 }
 
 const MAX_WAIT_FRAMES = 300; // give up waiting for Excalidraw to finish loading after about 5 s
@@ -69,9 +71,9 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
       cancelFrame = env.frame(begin);
       return;
     }
-    // A deep link may already have selected a chunk; picking the pen would clear that selection.
+    // A deep link selects a chunk (maybe only after resolveChunk answers); picking the pen would clear it.
     const selected = Object.values(api.getAppState().selectedElementIds ?? {}).some(Boolean);
-    if (!selected) api.setActiveTool({ type: "freedraw" });
+    if (!selected && !env.deepLink) api.setActiveTool({ type: "freedraw" });
     scene({ currentItemStrokeColor: pens[0] });
     refresh();
   };

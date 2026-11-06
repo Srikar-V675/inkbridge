@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { readRoute } from "../lib/route";
 import { PaperDots } from "./PaperDots";
 import { createRailStore } from "./railStore";
 import { penColours } from "./shellLogic";
@@ -32,6 +33,7 @@ export function Shell({ api, title, status, chunks, onAsk, askOpen, children }: 
       mac: /Mac|iPhone|iPad/.test(navigator.platform),
       container: () => document.querySelector(".excalidraw"),
       makeKey: (init) => new KeyboardEvent("keydown", init),
+      deepLink: Boolean(readRoute().chunk),
       frame: (cb) => {
         const id = requestAnimationFrame(cb);
         return () => cancelAnimationFrame(id);

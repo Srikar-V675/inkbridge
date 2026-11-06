@@ -220,6 +220,13 @@ describe("createRailStore", () => {
     assert.equal(f.calls.scene.length, 1); // the charcoal colour is still set
   });
 
+  it("does not pick the pen when the route has a chunk link, even with nothing selected yet", () => {
+    const f = fakeApi();
+    createRailStore(f.api, PENS, { ...fakeEnv().env, deepLink: true } as never);
+    assert.deepEqual(f.calls.tool, []);
+    assert.equal(f.calls.scene.length, 1);
+  });
+
   it("keeps the same snapshot while nothing the rail shows changes", () => {
     const f = fakeApi({ activeTool: { type: "freedraw" }, currentItemStrokeColor: "#2E2D2B" });
     const { env } = fakeEnv();

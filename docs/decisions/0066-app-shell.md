@@ -23,5 +23,5 @@ The Main board puts the canvas on dotted paper with a top bar, a tool rail and a
 ## Consequences
 
 - `App.tsx` stays in the `LEGACY` hex list (crop export white, `Notice` yellow).
-- The z-order is paper (0), canvas and overlays (1), top bar, rail and zoom (5), Ask panel and draft bar (10).
+- The z-order is paper (0), `.ink-shell__canvas` (1), top bar, rail and zoom (5). `.ink-shell__canvas` is its own stacking context, so `AskPanel`, `DraftBar` and `ChunkOverlay` (its children, `z-index: 10` inside it) render below the rail, top bar and zoom control, not above them. Known gaps left for INK-161 and INK-162: chips under the left rail (x 16 to 76, y from 88) are not tappable, and the `AskPanel` wrapper (now `top: 64`) sits under the 64 px bar.
 - Real lasso, a toolbar-free Excalidraw build and an undo API would each remove a workaround here.
