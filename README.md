@@ -32,8 +32,14 @@ and [Technical reference v3](https://claude.ai/artifact/1uMmVHEyuvb2uS5Dgutaqy);
 make install
 make dev-server   # API on :8000
 make dev-web      # canvas on :5173
+make serve        # build web, then API + app on :8000 (tablet: http://<laptop>:8000/?canvas=default)
+make install-skill   # link the export skill into ~/.claude/skills (all sessions)
 make test
 ```
+
+The tablet URL moves from 5173 to 8000 when you use `make serve`; `make dev-web` stays for development.
+Links default to `http://localhost:8000`. For the tablet set `INKBRIDGE_PUBLIC_URL=http://<laptop>.local:8000`
+(a LAN name survives an IP change). `make dev-web` users on :5173 set it to the 5173 URL.
 
 ## Privacy
 

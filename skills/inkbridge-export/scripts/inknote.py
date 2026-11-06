@@ -8,7 +8,8 @@ the markers, and every block that did not change, stays byte-identical.
     inknote.py canvas   [--api URL] [--document ID]            # GET /documents/{id}/chunks
     inknote.py crops    --vault DIR CANVAS_JSON [--api URL] [--ids ID ...]
     inknote.py new      --title T CANVAS_JSON BODIES_JSON [--vault DIR] [--out NOTE]
-    inknote.py validate NOTE
+                        [--index "[[X.base]]"] [--relates "[[A]]" ...]   # refuses an existing NOTE
+    inknote.py validate NOTE [--strict]                      # --strict: the vault frontmatter too
     inknote.py sync     NOTE [--api URL] [--wait S]             # POST check_sync, prints result
     inknote.py plan     NOTE SYNC_JSON                          # which blocks need new words
     inknote.py apply    NOTE SYNC_JSON CANVAS_JSON BODIES_JSON [--vault DIR] [--recreate] [--out NOTE]
@@ -21,6 +22,7 @@ by the agent's own file access.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
 import os
@@ -34,16 +36,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 DEFAULT_API = "http://127.0.0.1:8000"
-ATTACHMENTS = "attachments/inkbridge"
+ATTACHMENTS = "content/raw/attachments/inkbridge"
 CLOSE = "<!-- /ink -->"
 OPEN_RE = re.compile(r"^<!-- ink:(?P<id>[A-Za-z0-9_-]{1,64}) hash:(?P<hash>[0-9a-f]{64}) -->$")
 ANY_MARKER_RE = re.compile(r"^<!-- (?:ink:|/ink)")
 HEADING_RE = re.compile(r"^#{1,6}\s+(?P<title>.+?)\s*#*\s*$")
 HASH_RE = re.compile(r"^[0-9a-f]{64}$")
-ENTRY_KEYS = {"id", "hash", "reading", "section", "status", "successor"}
+ENTRY_KEYS = {"id", "hash", "reading", "section", "status", "successor", "body"}
 STATUSES = {"removed", "merged"}
 REMOVED_FLAG = "> [!warning] Inkbridge: this ink is no longer on the canvas."
 MERGED_FLAG = "> [!warning] Inkbridge: this ink was merged into another block of this note ({id})."
+MANAGED_RE = re.compile(r"> \[!(?:warning|conflict)\] Inkbridge")
+BANNED_RE = re.compile("[–—·←-⇿☀-➿\U0001f300-\U0001faff]")
+INDEX_RE = re.compile(r'\[\[[^\]\n"]+\]\]')
+FUTURE_AGENT = (
+    "> [!info]- For future agent\n"
+    "> Provenance note for an Inkbridge canvas. Text between ink markers is managed by the\n"
+    "> inkbridge-export skill and synced with check_sync. Text outside the markers is the\n"
+    "> user's and is never changed.\n"
+)
+FORMATS = {"course", "book", "video", "reference"}
 
 
 class NoteError(ValueError):
@@ -139,8 +151,36 @@ def parse(text: str) -> Note:
 # -- validation --------------------------------------------------------------------------------
 
 
-def validate(text: str) -> list[str]:
-    """Every way the note breaks docs/vault-note-format.md; an empty list means it is valid."""
+def _vault_errors(text: str) -> list[str]:
+    """The vault frontmatter and callout that `new` writes (flat YAML, as written, before
+    Obsidian reformats properties)."""
+    head, sep, after = text[4:].partition("\n---\n")
+    if not sep:
+        return ["the frontmatter is not closed with '---'"]
+    lines = head.splitlines()
+    errors = [
+        f"frontmatter needs the line {want!r}"
+        for want in ("tags: [library]", "type: library", "ai-first: true")
+        if want not in lines
+    ]
+    if not {"publish: false", "publish: true"} & set(lines):
+        errors.append("frontmatter needs 'publish: false' or 'publish: true'")
+    if not any(ln.startswith("format: ") and ln[8:] in FORMATS for ln in lines):
+        errors.append(f"frontmatter needs 'format: ' one of {sorted(FORMATS)}")
+    if not any(re.fullmatch(r"date: \d{4}-\d{2}-\d{2}", ln) for ln in lines):
+        errors.append("frontmatter needs a 'date: YYYY-MM-DD' line")
+    for ln in lines:
+        if ln.startswith("index:") and not re.fullmatch(r'index: "\[\[[^\]\n"]+\]\]"', ln):
+            errors.append(f"index must look like index: \"[[Name.base]]\", got {ln!r}")
+    if not after.startswith("> [!info]- For future agent"):
+        errors.append("the '> [!info]- For future agent' callout must follow the frontmatter")
+    return errors
+
+
+def validate(text: str, strict: bool = False) -> list[str]:
+    """Every way the note breaks docs/vault-note-format.md; an empty list means it is valid.
+    `strict` also checks the vault frontmatter `new` writes; plain validation stays lenient so
+    notes exported before INK-106 can still be re-exported."""
     try:
         note = parse(text)
     except NoteError as e:
@@ -178,6 +218,8 @@ def validate(text: str) -> list[str]:
             errors.append(f"{where}.reading must be a 64-hex reading hash or null")
         if e.get("section") is not None and not isinstance(e["section"], str):
             errors.append(f"{where}.section must be a string or null")
+        if "body" in e and not (isinstance(e["body"], str) and HASH_RE.match(e["body"])):
+            errors.append(f"{where}.body must be a 64-hex hash")
         if "status" in e and e["status"] not in STATUSES:
             errors.append(f"{where}.status must be one of {sorted(STATUSES)}")
         if e.get("status") == "merged" and not isinstance(e.get("successor"), str):
@@ -192,6 +234,8 @@ def validate(text: str) -> list[str]:
             errors.append(f"block {b.id} has no entry in inkbridge.chunks")
         elif e.get("hash") != b.hash:
             errors.append(f"block {b.id}: marker hash differs from inkbridge.chunks")
+    if strict:
+        errors += _vault_errors(text)
     return errors
 
 
@@ -218,13 +262,51 @@ def _check_chunk_fields(chunk: dict) -> None:
         raise NoteError(f"chunk {cid}: unsafe deep link {link!r}")
 
 
+def _check_words(label: str, words: str) -> None:
+    """Notes follow the vault's writing style (_CLAUDE.md): no em/en dashes, arrows or emoji."""
+    for line in words.splitlines():
+        if BANNED_RE.search(line):
+            raise NoteError(f"{label}: use '-', '->' and commas, not dashes, arrows or emoji: {line!r}")
+
+
+def _check_markers(cid: str, words: str) -> None:
+    for line in words.splitlines():
+        if ANY_MARKER_RE.match(line.strip()) or "<!-- ink:" in line or "<!-- /ink" in line:
+            raise NoteError(f"the words for chunk {cid} contain an ink marker: {line!r}")
+
+
+def _managed_prefix_len(interior: str) -> int:
+    """Length of the leading Inkbridge-managed callouts (flags, conflict) of a block, each ending
+    at its own blank line. Flags are one line; only a conflict callout has `>` continuation lines
+    (the quoted new words), so a quote glued under a flag is the user's."""
+    lines = interior.splitlines(keepends=True)
+    i = 0
+    while i < len(lines) and MANAGED_RE.match(lines[i]):
+        conflict = lines[i].startswith("> [!conflict]")
+        i += 1
+        while conflict and i < len(lines) and lines[i].startswith(">"):
+            i += 1
+        if i < len(lines) and not lines[i].strip():
+            i += 1
+    return sum(len(x) for x in lines[:i])
+
+
+def _body_hash(interior: str) -> str:
+    """Hash of a block's words as the skill wrote them, ignoring its own callouts on top."""
+    return hashlib.sha256(interior[_managed_prefix_len(interior) :].encode()).hexdigest()
+
+
+def _interior(rendered: str) -> str:
+    """The text between the markers of a block from render_block (same as the note's slice)."""
+    return rendered.split("\n", 1)[1].removesuffix(CLOSE + "\n")
+
+
 def render_block(chunk: dict, body: str, vault: Path | None = None) -> str:
     """One marker-bounded block: the agent's words, a deep link, a folded crop preview."""
     cid, h = chunk["id"], chunk["content_hash"]
     _check_chunk_fields(chunk)
-    for line in body.splitlines():
-        if ANY_MARKER_RE.match(line.strip()) or "<!-- ink:" in line or "<!-- /ink" in line:
-            raise NoteError(f"the words for chunk {cid} contain an ink marker: {line!r}")
+    _check_markers(cid, body)
+    _check_words(f"chunk {cid}", body)
     parts = [f"<!-- ink:{cid} hash:{h} -->", body.strip("\n"), ""]
     if chunk.get("deep_link"):
         parts.append(f"[Open in Inkbridge]({chunk['deep_link']})")
@@ -233,6 +315,38 @@ def render_block(chunk: dict, body: str, vault: Path | None = None) -> str:
         parts += ["> [!ink]- Source ink", f"> ![[{crop}]]"]
     parts.append(CLOSE)
     return "\n".join(parts) + "\n"
+
+
+CONFLICT_HEAD = (
+    "> [!conflict] Inkbridge: the ink changed, but you edited this block, so it was not rewritten."
+)
+
+
+def _edited(text: str, note: Note, cid: str) -> bool:
+    """The user may have changed this block since the skill wrote it. Without a stored body hash
+    (a note from before INK-106) we cannot tell, so we assume yes: user text is never overwritten."""
+    e, b = note.entry(cid), note.block(cid)
+    if not (e and b):
+        return False
+    return "body" not in e or _body_hash(text[b.body_start : b.body_end]) != e["body"]
+
+
+def _conflict_callout(cid: str, words: str) -> str:
+    _check_words(f"chunk {cid}", words)
+    _check_markers(cid, words)
+    head = [CONFLICT_HEAD, "> The new reading is below. Merge it by hand, then delete this callout.", ">"]
+    quoted = [("> " + ln).rstrip() for ln in words.strip("\n").splitlines()]
+    return "\n".join(head + quoted) + "\n\n"
+
+
+def _conflict_edits(text: str, b: Block, new_id: str, new_hash: str, words: str) -> list:
+    """New marker line plus the callout on top (replacing an older conflict callout there)."""
+    inner = text[b.body_start : b.body_end]
+    old = _managed_prefix_len(inner) if inner.startswith(CONFLICT_HEAD) else 0
+    return [
+        (b.start, b.body_start - 1, f"<!-- ink:{new_id} hash:{new_hash} -->"),
+        (b.body_start, b.body_start + old, _conflict_callout(new_id, words)),
+    ]
 
 
 def _section(text: str, body_offset: int, block_start: int, block_end: int) -> str | None:
@@ -259,18 +373,21 @@ def _now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
-def _entry(chunk: dict, section: str | None) -> dict:
-    return {
+def _entry(chunk: dict, section: str | None, rendered: str | None = None) -> dict:
+    e = {
         "id": chunk["id"],
         "hash": chunk["content_hash"],
         "reading": chunk.get("text_hash"),
         "section": section,
     }
+    if rendered is not None:
+        e["body"] = _body_hash(_interior(rendered))
+    return e
 
 
-def _checked(text: str) -> str:
+def _checked(text: str, strict: bool = False) -> str:
     """Never hand back a note that breaks the format."""
-    errors = validate(text)
+    errors = validate(text, strict)
     if errors:
         raise NoteError("the result would not be a valid note: " + "; ".join(errors))
     return text
@@ -291,19 +408,39 @@ def _replace_meta(text: str, note: Note) -> str:
     return text[:a] + _meta_line(note.meta) + text[b:]
 
 
-def new_note(canvas: dict, title: str, bodies: dict[str, str], vault: Path | None = None) -> str:
+def new_note(
+    canvas: dict,
+    title: str,
+    bodies: dict[str, str],
+    vault: Path | None = None,
+    index: str | None = None,
+    relates: tuple | list = (),
+    date: str | None = None,
+) -> str:
     """A fresh note with one block per chunk that has a body, in the canvas's reading order."""
     chunks = [c for c in canvas["chunks"] if c["id"] in bodies and c.get("status") == "active"]
     missing = set(bodies) - {c["id"] for c in chunks}
     if missing:
         raise NoteError(f"bodies for chunks that are not active on the canvas: {sorted(missing)}")
-    meta = {"canvas": canvas["document"], "exported": _now(), "chunks": []}
-    meta["chunks"] = [_entry(c, None) for c in chunks]
     if "\n" in title or "\r" in title:
         raise NoteError("the title must be one line")
-    head = f"---\n{_meta_line(meta)}\n---\n# {title}\n\n"
-    text = head + "\n".join(render_block(c, bodies[c["id"]], vault) for c in chunks)
-    return _checked(_refresh_sections(text))
+    _check_words("title", title)
+    for v in ([index] if index else []) + list(relates):
+        if not INDEX_RE.fullmatch(v):
+            raise NoteError(f"{v!r} must be a wikilink like [[Name]]")
+    rendered = {c["id"]: render_block(c, bodies[c["id"]], vault) for c in chunks}
+    meta = {"canvas": canvas["document"], "exported": _now()}
+    meta["chunks"] = [_entry(c, None, rendered[c["id"]]) for c in chunks]
+    fm = ["tags: [library]", "type: library", "format: reference"]
+    if index:
+        fm.append(f"index: {json.dumps(index)}")
+    if relates:
+        fm.append(f"relates: {json.dumps(list(relates))}")
+    today = date or datetime.now().astimezone().date().isoformat()
+    fm += ["publish: false", f"date: {today}", "ai-first: true", _meta_line(meta)]
+    head = "---\n" + "\n".join(fm) + f"\n---\n{FUTURE_AGENT}\n# {title}\n\n"
+    text = head + "\n".join(rendered[c["id"]] for c in chunks)
+    return _checked(_refresh_sections(text), strict=True)
 
 
 # -- re-export ---------------------------------------------------------------------------------
@@ -317,6 +454,7 @@ def plan(text: str, sync: dict) -> dict:
         "unchanged": list(sync.get("fresh", [])),
         "refresh_hash": [i["id"] for i in sync.get("fresh_after_reread", [])],
         "rewrite": [],
+        "conflict": [],
         "merged": [],
         "flag_removed": [],
         "append": [],
@@ -325,7 +463,7 @@ def plan(text: str, sync: dict) -> dict:
     }
     for item in sync.get("changed", []):
         if item["id"] in has_block:
-            out["rewrite"].append(item["id"])
+            out["conflict" if _edited(text, note, item["id"]) else "rewrite"].append(item["id"])
             out["needs_body"].append(item["id"])
         else:
             out["user_deleted"].append(item["id"])
@@ -337,7 +475,7 @@ def plan(text: str, sync: dict) -> dict:
             out["merged"].append(item["id"])
         else:
             taken.add(item["successor"])
-            out["rewrite"].append(item["id"])
+            out["conflict" if _edited(text, note, item["id"]) else "rewrite"].append(item["id"])
             out["needs_body"].append(item["successor"])
     for cid in sync.get("removed", []):
         e = note.entry(cid)
@@ -387,31 +525,48 @@ def apply(
     edits: list[tuple[int, int, str]] = []  # (start, end, replacement) in the original text
     changed_meta = False
     blocks = {b.id: b for b in note.blocks}
-    rewritten = set(todo["rewrite"])  # a rewrite wins over a hash refresh or a flag on that block
+    conflicts = set(todo["conflict"])  # edited by the user: new words go in a callout, not over it
+    # a rewrite or conflict wins over a hash refresh or a flag on that block
+    touched = set(todo["rewrite"]) | conflicts
     for item in sync.get("changed", []):
-        if item["id"] in todo["rewrite"]:
+        if item["id"] in conflicts:
+            b, e = blocks[item["id"]], note.entry(item["id"])
+            edits += _conflict_edits(text, b, item["id"], item["hash"], bodies[item["id"]])
+            e.setdefault("body", _body_hash(text[b.body_start : b.body_end]))  # legacy: protect now
+            e.update(hash=item["hash"], reading=item["reading"])
+            changed_meta = True
+        elif item["id"] in todo["rewrite"]:
             b, e = blocks[item["id"]], note.entry(item["id"])
             c = chunk(item["id"], item)
-            edits.append((b.start, b.end, render_block(c, bodies[item["id"]], vault)))
-            e.update(hash=item["hash"], reading=item["reading"])
+            rendered = render_block(c, bodies[item["id"]], vault)
+            edits.append((b.start, b.end, rendered))
+            e.update(hash=item["hash"], reading=item["reading"], body=_entry(c, None, rendered)["body"])
             changed_meta = True
     for item in sync.get("replaced", []):
         b, e = blocks.get(item["id"]), note.entry(item["id"])
-        if item["id"] in todo["rewrite"]:
+        if item["id"] in conflicts:
+            succ = item["successor"]
+            edits += _conflict_edits(text, b, succ, item["hash"], bodies[succ])
+            e.setdefault("body", _body_hash(text[b.body_start : b.body_end]))
+            e.update(id=succ, hash=item["hash"], reading=item["reading"])
+            changed_meta = True
+        elif item["id"] in todo["rewrite"]:
             s = {"hash": item["hash"], "reading": item["reading"]}
             c = chunk(item["successor"], s)
-            edits.append((b.start, b.end, render_block(c, bodies[item["successor"]], vault)))
+            rendered = render_block(c, bodies[item["successor"]], vault)
+            edits.append((b.start, b.end, rendered))
             e.clear()
             e.update(id=item["successor"], hash=item["hash"], reading=item["reading"])
+            e["body"] = _entry(c, None, rendered)["body"]
             changed_meta = True
-        elif item["id"] in todo["merged"] and item["id"] not in rewritten:
+        elif item["id"] in todo["merged"] and item["id"] not in touched:
             flag = MERGED_FLAG.format(id=item["successor"])
             edits.append((b.body_start, b.body_start, flag + "\n\n"))
             e.update(status="merged", successor=item["successor"])
             changed_meta = True
     for item in sync.get("fresh_after_reread", []):
         e, b = note.entry(item["id"]), blocks.get(item["id"])
-        if e is None or item["id"] in rewritten:
+        if e is None or item["id"] in touched:
             continue
         e["hash"], e["reading"] = item["hash"], item["reading"]
         changed_meta = True
@@ -419,7 +574,7 @@ def apply(
             line_end = b.body_start - 1 if text[b.body_start - 1] == "\n" else b.body_start
             edits.append((b.start, line_end, f"<!-- ink:{b.id} hash:{item['hash']} -->"))
     for cid in todo["flag_removed"]:
-        if cid in rewritten:
+        if cid in touched:
             continue
         b = blocks[cid]
         edits.append((b.body_start, b.body_start, REMOVED_FLAG + "\n\n"))
@@ -428,8 +583,9 @@ def apply(
     appended = []
     for item in sync.get("new", []):
         c = chunk(item["id"], item)
-        appended.append(render_block(c, bodies[item["id"]], vault))
-        note.meta["chunks"].append(_entry(c, None))
+        rendered = render_block(c, bodies[item["id"]], vault)
+        appended.append(rendered)
+        note.meta["chunks"].append(_entry(c, None, rendered))
         changed_meta = True
     if recreate:
         for cid in todo["user_deleted"]:
@@ -439,10 +595,11 @@ def apply(
             )
             target = src.get("successor", cid) if src else cid
             c = chunk(target, src or {"hash": note.entry(cid)["hash"]})
-            appended.append(render_block(c, bodies[cid], vault))
+            rendered = render_block(c, bodies[cid], vault)
+            appended.append(rendered)
             e = note.entry(cid)
             e.clear()
-            e.update(_entry(c, None))
+            e.update(_entry(c, None, rendered))
             changed_meta = True
     if not changed_meta:
         return text
@@ -524,6 +681,7 @@ def _read(path: str) -> str:
 
 def _atomic(path: Path, data: bytes) -> None:
     """Write via a temp file and rename, so an interruption never leaves a truncated file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.inknote-tmp")
     tmp.write_bytes(data)
     tmp.replace(path)
@@ -557,8 +715,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--title", required=True)
     s.add_argument("--vault")
     s.add_argument("--out")
+    s.add_argument("--index")
+    s.add_argument("--relates", nargs="*", default=[])
     s = sub.add_parser("validate")
     s.add_argument("note")
+    s.add_argument("--strict", action="store_true")
     s = sub.add_parser("sync")
     s.add_argument("note")
     s.add_argument("--api")
@@ -584,9 +745,12 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if result["failed"] else 0
         elif a.cmd == "new":
             vault = Path(a.vault) if a.vault else None
-            _write(new_note(_load(a.canvas), a.title, _load(a.bodies), vault), a.out)
+            if a.out and Path(a.out).exists():
+                raise NoteError(f"{a.out} exists; use plan/apply to re-export it, or pick another title")
+            note = new_note(_load(a.canvas), a.title, _load(a.bodies), vault, a.index, a.relates)
+            _write(note, a.out)
         elif a.cmd == "validate":
-            errors = validate(_read(a.note))
+            errors = validate(_read(a.note), a.strict)
             print(json.dumps({"valid": not errors, "errors": errors}, indent=2))
             return 1 if errors else 0
         elif a.cmd == "sync":

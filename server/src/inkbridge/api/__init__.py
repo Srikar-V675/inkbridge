@@ -13,11 +13,13 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.gzip import GZipMiddleware
 
-from inkbridge import db
+from inkbridge import config, db
 from inkbridge.agent.ask_runner import AskWorker
 from inkbridge.api import chunks, debug, graph, ops, overrides, questions, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
+from inkbridge.api.web import mount_web
+from inkbridge.db import questions as q_db
 from inkbridge.recognizer.worker import RecognitionWorker
 from inkbridge.timing import RequestTiming, configure_logging, request_parts, sample_loop_lag
 
@@ -32,7 +34,13 @@ async def lifespan(app: FastAPI):
     if worker is not None:
         worker.start()
     app.state.recognition_worker = worker  # check_sync asks it for readings (INK-036)
-    ask = AskWorker.from_env()  # off unless INKBRIDGE_RUNNER is set (decision 0007)
+    ask, ask_error = AskWorker.setup(publish=ws.hub.publish)  # off unless INKBRIDGE_RUNNER is set
+    app.state.runner_error = ask_error  # set when INKBRIDGE_RUNNER is on but refused (INK-103)
+    conn = db.connect()
+    try:
+        q_db.reset_runner(conn, "failed" if ask_error else "pending", ask_error)
+    finally:
+        conn.close()
     if ask:
         ask.start()
     app.state.ask_worker = ask
@@ -209,3 +217,6 @@ def put_scene(
         },
     )
     return {"version": version, "timing": timing}
+
+
+mount_web(app, config.web_dist())  # last: every API route wins over the static paths (INK-100)

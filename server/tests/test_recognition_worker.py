@@ -12,6 +12,7 @@ from inkbridge.recognizer import (
     MissingApiKey,
     RateLimited,
     Recognition,
+    ServiceUnavailable,
 )
 from inkbridge.recognizer.worker import RecognitionWorker
 from tests.test_chunk_persistence import Canvas, row
@@ -379,10 +380,11 @@ def test_a_locked_database_keeps_the_reading_and_does_not_call_again(client, mon
     assert canvas.chunk_of("a0")["text"] == "x squared" and len(model.calls) == 1
 
 
-def test_a_rate_limit_pauses_every_chunk_not_just_the_one(client):
+@pytest.mark.parametrize("exc_type", [RateLimited, ServiceUnavailable])
+def test_a_rate_limit_pauses_every_chunk_not_just_the_one(client, exc_type):
     fresh_canvas(client, row("a", 3), row("b", 3, y=500))
     t = [float(LATER)]
-    model = FakeModel(errors=[RateLimited("429")])
+    model = FakeModel(errors=[exc_type("provider down")])
     w = worker(model, clock=lambda: t[0], backoff_s=30)
     assert w.run_once() == 1, "the second chunk is not tried against an exhausted quota"
     t[0] += 10

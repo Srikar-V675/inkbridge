@@ -5,6 +5,7 @@ import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "../chunks/ChunkOverlay";
 import { createRefresh, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
+import { publishQuestion } from "../ask/ask";
 import { DraftBar } from "../drafts/DraftBar";
 import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "../drafts/draftView";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "../chunks/chunks";
@@ -19,6 +20,7 @@ import { createStartupGate } from "../sync/startupGate";
 import { SceneSync, type SaveState, type SceneElement } from "../sync/sceneSync";
 import { createStatusStore } from "../lib/status";
 import { loadView, saveView, type View } from "../lib/view";
+import { initialAppState } from "../lib/excalidrawEnv";
 
 const LABEL: Record<SaveState, string> = {
   loading: "Loading…",
@@ -160,16 +162,7 @@ const Canvas = memo(function Canvas(props: {
 }) {
   const { initial, onApi, onChange } = props;
   const initialData = useMemo(
-    () => ({
-      elements: initial.elements,
-      ...(initial.view && {
-        appState: {
-          scrollX: initial.view.scrollX,
-          scrollY: initial.view.scrollY,
-          zoom: { value: initial.view.zoom as never },
-        },
-      }),
-    }),
+    () => ({ elements: initial.elements, appState: initialAppState(initial.view) }),
     [initial],
   );
   return <Excalidraw excalidrawAPI={onApi} initialData={initialData} onChange={onChange as never} />;
@@ -363,7 +356,11 @@ export default function App() {
         wire.onChunksUpdated();
       },
       // A push lost while the socket was down is gone, so the chunk list refetches on every connect.
-      onConnection: wire.onConnection,
+      onConnection: (c) => {
+        wire.onConnection(c);
+        if (c) publishQuestion(null); // pushes sent while the socket was down are lost
+      },
+      onQuestionUpdate: publishQuestion,
       // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
       onOpUpdated: (m) => {
         if (DEAD.includes(m.status)) sweep(m.op_id);

@@ -21,7 +21,7 @@ My own remark, typed in Obsidian.
 
 - Gradient descent
 
-[Open in Inkbridge](http://localhost:5173/?canvas=6db7efebf231&chunk=f56af5807669)
+[Open in Inkbridge](http://localhost:8000/?canvas=6db7efebf231&chunk=f56af5807669)
 > [!ink]- Source ink
 ```
 

@@ -11,6 +11,12 @@ def db_path() -> Path:
     return Path(os.environ.get("INKBRIDGE_DB", DATA_DIR / "inkbridge.db"))
 
 
+def web_dist() -> Path | None:
+    """Built web app to serve: INKBRIDGE_WEB_DIST, else <repo>/web/dist. None unless it holds index.html."""
+    p = Path(os.environ.get("INKBRIDGE_WEB_DIST") or Path(__file__).parents[3] / "web" / "dist")
+    return p if (p / "index.html").is_file() else None
+
+
 def crops_dir() -> Path:
     # Crop PNGs sit beside the database, one per region (data/crops/<region_id>.png).
     return db_path().parent / "crops"
@@ -20,12 +26,12 @@ def logs_dir() -> Path:
     return db_path().parent / "logs"
 
 
-DEFAULT_PUBLIC_URL = "http://localhost:5173"
+DEFAULT_PUBLIC_URL = "http://localhost:8000"
 
 
 def public_url() -> str:
-    """Base of chunk deep links: the web app as the vault's reader reaches it (a .local name
-    survives an IP change). INKBRIDGE_PUBLIC_URL, default the Vite dev server on this machine."""
+    """Base of chunk deep links: the web app as the vault's reader reaches it. Default the API's
+    own served origin (INK-100); set a .local name so the tablet can open links (survives an IP change)."""
     return (os.environ.get("INKBRIDGE_PUBLIC_URL") or DEFAULT_PUBLIC_URL).rstrip("/")
 
 

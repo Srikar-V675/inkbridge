@@ -103,8 +103,8 @@ def test_links_are_listed_on_the_chunk_they_leave(client):
 def test_deep_links_use_the_configured_base(client, monkeypatch):
     page(client)
     first = outline(client)["chunks"][0]
-    assert config.DEFAULT_PUBLIC_URL == "http://localhost:5173"
-    assert first["deep_link"] == f"http://localhost:5173/?canvas=default&chunk={first['id']}"
+    assert config.DEFAULT_PUBLIC_URL == "http://localhost:8000"
+    assert first["deep_link"] == f"http://localhost:8000/?canvas=default&chunk={first['id']}"
     monkeypatch.setenv("INKBRIDGE_PUBLIC_URL", "http://laptop.local:5173/")
     first = outline(client)["chunks"][0]
     assert first["deep_link"] == f"http://laptop.local:5173/?canvas=default&chunk={first['id']}"
@@ -196,7 +196,7 @@ def test_interim_regions_chunks_route_still_lists_chunks(client):
 def test_empty_public_url_falls_back_to_the_default(client, monkeypatch):
     monkeypatch.setenv("INKBRIDGE_PUBLIC_URL", "")
     page(client)
-    assert outline(client)["chunks"][0]["deep_link"].startswith("http://localhost:5173/?canvas=")
+    assert outline(client)["chunks"][0]["deep_link"].startswith("http://localhost:8000/?canvas=")
 
 
 def _tile(i, x, y, w=100, h=100, stale=False):

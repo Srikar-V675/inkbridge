@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -112,7 +114,7 @@ def test_a_new_note_validates_and_records_provenance(client, page):
         assert e["reading"] == by_id[e["id"]]["text_hash"] and e["reading"]
         assert e["section"] == by_id[e["id"]]["text"]  # the block's own heading
     assert [b.id for b in note.blocks] == [c["id"] for c in canvas["chunks"]]
-    assert text.startswith("---\ninkbridge: {")
+    assert text.startswith("---\ntags: [library]\n")
 
 
 def test_each_block_links_to_its_chunk_and_embeds_its_crop(client, page):
@@ -123,7 +125,7 @@ def test_each_block_links_to_its_chunk_and_embeds_its_crop(client, page):
         (link,) = [ln for ln in body.splitlines() if ln.startswith("[Open in Inkbridge](")]
         q = parse_qs(urlparse(link[len("[Open in Inkbridge](") : -1]).query)
         assert q == {"canvas": ["default"], "chunk": [b.id]}
-        assert f"![[attachments/inkbridge/{b.id}-{b.hash[:12]}.png]]" in body
+        assert f"![[content/raw/attachments/inkbridge/{b.id}-{b.hash[:12]}.png]]" in body
         assert "> [!ink]- Source ink" in body  # folded callout
 
 
@@ -151,6 +153,69 @@ def test_a_marker_hash_that_disagrees_with_the_frontmatter_is_invalid(client, pa
     b = inknote.parse(text).blocks[0]
     broken = text.replace(f"hash:{b.hash} -->", f"hash:{'0' * 64} -->", 1)
     assert any("marker hash differs" in e for e in inknote.validate(broken))
+
+
+# -- vault rules (INK-106) -------------------------------------------------------------------------
+
+
+def test_new_note_has_the_vault_frontmatter_and_callout(client, page):
+    _canvas, text = export(client, page)
+    fm, _, after = text[4:].partition("\n---\n")
+    lines = fm.splitlines()
+    for want in ("tags: [library]", "type: library", "format: reference", "publish: false"):
+        assert want in lines
+    assert "ai-first: true" in lines
+    assert any(re.fullmatch(r"date: \d{4}-\d{2}-\d{2}", ln) for ln in lines)
+    assert sum(ln.startswith("inkbridge:") for ln in lines) == 1
+    assert after.startswith("> [!info]- For future agent\n")
+    assert inknote.validate(text, strict=True) == []
+    canvas = outline(client)
+    rich = inknote.new_note(
+        canvas, "T", bodies_for(canvas),
+        index="[[Machine Learning & AI.base]]", relates=["[[Linear Regression]]"],
+    )
+    assert 'index: "[[Machine Learning & AI.base]]"' in rich
+    assert 'relates: ["[[Linear Regression]]"]' in rich
+    assert inknote.validate(rich, strict=True) == []
+    with pytest.raises(inknote.NoteError):
+        inknote.new_note(canvas, "T", bodies_for(canvas), index="Machine")
+    with pytest.raises(inknote.NoteError):
+        inknote.new_note(canvas, "T", bodies_for(canvas), relates=["Linear"])
+
+
+def test_every_entry_records_the_body_hash(client, page):
+    _canvas, text = export(client, page)
+    note = inknote.parse(text)
+    for b in note.blocks:
+        want = inknote._body_hash(text[b.body_start : b.body_end])
+        assert note.entry(b.id)["body"] == want
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda t: t.replace("tags: [library]", "tags: [library, ml]"),
+        lambda t: t.replace("type: library\n", ""),
+        lambda t: t.replace("format: reference", "format: novel"),
+        lambda t: t.replace("> [!info]- For future agent", "> note"),
+    ],
+)
+def test_strict_validation_catches_vault_breaks(client, page, mutate):
+    _, text = export(client, page)
+    broken = mutate(text)
+    assert broken != text
+    assert inknote.validate(broken) == []
+    assert inknote.validate(broken, strict=True)
+
+
+@pytest.mark.parametrize("bad", ["a \u2014 b", "a \u2013 b", "a \u2192 b", "ok \U0001f600", "a \u00b7 b"])
+def test_words_with_dashes_arrows_or_emoji_are_refused(client, page, bad):
+    canvas = outline(client)
+    first = canvas["chunks"][0]["id"]
+    with pytest.raises(inknote.NoteError, match="chunk"):
+        inknote.new_note(canvas, "T", {first: f"## h\n\n- {bad}"})
+    with pytest.raises(inknote.NoteError, match="title"):
+        inknote.new_note(canvas, f"T {bad}", bodies_for(canvas))
 
 
 # -- re-export -------------------------------------------------------------------------------------
@@ -230,6 +295,135 @@ def test_one_changed_line_rewrites_exactly_one_block(client, page):
     assert inknote.validate(out) == []
 
 
+# -- edited blocks are never overwritten (INK-106) ---------------------------------------------------
+
+
+def edit_first_block_and_change_its_ink(client, page, reading="gradient descent v2"):
+    """The user edits block a0 by hand; then a0's ink changes meaning."""
+    _canvas, text = export(client, page)
+    text = with_user_text(text)
+    text = text.replace("- gradient descent", "- gradient descent (my note)", 1)
+    page.el("a1")["points"] = [[0, 0], [10, 21]]
+    page.put()
+    recognise(page.chunk_of("a0"), reading)
+    return text
+
+
+def test_a_changed_block_the_user_edited_is_not_overwritten(client, page):
+    text = edit_first_block_and_change_its_ink(client, page)
+    sync = check(client, text)
+    a = page.chunk_of("a0")
+    plan = inknote.plan(text, sync)
+    assert plan["conflict"] == [a["id"]] and plan["rewrite"] == []
+    assert a["id"] in plan["needs_body"]
+    out = inknote.apply(text, sync, outline(client), {a["id"]: "## v2\n\n- brand new words"})
+    before, after = inknote.parse(text), inknote.parse(out)
+    block = block_body(out, a["id"])
+    assert "(my note)" in block
+    assert block.startswith("> [!conflict] Inkbridge:") and "> - brand new words" in block
+    assert after.block(a["id"]).hash == a["content_hash"]
+    e = after.entry(a["id"])
+    assert e["hash"] == a["content_hash"] and e["reading"] == a["text_hash"]
+    assert e["body"] == before.entry(a["id"])["body"]
+    assert inknote.validate(out) == []
+    for b in before.blocks[1:]:
+        assert block_body(out, b.id) == block_body(text, b.id)
+    assert out.count(USER_TEXT) == 3
+
+
+def test_after_a_conflict_the_next_sync_is_clean_and_a_second_change_replaces_the_callout(
+    client, page
+):
+    text = edit_first_block_and_change_its_ink(client, page)
+    a = page.chunk_of("a0")["id"]
+    out = inknote.apply(text, check(client, text), outline(client), {a: "first words"})
+    again = check(client, out)
+    assert a in again["fresh"]
+    assert inknote.apply(out, again, outline(client), {}) == out
+    page.el("a1")["points"] = [[0, 0], [10, 40]]
+    page.put()
+    recognise(page.chunk_of("a0"), "gradient descent v3")
+    sync = check(client, out)
+    assert inknote.plan(out, sync)["conflict"] == [page.chunk_of("a0")["id"]]
+    a2 = page.chunk_of("a0")["id"]
+    out2 = inknote.apply(out, sync, outline(client), {a2: "second words"})
+    block = block_body(out2, a2)
+    assert block.count("[!conflict]") == 1
+    assert "second words" in block and "first words" not in block and "(my note)" in block
+    assert inknote.validate(out2) == []
+
+
+def test_an_unedited_changed_block_is_rewritten_and_its_body_hash_follows(client, page):
+    _canvas, text = export(client, page)
+    for n in (2, 3):
+        page.el("b1")["points"] = [[0, 0], [30, -10 * n]]
+        page.put()
+        recognise(page.chunk_of("b0"), f"learning rate {n}")
+        b = page.chunk_of("b0")["id"]
+        sync = check(client, text)
+        assert inknote.plan(text, sync)["conflict"] == []
+        text = inknote.apply(text, sync, outline(client), {b: f"## rate {n}\n\nnew"})
+        note = inknote.parse(text)
+        assert note.entry(b)["body"] == inknote._body_hash(block_body(text, b))
+        assert "[!conflict]" not in text
+
+
+def test_flags_are_not_user_edits(client, page):
+    _canvas, text = export(client, page)
+    for i in range(3):
+        page.el(f"c{i}")["isDeleted"] = True
+    page.put()
+    c_id = inknote.parse(text).blocks[2].id
+    out = inknote.apply(text, check(client, text), outline(client), {})
+    assert block_body(out, c_id).startswith(inknote.REMOVED_FLAG)
+    assert not inknote._edited(out, inknote.parse(out), c_id)
+    assert inknote._edited(out.replace("- momentum", "- momentum!"), inknote.parse(out), c_id)
+
+
+def test_a_note_without_body_hashes_is_treated_as_edited_and_gets_one(client, page):
+    text = edit_first_block_and_change_its_ink(client, page)
+    note = inknote.parse(text)
+    for e in note.meta["chunks"]:
+        del e["body"]
+    text = inknote._replace_meta(text, note)
+    a = page.chunk_of("a0")["id"]
+    sync = check(client, text)
+    assert inknote.plan(text, sync)["conflict"] == [a]
+    out = inknote.apply(text, sync, outline(client), {a: "legacy words"})
+    block = block_body(out, a)
+    assert "(my note)" in block and block.startswith("> [!conflict] Inkbridge:")
+    assert "> legacy words" in block
+    after = inknote.parse(out)
+    assert after.entry(a)["body"] == inknote._body_hash(block)
+    assert after.entry(a)["hash"] == page.chunk_of("a0")["content_hash"]
+    assert not inknote._edited(out, after, a)
+    assert "body" not in after.entry(after.blocks[1].id)  # untouched legacy blocks stay as they were
+    assert inknote.validate(out) == []
+
+
+def test_a_quote_glued_under_a_callout_is_not_part_of_it(client, page):
+    flag = inknote.REMOVED_FLAG
+    mine = "> my own quote\n"
+    assert inknote._managed_prefix_len(f"{flag}\n{mine}words\n") == len(flag) + 1
+    assert inknote._body_hash(f"{flag}\n{mine}words\n") != inknote._body_hash("words\n")
+    # After a conflict the user keeps a quote under the callout; a second conflict keeps it.
+    text = edit_first_block_and_change_its_ink(client, page)
+    a = page.chunk_of("a0")["id"]
+    out = inknote.apply(text, check(client, text), outline(client), {a: "first"})
+    b = inknote.parse(out).block(a)
+    top = out[b.body_start :]
+    end = top.index("\n\n") + 2  # the callout's own blank line
+    out = out[: b.body_start + end] + mine + out[b.body_start + end :]
+    page.el("a1")["points"] = [[0, 0], [10, 40]]
+    page.put()
+    recognise(page.chunk_of("a0"), "gradient descent v3")
+    a2 = page.chunk_of("a0")["id"]
+    out2 = inknote.apply(out, check(client, out), outline(client), {a2: "second"})
+    block = block_body(out2, a2)
+    assert mine in block and "(my note)" in block and block.count("[!conflict]") == 1
+    assert "second" in block and "first" not in block
+
+
 def outside_blocks(text):
     note = inknote.parse(text)
     out, pos = [], note.body_offset
@@ -297,6 +491,26 @@ def test_a_split_rewrites_the_block_from_its_successor_and_appends_the_other_pie
     after = inknote.parse(out)
     assert [b.id for b in after.blocks] == [top["id"], low["id"]]
     assert after.entry(old) is None and after.entry(top["id"])["hash"] == top["content_hash"]
+    assert inknote.validate(out) == []
+
+
+def test_a_split_of_an_edited_block_keeps_the_edit_and_adds_a_conflict(client):
+    page = Canvas(client, row("e", 10))
+    recognise(page.chunk_of("e0"), "ten strokes")
+    canvas = outline(client)
+    text = inknote.new_note(canvas, "Split", bodies_for(canvas))
+    text = text.replace("- ten strokes", "- ten strokes (mine)", 1)
+    for i in range(5, 10):
+        page.el(f"e{i}")["y"] += 400
+    page.put()
+    top, low = page.chunk_of("e0"), page.chunk_of("e9")
+    sync = check(client, text)
+    assert inknote.plan(text, sync)["conflict"] != []
+    out = inknote.apply(text, sync, outline(client), {top["id"]: "top", low["id"]: "low"})
+    after = inknote.parse(out)
+    assert "(mine)" in block_body(out, top["id"]) and "[!conflict]" in block_body(out, top["id"])
+    assert after.entry(top["id"])["hash"] == top["content_hash"]
+    assert after.block(low["id"]) is not None
     assert inknote.validate(out) == []
 
 
@@ -369,7 +583,7 @@ def test_crops_are_saved_under_the_documented_name_and_embedded(client, page, ap
     canvas = outline(client)
     result = inknote.fetch_crops(api, tmp_path, canvas)
     assert result["saved"] == [a["id"]] and len(result["failed"]) == 2
-    saved = tmp_path / f"attachments/inkbridge/{a['id']}-{a['content_hash'][:12]}.png"
+    saved = tmp_path / f"content/raw/attachments/inkbridge/{a['id']}-{a['content_hash'][:12]}.png"
     assert saved.read_bytes() == PNG
     assert inknote.fetch_crops(api, tmp_path, canvas, [a["id"]])["skipped"] == [a["id"]]
     text = inknote.new_note(canvas, "T", bodies_for(canvas), tmp_path)
@@ -389,17 +603,38 @@ def test_cli_round_trip(client, page, api, tmp_path, monkeypatch, capsys):
     assert inknote.main(args) == 0
     assert inknote.main(["validate", str(note)]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
+    assert inknote.main(["validate", str(note), "--strict"]) == 0
+    assert json.loads(capsys.readouterr().out)["valid"] is True
     before = note.read_bytes()
     assert inknote.main(["sync", str(note)]) == 0
     sync_json = tmp_path / "sync.json"
     sync_json.write_text(capsys.readouterr().out)
     assert inknote.main(["plan", str(note), str(sync_json)]) == 0
-    assert json.loads(capsys.readouterr().out)["needs_body"] == []
+    planned = json.loads(capsys.readouterr().out)
+    assert planned["needs_body"] == [] and planned["conflict"] == []
     apply_args = ["apply", str(note), str(sync_json), str(canvas_json), str(bodies_json)]
     assert inknote.main(apply_args) == 0
     assert note.read_bytes() == before
     note.write_text("not a note")
     assert inknote.main(["validate", str(note)]) == 1
+
+
+def test_cli_new_creates_folders_and_refuses_to_overwrite(client, page, api, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("INKBRIDGE_API_URL", api)
+    canvas_json, bodies_json = tmp_path / "canvas.json", tmp_path / "bodies.json"
+    assert inknote.main(["canvas"]) == 0
+    canvas_json.write_text(capsys.readouterr().out)
+    bodies_json.write_text(json.dumps(bodies_for(json.loads(canvas_json.read_text()))))
+    out = tmp_path / "content/library/T.md"
+    args = ["new", str(canvas_json), str(bodies_json), "--title", "T", "--out", str(out)]
+    args += ["--index", "[[Machine Learning & AI.base]]"]
+    assert inknote.main(args) == 0
+    assert 'index: "[[Machine Learning & AI.base]]"' in out.read_text()
+    before = out.read_bytes()
+    capsys.readouterr()
+    assert inknote.main(args) == 2
+    assert "apply" in capsys.readouterr().err
+    assert out.read_bytes() == before
 
 
 def test_the_script_only_uses_the_standard_library():
@@ -490,3 +725,38 @@ def test_an_unchanged_note_file_is_not_rewritten(client, page, tmp_path):
     os.utime(note, (1, 1))
     inknote._write(text, None, str(note))
     assert note.stat().st_mtime == 1
+
+
+SKILL = SCRIPT.parents[1] / "SKILL.md"
+
+
+def test_skill_does_not_assume_the_repo_as_cwd():
+    text = SKILL.read_text()
+    assert "H=skills/" not in text and "from the repo or copy it" not in text
+
+
+def test_skill_follows_the_vault_rules():
+    text = SKILL.read_text()
+    for want in (
+        "content/library/",
+        "content/raw/attachments/inkbridge",
+        "_CLAUDE.md",
+        "For future agent",
+        "obsidian_validate_note",
+        'validate "$INKBRIDGE_VAULT',
+        "--strict",
+    ):
+        assert want in text, want
+    assert "Crops go in `attachments/inkbridge/`" not in text
+    fmt = (SCRIPT.parents[3] / "docs" / "vault-note-format.md").read_text()
+    assert "body" in fmt and "[!conflict]" in fmt
+
+
+def test_helper_runs_from_a_symlinked_skill_outside_the_repo(tmp_path):
+    link = tmp_path / "inkbridge-export"
+    link.symlink_to(SCRIPT.parents[1])
+    r = subprocess.run(
+        [sys.executable, str(link / "scripts" / "inknote.py"), "--help"],
+        check=False, cwd=tmp_path, capture_output=True, text=True,
+    )
+    assert r.returncode == 0 and "validate" in r.stdout
