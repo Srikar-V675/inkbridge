@@ -190,3 +190,12 @@
   .ink-rail { gap: 0; padding-block: var(--space-xs); }
   .ink-rail__gap { height: 6px; }
 }
+
+/* Tablet density (INK-170): smaller type and tighter spacing; touch targets stay 44 px. */
+@media (pointer: coarse), (max-width: 1300px) {
+  .ink-topbar { gap: var(--space-sm); }
+  .ink-topbar__title { font-size: 18px; }
+  .ink-topbar__status { font-size: 13px; }
+  .ink-shell { --ink-rail-top: 72px; }
+  .ink-rail { left: var(--space-sm); }
+}

@@ -60,3 +60,24 @@ describe("compact zoom pill (INK-170): 36 px visual, 44 px hit area", () => {
     assert.ok(32 - 2 * inset >= 44, `hit area ${32 - 2 * inset}px`);
   });
 });
+
+describe("tablet density (INK-170): smaller top bar type, touch targets stay 44 px", () => {
+  const tablet = "(pointer: coarse), (max-width: 1300px)";
+
+  it("the top bar shrinks on tablets and narrow windows, appended after the short-screen block", () => {
+    const start = css.indexOf(`@media ${tablet} {`);
+    assert.ok(start > css.indexOf("@media (max-height: 720px)"), "appended after the rail block");
+    const body = media(tablet);
+    assert.match(body, /\.ink-topbar__title\s*\{[^}]*font-size:\s*18px/);
+    assert.match(body, /\.ink-topbar__status\s*\{[^}]*font-size:\s*13px/);
+    assert.match(body, /\.ink-topbar\s*\{[^}]*gap:\s*var\(--space-sm\)/);
+  });
+
+  it("no button rule goes below 44 px outside the zoom pill", () => {
+    const rules = [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)];
+    for (const [, selector, body] of rules) {
+      if (!/\.ink-(icon-)?button\b/.test(selector) || selector.includes(".ink-zoom")) continue;
+      assert.doesNotMatch(body, /height:\s*3\d(\.\d+)?px/, selector.trim());
+    }
+  });
+});
