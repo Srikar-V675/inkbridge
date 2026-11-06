@@ -65,9 +65,7 @@ def test_text_hash_is_stored_with_the_reading(client):
     client.put(SCENE, json={"base_version": 0, "elements": [A, B]})
     ra = post(client, ["a"]).json()
     recognise(ra, "hello  world")
-    assert client.get(f"/regions/{ra['id']}").json()["text_hash"] == text_hash(
-        "hello world", None
-    )
+    assert client.get(f"/regions/{ra['id']}").json()["text_hash"] == text_hash("hello world", None)
 
 
 def test_changing_a_point_drops_the_old_reading(client):
@@ -118,7 +116,7 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     )
     conn.commit()
     monkeypatch.undo()  # back to the real migrations directory
-    assert db.migrate(conn) == [4, 5, 6]
+    assert db.migrate(conn) == [4, 5, 6, 7]
     region = db.get_region(conn, "r1")
     assert region["content_hash"] == content_hash([A])
     assert region["text"] == "kept reading"

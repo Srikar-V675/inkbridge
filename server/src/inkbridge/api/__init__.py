@@ -15,7 +15,19 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from inkbridge import config, db
 from inkbridge.agent.ask_runner import AskWorker
-from inkbridge.api import chunks, debug, graph, ops, overrides, questions, regions, search, sync, ws
+from inkbridge.api import (
+    canvases,
+    chunks,
+    debug,
+    graph,
+    ops,
+    overrides,
+    questions,
+    regions,
+    search,
+    sync,
+    ws,
+)
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.api.web import mount_web
@@ -69,6 +81,7 @@ async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResp
     return JSONResponse(status_code=422, content={"detail": errors})
 
 
+app.include_router(canvases.router)
 app.include_router(chunks.router)
 app.include_router(graph.router)
 app.include_router(ops.router)

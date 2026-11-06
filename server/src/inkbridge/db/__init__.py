@@ -27,9 +27,13 @@ from inkbridge.db.crops import (
 )
 from inkbridge.db.documents import (
     document_exists,
+    document_summary,
     document_updated_at,
     ensure_default_document,
     get_scene,
+    list_documents,
+    mark_opened,
+    patch_document,
 )
 from inkbridge.db.ink import get_region_ink, get_sketch_elements, list_links
 from inkbridge.db.migrations import (
@@ -119,6 +123,7 @@ __all__ = [
     "connect",
     "create_region",
     "document_exists",
+    "document_summary",
     "document_updated_at",
     "ensure_crop",
     "ensure_default_document",
@@ -128,11 +133,14 @@ __all__ = [
     "get_scene",
     "get_sketch_elements",
     "init_db",
+    "list_documents",
     "list_links",
     "list_regions",
+    "mark_opened",
     "mark_png_fresh",
     "merge_chunks",
     "migrate",
+    "patch_document",
     "put_scene",
     "read_fresh_crop",
     "recognition_candidates",

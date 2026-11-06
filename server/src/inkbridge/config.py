@@ -22,6 +22,11 @@ def crops_dir() -> Path:
     return db_path().parent / "crops"
 
 
+def thumbs_dir() -> Path:
+    # Canvas thumbnails (INK-118), one <document>-<version>.png per canvas.
+    return db_path().parent / "thumbs"
+
+
 def logs_dir() -> Path:
     return db_path().parent / "logs"
 

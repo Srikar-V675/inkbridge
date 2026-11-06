@@ -7,7 +7,9 @@ import uuid
 from inkbridge import imaging
 from inkbridge.canvas.chunker import reading_order
 from inkbridge.db.common import AUTO, DocumentNotFound, _now
+from inkbridge.db.documents import document_summary, get_scene
 from inkbridge.db.regions import _region_dict
+from inkbridge.db.scenes import put_scene
 
 STATUSES = ("active", "orphaned", "all")
 
@@ -32,18 +34,23 @@ def create_document(conn: sqlite3.Connection, title: str) -> dict:
         (doc_id, now),
     )
     conn.commit()
-    return {"id": doc_id, "title": title, "updated_at": now, "version": 0}
+    return document_summary(conn, doc_id)
 
 
-def list_documents(conn: sqlite3.Connection) -> list[dict]:
-    """Every canvas, most recently updated first."""
-    return [
-        {"id": r["id"], "title": r["title"], "updated_at": r["updated_at"], "version": r["version"]}
-        for r in conn.execute(
-            "SELECT d.id, d.title, d.updated_at, s.version FROM documents d"
-            " LEFT JOIN scenes s ON s.document_id = d.id ORDER BY d.updated_at DESC, d.id"
-        )
+def duplicate_document(conn: sqlite3.Connection, document_id: str) -> dict:
+    """A copy of the live, non-draft ink under a new id. Goes through put_scene, so chunks,
+    hashes and the search index are derived exactly as for any save. Questions, ops and
+    recognitions are not copied (INK-118)."""
+    _, raw = get_scene(conn, document_id)  # DocumentNotFound passes through
+    src = document_summary(conn, document_id)
+    live = [
+        e
+        for e in json.loads(raw)
+        if not e.get("isDeleted") and not (e.get("customData") or {}).get("draft")
     ]
+    new = create_document(conn, (src["title"] + " copy")[:200])  # raises TooManyDocuments
+    put_scene(conn, new["id"], 0, json.dumps(live, ensure_ascii=False, separators=(",", ":")))
+    return document_summary(conn, new["id"])
 
 
 def chunk_outline(

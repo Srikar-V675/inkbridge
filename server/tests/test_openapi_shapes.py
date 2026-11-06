@@ -18,7 +18,10 @@ REGION_KEYS = {
 }  # fmt: skip
 OP_KEYS = {"id", "document_id", "type", "status", "payload", "result", "error", "created_at"}
 SYNC_KEYS = {"fresh", "fresh_after_reread", "changed", "replaced", "removed", "new"}
-DOC_KEYS = {"id", "title", "updated_at", "version", "url"}
+DOC_KEYS = {
+    "id", "title", "updated_at", "version", "url", "pinned", "archived", "element_count",
+    "chunk_count", "open_offers", "last_opened_at",
+}  # fmt: skip
 
 REFS = [  # (path, method, status)
     ("/documents", "post", "201"),
