@@ -9,6 +9,7 @@ import type { Refresh } from "../sync/chunkRefresh";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import type { ChunkView } from "./chunkView";
+import { followScroll } from "./followScroll";
 import "./ChunkOverlay.css";
 
 type StatusStore = { get: () => { state: string }; subscribe: (l: () => void) => () => void };
@@ -22,13 +23,14 @@ function currentView(api: ExcalidrawImperativeAPI): View {
   return { scrollX: s.scrollX, scrollY: s.scrollY, zoom: s.zoom.value };
 }
 
-/** Follows the canvas scroll and zoom without re-rendering the canvas itself. */
-function useView(api: ExcalidrawImperativeAPI): View {
+/** Follows the canvas scroll and zoom without re-rendering the canvas itself, and only while something is drawn (INK-174). */
+function useView(api: ExcalidrawImperativeAPI, active: boolean): View {
   const [view, setView] = useState<View>(() => currentView(api));
-  useEffect(
-    () => api.onScrollChange((scrollX, scrollY, zoom) => setView({ scrollX, scrollY, zoom: zoom.value })),
-    [api],
-  );
+  useEffect(() => {
+    if (!active) return;
+    setView(currentView(api)); // resync on activation: the scroll was not followed while hidden
+    return followScroll(api, true, setView);
+  }, [api, active]);
   return view;
 }
 
@@ -162,7 +164,7 @@ export function ChunkOverlay(props: {
 }) {
   const { api, canvas, status, view, ghost, refresh } = props;
   const { on, session } = useSyncExternalStore(view.subscribe, view.get);
-  const scroll = useView(api);
+  const scroll = useView(api, on || ghost != null);
   const selected = useSelection(api);
   const [chunks, reload] = useChunks(canvas, on, session, status, refresh);
   // Read the scene only when the selection or the list changes, never per stroke point.

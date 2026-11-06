@@ -9,10 +9,19 @@
 .ink-paper {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   background-color: var(--color-paper);
+}
+/* One tile larger than the view on the left and top, moved by transform only while panning (INK-174). */
+.ink-paper__dots {
+  position: absolute;
+  left: calc(-1 * var(--ink-dot-size, 24px));
+  top: calc(-1 * var(--ink-dot-size, 24px));
+  width: calc(100% + var(--ink-dot-size, 24px));
+  height: calc(100% + var(--ink-dot-size, 24px));
   background-image: radial-gradient(circle, var(--color-dot) 1.4px, transparent 1.7px);
   background-size: var(--ink-dot-size, 24px) var(--ink-dot-size, 24px);
-  background-position: var(--ink-dot-x, 0) var(--ink-dot-y, 0);
+  will-change: transform;
 }
 .ink-shell__canvas {
   position: absolute;

@@ -24,6 +24,12 @@ export function paperDots(v: PaperView): { size: number; x: number; y: number } 
   return { size, x: mod(v.scrollX * v.zoom), y: mod(v.scrollY * v.zoom) };
 }
 
+/** Dot layer for transform-only panning: `size` is non-null only when it differs from `last` (zoom changed). x and y are in [0, size). */
+export function paperLayer(v: PaperView, last: number | null): { size: number | null; x: number; y: number } {
+  const d = paperDots(v);
+  return { size: d.size === last ? null : d.size, x: d.x, y: d.y };
+}
+
 export const ZOOM_MIN = 0.1;
 export const ZOOM_MAX = 30;
 export const ZOOM_STEP = 1.25;
