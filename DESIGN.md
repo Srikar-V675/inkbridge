@@ -12,6 +12,7 @@ colors:
   lime: "#D4F23A"
   alarm: "#B3261E"
   dot: "#C9BFAC"
+  paper-dot: "#D9D1C0"
   pen-charcoal: "#2E2D2B"
   pen-blue: "#2F55B8"
   pen-brick: "#A63D2A"
@@ -145,7 +146,8 @@ Proportions: paper and panel 60 percent, charcoal 30 percent, lime 10 percent at
 | `soft-ink` | `#625C52` | Notes, status, secondary text |
 | `lime` | `#D4F23A` | Agent only: offers, drafts, "answer ready" |
 | `alarm` | `#B3261E` | Ink at risk only (unsaved in memory), failures |
-| `dot` | `#C9BFAC` | Canvas dots |
+| `dot` | `#C9BFAC` | Neutral line (card borders on Home) |
+| `paper-dot` | `#D9D1C0` | Canvas dots; quieter than `dot` |
 
 Pen colours are the user's own and never lime: charcoal `#2E2D2B`, blue `#2F55B8`, brick `#A63D2A`.
 
@@ -171,7 +173,7 @@ One family, Instrument Sans (Google Fonts, self-host for the tablet: no network 
 - Side panel (Ask, threads): right, 440 px, full height under the bar. The canvas does not resize; it pans to keep the working area visible.
 - Home: 76 px header with wordmark, search and New canvas; 40 px side margins; Continue card, Recent list, All canvases grid, Archived.
 - Spacing scale 4, 8, 16, 24, 40. **Every touch target is 44 px or larger** (the tablet is the primary device); 36 px chips only when they sit on the canvas next to ink.
-- The canvas background is a CSS dot layer (`dot`, 1.4 px radius) that follows pan and zoom, under a transparent Excalidraw canvas. Excalidraw's own toolbar and menus are hidden.
+- The canvas background is a CSS dot layer (`paper-dot`, 1 px radius, one dot per 36 scene units, doubled while the gap is under 10 px) that follows pan and zoom, under a transparent Excalidraw canvas. Excalidraw's own toolbar and menus are hidden.
 
 ## Elevation & Depth
 

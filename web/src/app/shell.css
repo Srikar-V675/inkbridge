@@ -10,8 +10,8 @@
   position: absolute;
   inset: 0;
   background-color: var(--color-paper);
-  background-image: radial-gradient(circle, var(--color-dot) 1.4px, transparent 1.7px);
-  background-size: var(--ink-dot-size, 24px) var(--ink-dot-size, 24px);
+  background-image: radial-gradient(circle, var(--color-paper-dot) 1px, transparent 1.3px);
+  background-size: var(--ink-dot-size, 36px) var(--ink-dot-size, 36px);
   background-position: var(--ink-dot-x, 0) var(--ink-dot-y, 0);
 }
 .ink-shell__canvas {
