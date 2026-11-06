@@ -67,3 +67,6 @@ export function canvasMeta(c: CanvasSummary, now: Date): string {
 export const offerLabel = (n: number): string => (n > 0 ? plural(n, "draft") : "");
 
 export const newCanvasTitle = (now: Date): string => `Untitled, ${now.getDate()} ${MONTHS[now.getMonth()]}`;
+
+/** The home URL for a view: Archived is its own history entry (INK-172, decision 0071). */
+export const archivedHref = (on: boolean) => (on ? "/?view=archived" : "/");

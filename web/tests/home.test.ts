@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { canvasMeta, homeSections, newCanvasTitle, offerLabel, relativeTime, type CanvasSummary } from "../src/home/homeLogic.ts";
+import { archivedHref, canvasMeta, homeSections, newCanvasTitle, offerLabel, relativeTime, type CanvasSummary } from "../src/home/homeLogic.ts";
 import {
   archiveCanvas,
   createCanvas,
@@ -124,5 +124,12 @@ describe("homeApi", () => {
     await assert.rejects(renameCanvas(fake(422, { detail: "title must not be blank" }).f, "x", " "), /title must not be blank/);
     await assert.rejects(duplicateCanvas(fake(409, { detail: { code: "too_many_canvases", msg: "full" } }).f, "x"), /full/);
     await assert.rejects(listCanvases(fake(500, {}).f, "false"), /500/);
+  });
+});
+
+describe("archivedHref", () => {
+  it("is a real URL for the archived view and plain home otherwise", () => {
+    assert.equal(archivedHref(true), "/?view=archived");
+    assert.equal(archivedHref(false), "/");
   });
 });
