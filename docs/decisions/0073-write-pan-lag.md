@@ -161,3 +161,89 @@ The plan's bar was "p95 falls 10 percent or `onChange` costs 1 ms per move". p95
 - F3 `SceneSync` compares ids and versions without building strings, and F4 gates on the `DraftBar` scans: `onChange` is at 1.34 ms per move in the worst-case view, over the 1 ms line.
 - F2 the hidden overlay stops following scroll: 6 percent, under the bar, applied because it is free and the plan asks for it when `off:overlay` helps pan.
 - Not changed: everything under "Not offenders".
+
+## After
+Same production build and method, fixture canvas, 100 percent at 0,0, 6x. The machine was busier than during the first run (stock itself moved from 28 to 42 ms main/move), so the comparison that counts was run **back to back in one session, twice, interleaved**: the build before the fixes (commit 5700106, the old `src/`, plus the harness) and the build after, each against its own stock page; the two runs are pooled. "built / stock main" is the within-session ratio, the number to read.
+
+| scenario | variant | session | p50 | p95 | p99 | long/run | onChange ms/move | main ms/move | script | built / stock main |
+|---|---|---|---|---|---|---|---|---|---|---|
+| stroke | stock | before | 16.7 | 33.4 | 50.0 | 6.4 | 0.01 | 41.9 | 13.5 | - |
+| stroke | built | before (04256d2 + harness) | 16.7 | 33.4 | 50.0 | 6.0 | 1.50 | 44.0 | 15.8 | 1.05 |
+| stroke | stock | after | 16.7 | 33.4 | 50.0 | 5.1 | 0.01 | 42.1 | 13.6 | - |
+| stroke | built | after | 16.7 | 33.4 | 50.0 | 6.4 | 1.10 | 43.1 | 15.4 | 1.02 |
+| pan-wheel | stock | before | 16.7 | 33.4 | 33.4 | 2.7 | 0.01 | 44.1 | 7.3 | - |
+| pan-wheel | built | before (04256d2 + harness) | 16.7 | 33.4 | 50.0 | 3.7 | 1.38 | 51.9 | 10.2 | 1.18 |
+| pan-wheel | stock | after | 16.7 | 33.4 | 50.0 | 5.1 | 0.01 | 45.3 | 7.5 | - |
+| pan-wheel | built | after | 16.7 | 33.4 | 33.5 | 2.8 | 0.80 | 47.6 | 8.3 | 1.05 |
+| pan-touch | stock | before | 16.7 | 16.8 | 33.4 | 0.9 | 0.01 | 38.8 | 7.7 | - |
+| pan-touch | built | before (04256d2 + harness) | 16.7 | 33.4 | 50.0 | 1.5 | 1.39 | 53.8 | 18.8 | 1.39 |
+| pan-touch | stock | after | 16.7 | 16.8 | 33.4 | 1.3 | 0.01 | 39.0 | 7.8 | - |
+| pan-touch | built | after | 16.7 | 33.3 | 33.4 | 0.7 | 0.76 | 42.4 | 8.3 | 1.09 |
+
+What moved: the touch pan fell from 1.39x stock to 1.09x (main 53.8 to 42.4 ms/move, script 18.8 to 8.3), the wheel pan from 1.18x to 1.05x, the stroke from 1.05x to 1.02x; `onChange` per move fell from 1.4-1.5 to 0.8-1.1 ms. Frame p50/p95/p99 are the same (or within one 16.7 ms step, noise on a loaded machine) before and after: on this laptop frames were never dropped, the saved time is main-thread time a tablet CPU does not have to spare. The acceptance bar (within 20 percent of stock on p95 frame time, stroke and pan, 6x) holds before and after at the median frame; it was never the discriminating number here.
+
+Worst case (all 633 elements on screen, zoom 0.1), one session after the fixes: wheel built 42.3 vs stock 36.0 main ms/move (+6.3, was +6.4 before), touch 58.4 vs 54.2 (+4.3, was +14.5), stroke 40.9 vs 41.9. The wheel gap there is the dot layer's style work and the remaining `onChange` subscribers; it did not move.
+
+Guard (`npm run perf -- --guard`, quiet machine, 6x, 100 percent view): built within 20 percent + 2 ms of stock on p95 and `onChange` under 2 ms/move for stroke and finger pan on the fixture and the empty canvas: all four cases ok. Quiet-machine `onChange` per move: 0.69 (fixture stroke), 0.45 (fixture pan), 0.35 (empty stroke), 0.23 (empty pan) ms; finger pan main ms/move built 24.6 vs stock 23.9 on the fixture, 19.1 vs 15.3 on the empty canvas.
+
+## Fixes
+- **F1 dot layer, applied** (cause 2, 12 percent on both pans). `PaperDots` moves a layer one tile larger than the view by `translate3d` only, snapped to whole device pixels so the compositor does not resample the dots; the tile-size variable is written only when the zoom changes; one write per frame, queued with a `requestAnimationFrame` so it lands in the frame Excalidraw's throttled redraw uses (the old synchronous write could lead the ink by a frame). `background-position` and `--ink-dot-x/y` are gone (`shell.test.ts` fails if they return). Look unchanged: same 24 px tile, 1.4 px dot, `--color-dot`; screenshots before and after at five scroll and zoom values differ by at most 1 of 765 colour levels at 100 percent and by sub-pixel anti-aliasing where the offset is fractional. `DESIGN.md` needs no change.
+- **F5 finger pan writes `zoom` only when it changed, applied** (cause 1, 22 percent; not in the plan, found by the table). `viewPatch` in `touchRouting.ts`, used by `TouchLayer.setView`; a pinch still carries the zoom.
+- **F3 `SceneSync` compares ids and versions without building strings, applied** (`onChange` 1.34 ms/move in the worst case, over the 1 ms line). A snapshot of ids and a `Float64Array` of versions replaces the 640-string signature; the snapshot of what was sent is still taken at send time, so in-place mutation of a stroke being drawn is still detected (test). Measured: 2000 unchanged `notify` calls over 640 elements take 10.5 ms median now, 68 to 80 ms before (the plan guessed 30x; it is 7x, so `NOTIFY_BUDGET_MS_PER_2000` is 30, three times the new median). The saving is small (about 5 microseconds a call, 0.3 ms/move at 6x) but it is on every pen point.
+- **F4 gates on the `DraftBar` scans, applied.** `useDraftOps` and `useSelectedOps` skip an event whose elements array (and selection object) are the identical references as the last one. Safe because drafts only enter or leave through `updateScene({ elements })`, which replaces the array.
+- **F2 hidden overlay stops following scroll, applied** (6 percent, under the bar, free). `ChunkOverlay` subscribes to scroll only while the boxes are drawn and resyncs when they show.
+- Step 5 contingency (throttle `notify` while the pen is down): not needed, `onChange` is under budget.
+- Not changed: ToolRail, railStore, TopBar status, crop sync, ops socket, chunk refresh (noise), `EXCALIDRAW_THROTTLE_RENDER`.
+
+## Dev vs production
+The owner serves the tablet with `make serve`, which is a production build; `make dev-web` (Vite dev) is for development. Judge only a production build: Excalidraw's dev build is slower than production for stock too. At 100 percent (fixture, 6x, after the fixes) our app is +3 to +8 ms main/move above stock in dev (production: +2 to +5), within a similar ratio:
+**stroke**
+
+| variant | p50 ms | p95 ms | p99 ms | long/run | onChange ms/move | main ms/move | script | vs stock |
+|---|---|---|---|---|---|---|---|---|
+| stock | 16.7 | 16.8 | 33.3 | 2.0 | 0.00 | 32.4 | 14.2 | - |
+| built | 16.7 | 16.8 | 16.8 | 2.0 | 0.73 | 35.6 | 17.9 | +3.2 |
+
+**pan-wheel**
+
+| variant | p50 ms | p95 ms | p99 ms | long/run | onChange ms/move | main ms/move | script | vs stock |
+|---|---|---|---|---|---|---|---|---|
+| stock | 16.7 | 16.7 | 16.8 | 0.0 | 0.00 | 34.1 | 11.9 | - |
+| built | 16.7 | 16.7 | 16.8 | 0.0 | 0.56 | 39.5 | 15.4 | +5.4 |
+
+**pan-touch**
+
+| variant | p50 ms | p95 ms | p99 ms | long/run | onChange ms/move | main ms/move | script | vs stock |
+|---|---|---|---|---|---|---|---|---|
+| stock | 16.7 | 16.8 | 16.8 | 0.0 | 0.00 | 29.2 | 10.5 | - |
+| built | 16.7 | 16.7 | 16.8 | 0.0 | 0.51 | 37.7 | 14.5 | +8.5 |
+
+At zoom 0.1 with all 633 elements on screen, **stock Excalidraw's own dev build is already at p95 100 ms with 26 to 44 long tasks per run** and ours matches it:
+**pan-wheel**
+
+| variant | p50 ms | p95 ms | p99 ms | long/run | onChange ms/move | main ms/move | script | vs stock |
+|---|---|---|---|---|---|---|---|---|
+| stock | 16.7 | 100.0 | 116.7 | 26.2 | 0.00 | 55.9 | 38.8 | - |
+| built | 16.7 | 100.1 | 133.2 | 27.2 | 0.56 | 62.6 | 43.3 | +6.8 |
+
+**pan-touch**
+
+| variant | p50 ms | p95 ms | p99 ms | long/run | onChange ms/move | main ms/move | script | vs stock |
+|---|---|---|---|---|---|---|---|---|
+| stock | 16.7 | 116.7 | 116.8 | 44.0 | 0.01 | 83.6 | 61.5 | - |
+| built | 16.7 | 116.7 | 133.4 | 44.0 | 0.52 | 93.8 | 66.1 | +10.2 |
+
+An early run (before the view was equalised) suggested the app was five times slower than stock in dev; that was the app drawing all elements while stock drew fourteen, and, for the finger pan, the per-frame `zoom` object (about 60 ms/move of 156 in dev, which is why F5 matters most in a dev build). React 19.2's dev-only render logging (`logComponentRender`, prop diffing) dominates dev profiles of both pages.
+
+## Not changed
+Pressures and `simulatePressure=false` (no element or restore code touched), the pen-feel patch, autosave durability (same ids, same order, same versions count as the same scene; the in-place mutation case is a test and the 409, idempotency-key and delta tests are unchanged), deep links, `EXCALIDRAW_THROTTLE_RENDER` (stays on), the look of the paper (see F1) and `DESIGN.md`.
+
+## How to run the probe
+One-time: `npm i --prefix /tmp/claude-1000/pw-174 playwright-core` (`PW_DIR` overrides; Chromium is `/usr/bin/chromium`, headless, software raster, so GPU raster on a tablet is not modelled).
+1. Throwaway API: `cd server && INKBRIDGE_DATA_DIR=/tmp/claude-1000/inkbridge-174 INKBRIDGE_DB=/tmp/claude-1000/inkbridge-174/ink.db INKBRIDGE_DEVICE_LOG=1 uv run uvicorn inkbridge.api:app --port 8101`; seed `uv run python ../scripts/load_fixture.py --api http://127.0.0.1:8101 --canvas fixture-real` (prints the id) and `POST /documents` for an empty canvas.
+2. `cd web && PERF_OUT=/tmp/claude-1000/inkbridge-174/dist-perf npx vite build -c scripts/perf/vite.perf.config.ts && npx vite preview -c scripts/perf/vite.perf.config.ts` (port 5191; `npx vite -c scripts/perf/vite.perf.config.ts` for the dev build).
+3. `npm run perf -- --base http://127.0.0.1:5191 --canvas <fixture> --empty <empty> --variants stock,built,off:dots,off:overlay,off:drafts,off:autosave --view origin --runs 5 --throttle 6 --out /tmp/claude-1000/inkbridge-174/x.json`. Variants: `stock`, `stock-transparent`, `built`, `off:<flags>` joined by `+` (`dots rail railstore topbar overlay drafts crops ops refresh autosave touch`, plus the probes `touchzoom touchcap touchbare nostrict`). `--view origin|fit`, `--rate N` input events per frame.
+4. The guard: `npm run perf -- --guard --base http://127.0.0.1:5191 --canvas <fixture> --empty <empty>` (exit 1 when built is over 20 percent + 2 ms of stock at p95 or `onChange` is over `ONCHANGE_BUDGET_MS`). Frame p95 is quantised to 16.7 ms steps, so on a loaded machine one slow frame can fail it: re-run on a quiet machine before believing a failure. `web/tests/perfHarness.test.ts` keeps the patches from drifting; `sceneSync.test.ts` guards the `notify` cost.
+
+## Tablet check
+Pending, for the owner (never blocks the PR). On the `make serve` build (production), open `http://<laptop>:8000/?canvas=<id>&devicelog=1` with the server started with `INKBRIDGE_DEVICE_LOG=1`, write for 30 s and pan with one finger and with the wheel or two fingers, then read `data/logs/device.jsonl` (decision 0059): lines `frames.pointer` and `frames.wheel` carry the buckets `le20 le34 le50 le100 gt100 frames` (most frames should be `le20` or `le34`) and `main.gap` the main-thread stalls. Compare with the same run on excalidraw.com in the tablet browser. Visual sign-off: the dots track the ink while panning (none leading or trailing; if they trail by a frame, write the transform synchronously in `onScrollChange` instead), and pen feel, pressure and Accept/Reject are unchanged. Say on the PR which build is run.

@@ -12,7 +12,7 @@ export interface Patch {
   replace: string;
 }
 
-/** Per pen move or pan frame, summed over every onChange subscriber, at 6x CPU throttle. */
+/** Per pen move or pan frame, summed over every onChange subscriber, at 6x CPU throttle. Twice the post-fix median on the fixture (0.45 to 1.1 ms/move over stroke and pans, about 0.8), rounded up to 0.5 (INK-174, decision 0073). */
 export const ONCHANGE_BUDGET_MS = 2;
 
 /** Component off = render null. The wrapper is hoisted above the renamed original. */

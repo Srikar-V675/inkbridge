@@ -20,12 +20,12 @@ const args = Object.fromEntries(
     return acc;
   }, []),
 );
+const guard = Boolean(args.guard);
 const base = args.base ?? "http://127.0.0.1:5191";
 const canvases = { fixture: args.canvas, ...(args.empty ? { empty: args.empty } : {}) };
 const runs = Number(args.runs ?? 5);
 const throttle = Number(args.throttle ?? 6);
-const guard = Boolean(args.guard);
-const view = String(args.view ?? "fit");
+const view = String(args.view ?? (guard ? "origin" : "fit")); // the guard measures a writing view: 100 percent at 0,0
 const rate = Number(args.rate ?? 1); // input events per frame (a 240 Hz stylus sends four)
 const scenarios = guard ? ["stroke", "pan-touch"] : String(args.scenarios ?? "stroke,pan-wheel,pan-touch").split(",");
 const variants = guard ? ["stock", "built"] : String(args.variants ?? "stock,built").split(",");
