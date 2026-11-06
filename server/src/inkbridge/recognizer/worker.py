@@ -4,7 +4,7 @@ A daemon thread with its own SQLite connection wakes every `poll_s`, and for eac
 that has been idle for `idle_s` reads the active regions whose crop is fresh (png_stale = 0) and
 whose content_hash has no reading yet. Readings are a cache keyed by (region, content_hash), so
 unchanged or merely moved ink never calls the model. Model failures back off per (region, hash),
-a 429 or timeout pauses the whole worker, and both are only logged; drawing never waits on this
+a 429, 503 or timeout pauses the whole worker, and both are only logged; drawing never waits on this
 thread. Run one API process: each process would run its own worker (decision 0017).
 
 Privacy: the Gemini free tier may train on what it receives, so nothing is read unless its canvas
@@ -27,6 +27,7 @@ from inkbridge.recognizer import (
     Recognition,
     Recognizer,
     RecognizerTimeout,
+    ServiceUnavailable,
 )
 from inkbridge.timing import timed
 
@@ -58,7 +59,7 @@ class RecognitionWorker:
         self._failures: dict[Key, tuple[int, float]] = {}  # -> (count, retry at)
         self._skipped: set[Key] = set()  # too-large chunks already logged (INK-096)
         self._unsaved: dict[Key, Recognition] = {}  # readings whose save hit a locked database
-        self._paused_until = 0.0  # after a 429 or timeout no chunk is read, not just that one
+        self._paused_until = 0.0  # after a 429, 503 or timeout no chunk is read, not just that one
         self._stop = threading.Event()
         self._wake = threading.Event()  # set by stop() and request(): skip the rest of poll_s
         self._lock = threading.Lock()
@@ -262,7 +263,7 @@ class RecognitionWorker:
         count = self._failures.get(key, (0, 0.0))[0] + 1
         delay = min(self._backoff_s * 2 ** (count - 1), self._backoff_max_s)
         self._failures[key] = (count, self._clock() + delay)
-        if isinstance(error, RateLimited | RecognizerTimeout):
+        if isinstance(error, RateLimited | RecognizerTimeout | ServiceUnavailable):
             # The provider is the problem, not this chunk: trying the next one would hit it too.
             self._paused_until = self._clock() + delay
         log.warning(

@@ -17,6 +17,7 @@ from inkbridge.api import chunks, graph, ops, overrides, questions, regions, sea
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.api.web import mount_web
+from inkbridge.db import questions as q_db
 from inkbridge.recognizer.worker import RecognitionWorker
 from inkbridge.timing import RequestTiming, configure_logging
 
@@ -30,7 +31,13 @@ async def lifespan(app: FastAPI):
     if worker is not None:
         worker.start()
     app.state.recognition_worker = worker  # check_sync asks it for readings (INK-036)
-    ask = AskWorker.from_env()  # off unless INKBRIDGE_RUNNER is set (decision 0007)
+    ask, ask_error = AskWorker.setup(publish=ws.hub.publish)  # off unless INKBRIDGE_RUNNER is set
+    app.state.runner_error = ask_error  # set when INKBRIDGE_RUNNER is on but refused (INK-103)
+    conn = db.connect()
+    try:
+        q_db.reset_runner(conn, "failed" if ask_error else "pending", ask_error)
+    finally:
+        conn.close()
     if ask:
         ask.start()
     app.state.ask_worker = ask

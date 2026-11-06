@@ -18,6 +18,7 @@ from inkbridge.recognizer import (
     Recognition,
     RecognizerError,
     RecognizerTimeout,
+    ServiceUnavailable,
 )
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
@@ -143,6 +144,8 @@ class GeminiRecognizer:
                     raise InvalidApiKey(f"Gemini rejected the API key ({e.code})") from None
                 if e.code in (408, 504):
                     raise RecognizerTimeout(f"Gemini timed out ({e.code})") from None
+                if e.code == 503:
+                    raise ServiceUnavailable("Gemini unavailable (503)") from None
                 raise RecognizerError(f"Gemini error {e.code}: {str(e.message)[:200]}") from None
             except Exception as e:  # noqa: BLE001 - httpx timeouts surface as several types
                 if "timeout" in type(e).__name__.lower() or "timed out" in str(e).lower():
