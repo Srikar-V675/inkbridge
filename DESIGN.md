@@ -172,7 +172,7 @@ One family, Instrument Sans (Google Fonts, self-host for the tablet: no network 
 - Home: 76 px header with wordmark, search and New canvas; 40 px side margins; Continue card, Recent list, All canvases grid, Archived.
 - Spacing scale 4, 8, 16, 24, 40. **Every touch target is 44 px or larger** (the tablet is the primary device); 36 px chips only when they sit on the canvas next to ink.
 - The canvas background is a CSS dot layer (`dot`, 1.4 px radius) that follows pan and zoom, under a transparent Excalidraw canvas. Excalidraw's own toolbar and menus are hidden.
-- Shapes flyout and properties card: the Shapes button opens a card of five shape buttons beside the rail; selecting an element, or choosing a shape or text tool, opens a 280 px properties card to the right of the rail (z-index below the rail, so the flyout paints over it), card colour, radius 12, rows of 44 px options with a `note` label, collapsible to its header; stroke palette is the three pen colours plus soft-ink and dot; pen and highlighter never open it; scrolls when the screen is short.
+- Shapes flyout and properties card: the Shapes button opens a card of five shape buttons beside the rail; selecting an element, or choosing a shape or text tool, opens a 280 px properties card to the right of the rail (layer 6, above the chunk chips and under the top bar and Ask panel; the flyout paints over it), card colour, radius 12, rows of 44 px options with a `note` label, collapsible to its header; stroke palette is the three pen colours plus soft-ink and dot; pen and highlighter never open it; scrolls when the screen is short.
 
 ## Elevation & Depth
 

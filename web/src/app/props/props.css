@@ -1,6 +1,6 @@
 /* Shapes flyout and properties card (INK-175, docs/decisions/0075). Tokens only. */
 .ink-flyout-wrap {
-  z-index: 5;
+  z-index: 7; /* above the card (6), clear of the top bar's controls */
 }
 .ink-flyout.ink-card {
   padding: var(--space-sm);
@@ -15,12 +15,13 @@
   color: var(--color-paper);
 }
 
-/* Properties card: 280 px, right of the rail (16 + 60 + 16), under the rail so an open flyout paints over it. */
+/* Properties card: 280 px, right of the rail (16 + 60 + 16). Layer 6 like the chunk overlays but later in the DOM, so
+   it is above their chips; under the top bar (7) and the Ask panel (8); the flyout (7) paints over it. */
 .ink-props.ink-card {
   position: absolute;
   left: 92px;
   top: var(--ink-rail-top, 88px);
-  z-index: 4;
+  z-index: 6;
   width: 280px;
   max-height: calc(100dvh - var(--ink-rail-top, 88px) - var(--space-md));
   overflow-y: auto;

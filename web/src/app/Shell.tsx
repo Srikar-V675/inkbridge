@@ -55,8 +55,9 @@ export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, ch
       <TopBar title={title} status={status} chunks={chunks} onAsk={onAsk} askOpen={askOpen} />
       {store && <ToolRail store={store} />}
       {store && <ZoomControl store={store} />}
-      {api && <PropsHost api={api} />}
       <div className="ink-shell__overlays">{overlays}</div>
+      {/* After the overlays at the same layer, so the card sits above chunk chips (INK-175, 0075). */}
+      {api && <PropsHost api={api} />}
     </div>
   );
 }
