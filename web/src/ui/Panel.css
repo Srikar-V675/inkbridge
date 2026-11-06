@@ -1,0 +1,15 @@
+.ink-panel {
+  box-sizing: border-box;
+  width: var(--component-side-panel-width);
+  max-width: 100%;
+  background: var(--component-side-panel-background-color);
+  color: var(--component-side-panel-text-color);
+  border-radius: var(--component-side-panel-rounded);
+  padding: var(--component-side-panel-padding);
+}
+.ink-panel__title {
+  margin: 0 0 var(--space-md);
+  font-family: var(--type-title-family);
+  font-size: var(--type-title-size);
+  font-weight: var(--type-title-weight);
+}

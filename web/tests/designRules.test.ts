@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { parseTokenCss, resolveVar } from "../src/ui/tokenTable.ts";
 
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -70,5 +71,101 @@ describe("Instrument Sans is local", () => {
 describe("index.css", () => {
   it("imports tokens first", () => {
     assert.match(readFileSync(join(SRC, "index.css"), "utf8"), /^@import "\.\/styles\/tokens\.css";/);
+  });
+});
+
+const tokens = parseTokenCss(readFileSync(join(SRC, "styles/tokens.css"), "utf8"));
+
+/** { selector: { property: value } } for the simple rules of a stylesheet (no media queries or nesting). */
+function rules(css: string): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  for (const m of css.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+    const sel = m[1].replace(/\/\*[\s\S]*?\*\//g, "").trim();
+    const decls = (out[sel] ??= {});
+    for (const d of m[2].split(";")) {
+      const i = d.indexOf(":");
+      if (i > 0) decls[d.slice(0, i).trim()] = d.slice(i + 1).trim();
+    }
+  }
+  return out;
+}
+
+const px = (value: string | undefined): number => {
+  const m = /^(-?[\d.]+)px$/.exec(resolveVar(tokens, value ?? ""));
+  return m ? Number(m[1]) : NaN;
+};
+
+const uiFiles = (ext: string): [string, string][] =>
+  Object.entries(sources()).filter(([n]) => n.startsWith("ui/") && n.endsWith(ext));
+
+describe("interactive primitives", () => {
+  it("buttons and icon buttons are 44 px or taller", () => {
+    const all = Object.assign({}, ...uiFiles(".css").map(([, text]) => rules(text)));
+    for (const sel of [".ink-button", ".ink-icon-button"]) {
+      const d = all[sel];
+      assert.ok(d, sel);
+      assert.ok(px(d["min-height"] ?? d["height"]) >= 44, `${sel} height`);
+    }
+    const icon = all[".ink-icon-button"];
+    assert.ok(px(icon["width"] ?? icon["min-width"]) >= 44, "icon width");
+    assert.ok(px(icon["min-width"]) >= 44, "icon min-width");
+  });
+
+  it("the chip is the one 36 px target", () => {
+    const all = Object.assign({}, ...uiFiles(".css").map(([, text]) => rules(text)));
+    assert.equal(all[".ink-chip"]["height"], "var(--component-offer-chip-height)");
+    assert.equal(px(all[".ink-chip"]["height"]), 36);
+  });
+
+  it("only Button, IconButton, Chip and Kit render a raw button", () => {
+    for (const [name, text] of uiFiles(".tsx")) {
+      if (/^ui\/(Button|IconButton|Chip|Kit)\.tsx$/.test(name)) continue;
+      assert.ok(!text.includes("<button"), `${name} must compose Button or IconButton`);
+    }
+  });
+});
+
+const hasToken = (text: string, names: string[]) => names.some((n) => text.includes(`var(${n})`));
+
+/** Files (except tokens.css) that use a lime variable, minus the allowed ones. */
+function limeOffenders(files: Record<string, string>, names: string[], allowed: string[]): string[] {
+  return Object.entries(files)
+    .filter(([n, text]) => n !== "styles/tokens.css" && !allowed.includes(n) && (names.some((x) => text.includes(x)) || /lime/i.test(text)))
+    .map(([n]) => n)
+    .sort();
+}
+
+describe("lime is the agent", () => {
+  const limeNames = [
+    "--color-lime",
+    ...tokens.filter((t) => t.name !== "--color-lime" && resolveVar(tokens, t.value).toUpperCase() === "#D4F23A").map((t) => t.name),
+  ];
+
+  it("the lime variables are found", () => {
+    assert.ok(limeNames.includes("--component-offer-chip-background-color"));
+    assert.ok(limeNames.includes("--component-draft-badge-background-color"));
+  });
+
+  it("appears only in Chip.css and Badge.css", () => {
+    const files = sources();
+    assert.deepEqual(limeOffenders(files, limeNames, ["ui/Chip.css", "ui/Badge.css"]), []);
+    assert.ok(hasToken(files["ui/Chip.css"], limeNames), "Chip uses lime");
+    assert.ok(hasToken(files["ui/Badge.css"], limeNames), "Badge uses lime");
+  });
+
+  it("the checker flags a stray use", () => {
+    assert.deepEqual(limeOffenders({ "ui/Button.css": "x{background:var(--color-lime)}" }, limeNames, []), ["ui/Button.css"]);
+  });
+});
+
+describe("flat design", () => {
+  it("no shadow or gradient outside Toast", () => {
+    for (const [name, text] of uiFiles(".css")) {
+      if (name === "ui/Toast.css") {
+        assert.ok(text.includes("var(--shadow-popover)"));
+        continue;
+      }
+      assert.ok(!/box-shadow|gradient\(/.test(text), name);
+    }
   });
 });

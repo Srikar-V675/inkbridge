@@ -1,0 +1,6 @@
+.ink-card {
+  box-sizing: border-box;
+  background: var(--component-canvas-card-background-color);
+  border-radius: var(--component-canvas-card-rounded);
+  padding: var(--component-canvas-card-padding);
+}
