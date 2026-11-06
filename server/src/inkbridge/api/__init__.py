@@ -16,8 +16,8 @@ from inkbridge.agent.ask_runner import AskWorker
 from inkbridge.api import chunks, graph, ops, overrides, questions, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
-from inkbridge.db import questions as q_db
 from inkbridge.api.web import mount_web
+from inkbridge.db import questions as q_db
 from inkbridge.recognizer.worker import RecognitionWorker
 from inkbridge.timing import RequestTiming, configure_logging
 
