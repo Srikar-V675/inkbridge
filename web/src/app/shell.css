@@ -1,0 +1,126 @@
+/* App shell (INK-117). Tokens only; the paper layer is the one gradient outside ui/. */
+.ink-shell {
+  position: relative;
+  height: 100dvh;
+  overflow: hidden;
+  font-family: var(--type-control-family);
+  color: var(--color-charcoal);
+}
+.ink-paper {
+  position: absolute;
+  inset: 0;
+  background-color: var(--color-paper);
+  background-image: radial-gradient(circle, var(--color-dot) 1.4px, transparent 1.7px);
+  background-size: var(--ink-dot-size, 24px) var(--ink-dot-size, 24px);
+  background-position: var(--ink-dot-x, 0) var(--ink-dot-y, 0);
+}
+.ink-shell__canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+/* Excalidraw draws on a see-through canvas and its own chrome is hidden (UIOptions cannot do it in 0.18). */
+.ink-shell .excalidraw .layer-ui__wrapper {
+  display: none;
+}
+.ink-shell .excalidraw,
+.ink-shell .excalidraw .canvas-container {
+  background: transparent;
+}
+
+.ink-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  height: var(--component-top-bar-height);
+  padding: var(--component-top-bar-padding);
+  background: var(--component-top-bar-background-color);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  pointer-events: none; /* the canvas stays drawable under the bar */
+}
+.ink-topbar > * {
+  pointer-events: auto;
+}
+.ink-topbar > .ink-topbar__spacer {
+  flex: 1;
+  pointer-events: none;
+}
+.ink-topbar__back {
+  text-decoration: none;
+  gap: var(--space-xs);
+  padding: 0 10px 0 var(--space-xs);
+}
+.ink-topbar__title {
+  margin: 0;
+  font: var(--type-title-weight) var(--type-title-size)/1.2 var(--type-title-family);
+  letter-spacing: -0.01em;
+}
+.ink-topbar__status {
+  font: var(--type-note-weight) var(--type-note-size)/1 var(--type-note-family);
+  color: var(--color-soft-ink);
+}
+.ink-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ink-rail {
+  position: absolute;
+  left: var(--space-md);
+  top: 88px;
+  z-index: 5;
+  width: var(--component-tool-rail-width);
+  box-sizing: border-box;
+  padding: var(--component-tool-rail-padding);
+  gap: var(--space-xs);
+  border-radius: var(--component-tool-rail-rounded);
+  background: var(--component-tool-rail-background-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.ink-rail__gap {
+  height: 12px;
+}
+.ink-rail .ink-icon-button[aria-pressed="true"] {
+  background: var(--color-charcoal);
+  color: var(--color-paper);
+}
+.ink-rail__swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+}
+.ink-rail .ink-icon-button[aria-label^="Ink colour"][aria-pressed="true"] {
+  background: transparent;
+}
+.ink-rail .ink-icon-button[aria-pressed="true"] .ink-rail__swatch {
+  outline: 2px solid var(--color-charcoal);
+  outline-offset: 3px;
+}
+
+.ink-zoom {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  z-index: 5;
+  height: var(--space-touch);
+  padding: 0 var(--space-xs);
+  border-radius: var(--radius-card);
+  background: var(--color-panel);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font: var(--type-control-weight) var(--type-control-size)/1 var(--type-control-family);
+}
+.ink-zoom__value {
+  min-width: 48px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
