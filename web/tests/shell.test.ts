@@ -26,7 +26,7 @@ describe("dotStep", () => {
 describe("paperLayer", () => {
   it("moves by x, y in [0, size) and reports the size only when it changed", () => {
     const v = { scrollX: -30, scrollY: 7, zoom: 1 };
-    const x = (((30 % TILE) + TILE) % TILE);
+    const x = ((-30 % TILE) + TILE) % TILE;
     assert.deepEqual(paperLayer(v, null), { size: TILE, x, y: 7 });
     assert.deepEqual(paperLayer(v, TILE), { size: null, x, y: 7 }); // pan: the size var is not rewritten
     assert.equal(paperLayer({ ...v, zoom: 2 }, TILE).size, TILE * 2); // zoom: it is
