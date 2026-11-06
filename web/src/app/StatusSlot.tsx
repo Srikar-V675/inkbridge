@@ -1,26 +1,20 @@
-// Placeholder body for the top bar status slot; INK-162 replaces it with StatusDot and the three states.
+// Save status for the top bar (INK-162, decision 0068): the label and tone come from statusView.
 import { useSyncExternalStore } from "react";
-import type { createStatusStore } from "../lib/status";
-import type { SaveState } from "../sync/sceneSync";
+import { statusView, type createStatusStore } from "../lib/status";
+import { StatusDot } from "../ui/StatusDot";
 import { CheckIcon } from "./icons";
-
-const LABEL: Record<SaveState, string> = {
-  loading: "Loading…",
-  saved: "Saved",
-  dirty: "Unsaved changes",
-  saving: "Saving…",
-  retry: "Offline, retrying",
-  conflict: "Conflict",
-  error: "Error",
-};
+import "./status.css";
 
 export function StatusSlot({ store }: { store: ReturnType<typeof createStatusStore> }) {
   const status = useSyncExternalStore(store.subscribe, store.get);
+  const v = statusView(status);
   return (
-    <span role="status" aria-live="polite" className="ink-status">
-      {status.state === "saved" && <CheckIcon />}
-      {LABEL[status.state]}
-      {status.detail ? `: ${status.detail}` : ""}
+    <span role="status" aria-live="polite" className={`ink-status ink-status--${v.tone}`} title={v.title}>
+      {v.tone === "quiet" && <CheckIcon />}
+      {v.tone === "risk" && <StatusDot tone="risk" />}
+      {v.tone === "sending" && <StatusDot tone="sending" />}
+      {v.label}
+      {v.detail && <span className="ink-status__detail">{v.detail}</span>}
     </span>
   );
 }

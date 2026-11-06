@@ -1,0 +1,68 @@
+/* Draft tray, card and failure line (INK-162, decision 0068). Tokens only; the agent colour comes through Badge, DraftDot and Chip. */
+.ink-drafts {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ink-drafts__stack {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-lg);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  max-width: calc(100% - 160px);
+  pointer-events: auto;
+}
+.ink-draft-card {
+  width: 400px;
+  max-width: 100%;
+  border: 1.5px dashed var(--color-charcoal);
+  border-radius: var(--component-draft-card-rounded);
+  color: var(--component-draft-card-text-color);
+}
+.ink-draft-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font: var(--type-note-weight) var(--type-note-size)/1.2 var(--type-note-family);
+  color: var(--color-soft-ink);
+}
+.ink-draft-card__text {
+  margin: 0 0 14px;
+  font: var(--type-reading-weight) var(--type-reading-size)/var(--type-reading-line-height) var(--type-reading-family);
+}
+.ink-draft-card__actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+.ink-draft-tray {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-md);
+  border-radius: var(--radius-rail);
+  background: var(--color-charcoal);
+  color: var(--color-paper);
+  font: var(--type-control-weight) var(--type-control-size)/1 var(--type-control-family);
+  white-space: nowrap;
+}
+.ink-draft-tray__count {
+  margin: 0 10px 0 4px;
+}
+.ink-draft-tray .ink-button--quiet {
+  color: var(--color-paper);
+}
+.ink-draft-tray .ink-button--quiet:hover {
+  background: color-mix(in srgb, var(--color-paper) 14%, transparent);
+}
+.ink-drafts__message {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-control);
+  background: var(--color-card);
+  color: var(--component-status-risk-text-color);
+  font: var(--type-note-weight) var(--type-note-size)/1.3 var(--type-note-family);
+}

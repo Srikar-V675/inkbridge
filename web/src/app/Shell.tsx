@@ -15,14 +15,15 @@ import "./shell.css";
 export interface ShellProps {
   api: ExcalidrawImperativeAPI | null;
   title: string;
-  status: ReactNode; // top bar status slot (INK-162 fills it)
+  status: ReactNode; // top bar status slot (StatusSlot, INK-162)
   chunks?: ReactNode; // quiet "Chunks" toggle slot, left of Ask (INK-162 fills it)
+  overlays?: ReactNode; // chunk overlay, draft bar, notices: above rail and zoom (INK-162)
   onAsk: () => void; // Ask button handler (INK-161 owns the panel it opens)
   askOpen: boolean; // aria-pressed on the Ask button
   children: ReactNode; // Excalidraw and its overlays, rendered inside the paper
 }
 
-export function Shell({ api, title, status, chunks, onAsk, askOpen, children }: ShellProps) {
+export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, children }: ShellProps) {
   // Built in an effect: creating it calls the API, which must not happen while React renders.
   const [store, setStore] = useState<RailStore | null>(null);
   useEffect(() => {
@@ -53,6 +54,7 @@ export function Shell({ api, title, status, chunks, onAsk, askOpen, children }: 
       <TopBar title={title} status={status} chunks={chunks} onAsk={onAsk} askOpen={askOpen} />
       {store && <ToolRail store={store} />}
       {store && <ZoomControl store={store} />}
+      <div className="ink-shell__overlays">{overlays}</div>
     </div>
   );
 }
