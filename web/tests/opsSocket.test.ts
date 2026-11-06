@@ -125,6 +125,19 @@ describe("OpsSocket", () => {
     assert.equal(got.length, 2);
   });
 
+  it("passes question.update to its hook", () => {
+    let sock!: FakeSocket;
+    const got: unknown[] = [];
+    new OpsSocket({
+      url: "x",
+      onOp: async () => [],
+      onQuestionUpdate: (m) => got.push(m),
+      createSocket: () => (sock = new FakeSocket()),
+    }).start();
+    sock.push({ type: "question.update", question: { id: "q1" } });
+    assert.deepEqual(got, [{ id: "q1" }]);
+  });
+
   it("reports connect and disconnect, so the chunk list refetches on reconnect", () => {
     const got: boolean[] = [];
     let sock!: FakeSocket;
