@@ -2,7 +2,7 @@
 // Dev tooling only: the patches below are applied by scripts/perf/vite.perf.config.ts, never by the
 // shipped build, so the app carries no perf switches.
 
-export const OFF_FLAGS = ["dots", "rail", "railstore", "topbar", "overlay", "drafts", "crops", "ops", "refresh", "autosave", "touch"] as const;
+export const OFF_FLAGS = ["dots", "rail", "railstore", "topbar", "overlay", "drafts", "crops", "ops", "refresh", "autosave", "touch", "touchzoom", "touchcap", "touchbare", "nostrict"] as const;
 export type OffFlag = (typeof OFF_FLAGS)[number];
 
 /** find/replace on a file under web/src; `{{OFF}}` in `replace` is the flag name. `find` must occur exactly once. */
@@ -30,6 +30,15 @@ function early(file: string, find: string, flag: OffFlag, ret = ""): Patch {
   return { file, find, replace: `${find} if (__off("${flag}")) return${ret ? ` ${ret}` : ""};` };
 }
 
+function setViewProbe(flag: OffFlag, appState: string, capture: string): Patch {
+  const find = "setView: (v) =>";
+  return {
+    file: "app/TouchLayer.tsx",
+    find,
+    replace: `${find} __off("${flag}") ? api.updateScene({ appState: ${appState}${capture ? `, ${capture}` : ""} }) :`,
+  };
+}
+
 export const PATCHES: Record<OffFlag, Patch[]> = {
   dots: [wrap("app/PaperDots.tsx", "PaperDots", "dots")],
   rail: [wrap("app/ToolRail.tsx", "ToolRail", "rail"), wrap("app/ZoomControl.tsx", "ZoomControl", "rail")],
@@ -53,6 +62,18 @@ export const PATCHES: Record<OffFlag, Patch[]> = {
   refresh: [early("sync/chunkRefresh.ts", "    fire() {", "refresh")],
   autosave: [early("sync/sceneSync.ts", "notify(elements: readonly SceneElement[]): boolean {", "autosave", "false")],
   touch: [wrap("app/TouchLayer.tsx", "TouchRouting", "touch")],
+  // Not layers but probes of the finger-pan write (touchzoom: no zoom in the patch, touchcap: no captureUpdate, touchbare: neither).
+  touchzoom: [setViewProbe("touchzoom", "{ scrollX: v.scrollX, scrollY: v.scrollY }", "captureUpdate: CaptureUpdateAction.NEVER")],
+  touchcap: [setViewProbe("touchcap", "{ scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom as never } }", "")],
+  touchbare: [setViewProbe("touchbare", "{ scrollX: v.scrollX, scrollY: v.scrollY }", "")],
+  // Dev builds double-invoke renders under StrictMode (the stock page has none): off = render without it.
+  nostrict: [
+    {
+      file: "main.tsx",
+      find: "root.render(<StrictMode><Root /></StrictMode>)",
+      replace: 'root.render(__off("nostrict") ? <Root /> : <StrictMode><Root /></StrictMode>)',
+    },
+  ],
 };
 
 /** The two strings in App.tsx the perf plugin swaps to time every onChange subscriber. Keep them unchanged. */

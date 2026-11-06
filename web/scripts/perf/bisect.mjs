@@ -5,7 +5,7 @@
 //
 //   node scripts/perf/bisect.mjs --base http://127.0.0.1:5191 --canvas <id> [--empty <id>]
 //     [--variants stock,built,off:dots,off:dots+overlay,stock-transparent] [--scenarios stroke,pan-wheel,pan-touch]
-//     [--runs 5] [--throttle 6] [--rate 1] [--out file.json] [--guard]
+//     [--runs 5] [--throttle 6] [--rate 1] [--view fit|origin] [--out file.json] [--guard]
 //
 // Events are paced one per animation frame, so a dropped frame shows up as a long delta. Stroke runs
 // write real elements (autosave runs against the throwaway database); each stroke is undone after it.
@@ -25,6 +25,7 @@ const canvases = { fixture: args.canvas, ...(args.empty ? { empty: args.empty } 
 const runs = Number(args.runs ?? 5);
 const throttle = Number(args.throttle ?? 6);
 const guard = Boolean(args.guard);
+const view = String(args.view ?? "fit");
 const rate = Number(args.rate ?? 1); // input events per frame (a 240 Hz stylus sends four)
 const scenarios = guard ? ["stroke", "pan-touch"] : String(args.scenarios ?? "stroke,pan-wheel,pan-touch").split(",");
 const variants = guard ? ["stock", "built"] : String(args.variants ?? "stock,built").split(",");
@@ -33,7 +34,8 @@ if (!args.canvas) throw new Error("--canvas <id> is required");
 const pwDir = process.env.PW_DIR ?? "/tmp/claude-1000/pw-174";
 const { chromium } = createRequire(join(pwDir, "package.json"))("playwright-core");
 
-const ALL_OFF = OFF_FLAGS.filter((f) => f !== "touch").join("+");
+// Every shell layer off except the touch router (the probes after it are not layers).
+const ALL_OFF = OFF_FLAGS.slice(0, OFF_FLAGS.indexOf("touch")).join("+");
 const wantsEmpty = (v) => v === "stock" || v === "built" || v === `off:${ALL_OFF}` || args["empty-all"];
 
 function url(variant, canvas, scenario) {
@@ -89,6 +91,14 @@ async function openPage(browser, variant, canvas, scenario) {
     await page.waitForFunction(() => !document.querySelector(".ink-shell__loading") && window.__api, null, { timeout: 60000 });
   }
   await page.waitForTimeout(1500);
+  // Same view for every page: the app fits all ink on first open, stock opens at 100 percent, and the
+  // number of elements on screen decides how much each frame draws. `--view origin` is 100 percent at 0,0.
+  await page.evaluate((v) => {
+    const api = window.__api;
+    if (v === "origin") api.updateScene({ appState: { scrollX: 0, scrollY: 0, zoom: { value: 1 } } });
+    else if (api.getSceneElements().length) api.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.9, maxZoom: 1, animate: false });
+  }, view);
+  await page.waitForTimeout(800);
   const cdp = await context.newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: throttle });
   await cdp.send("Performance.enable");
@@ -141,6 +151,8 @@ async function measure(handle, scenario) {
       return { scrollX: s.scrollX, scrollY: s.scrollY, n: window.__api.getSceneElements().length };
     });
   const view = await state();
+  const zoom = await page.evaluate(() => window.__api.getAppState().zoom.value);
+  console.error(`  view: zoom ${zoom.toFixed(3)}, scroll ${view.scrollX.toFixed(0)},${view.scrollY.toFixed(0)}, ${view.n} elements`);
   const reset = () => page.evaluate((v) => window.__api.updateScene({ appState: v }), view);
   const out = { noEffect: 0, cpu: { task: 0, script: 0, layout: 0, style: 0, wall: 0 }, deltas: [], longtasks: [], onChange: [], moves: 0, runs: 0 };
   for (let r = 0; r <= runs; r++) {
