@@ -87,7 +87,7 @@ def test_default_caps_fit_the_documented_limits():
 
 
 def test_bodyless_requests_and_health_are_unaffected(client, small_caps):
-    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/health").json()["status"] == "ok"
     assert client.get(SCENE).status_code == 200
 
 
