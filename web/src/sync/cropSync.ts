@@ -29,6 +29,15 @@ export function cropSkipReason(c: StaleChunk): string | null {
   return null;
 }
 
+/** True when GET /health says the server renders crops (INKBRIDGE_CROP_SOURCE=server, INK-120). */
+export function serverRendersCrops(health: unknown): boolean {
+  return (
+    typeof health === "object" &&
+    health !== null &&
+    (health as { crop_source?: unknown }).crop_source === "server"
+  );
+}
+
 const BACKOFF_FIRST_MS = 30_000;
 const BACKOFF_MAX_MS = 600_000;
 
