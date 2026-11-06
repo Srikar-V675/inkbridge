@@ -20,15 +20,17 @@ import type { Location } from "../lib/route";
 import { createLoadClock } from "../sync/loadClock";
 import { createStartupGate } from "../sync/startupGate";
 import { SceneSync, type SceneElement } from "../sync/sceneSync";
+import { titleHint } from "../lib/nav";
 import { createStatusStore } from "../lib/status";
 import { loadView, saveView, type View } from "../lib/view";
 import { initialAppState } from "../lib/excalidrawEnv";
 import { fetchTitle } from "./canvasTitle";
+import { CanvasState } from "./CanvasState";
 import { Shell } from "./Shell";
 import { StatusSlot } from "./StatusSlot";
 
 type Restored = ReturnType<typeof restoreElements>;
-type Initial = { elements: Restored; view: View | null } | "failed" | null;
+type Initial = { elements: Restored; view: View | null } | "failed" | "missing" | null;
 type Api = ExcalidrawImperativeAPI;
 
 /**
@@ -152,10 +154,14 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const expireNotice = useCallback(() => setNoticeOpen(false), []);
   const closeNotice = useCallback(() => (setNoticeOpen(false), setGhostOpen(false)), []);
   const [askOpen, setAskOpen] = useState(false);
-  const [title, setTitle] = useState(route.canvas);
+  // The home passes the canvas title along: no id flash, and no request before the first paint.
+  const hint = useMemo(() => titleHint(route.canvas), [route.canvas]);
+  const [title, setTitle] = useState(hint ?? route.canvas);
   useEffect(() => {
+    // A hint can be stale (renamed elsewhere), so it is refreshed once the canvas has painted.
+    if (hint) return gate.whenReady(() => void fetchTitle(route.canvas).then(setTitle));
     void fetchTitle(route.canvas).then(setTitle);
-  }, [route.canvas]);
+  }, [route.canvas, hint, gate]);
 
   // Load the saved scene before Excalidraw mounts so restoreElements runs ahead of initialData
   // (it keeps freedraw pressures and simulatePressure=false).
@@ -229,7 +235,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     }
     void sync.load().then((elements) => {
       if (cancelled) return;
-      if (!elements) return setInitial("failed");
+      if (!elements) return setInitial(sync.notFound ? "missing" : "failed");
       // A link wins over the remembered view (it is fitted to all ink until the chunk arrives).
       const view = route.chunk ? null : loadView(window.localStorage, route.canvas);
       const restored = restoreElements(elements as never, null);
@@ -284,7 +290,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   );
 
   // Agent ops arrive over the WebSocket once the canvas exists; they are drawn as dashed drafts.
-  const canvasReady = initial !== null && initial !== "failed";
+  const open = initial !== null && initial !== "failed" && initial !== "missing";
+  const canvasReady = open;
   useEffect(() => {
     if (!canvasReady) return;
     const sweep = (opId: string) => {
@@ -411,12 +418,12 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   return (
     <Shell
       api={api}
-      title={title}
+      title={initial === "missing" ? "Canvas not found" : title}
       status={<StatusSlot store={status} />}
       chunks={<ChunkToggle view={chunkView} />}
       overlays={
         <>
-          {api && initial && initial !== "failed" && (
+          {api && open && (
             <ChunkOverlay
               api={api}
               canvas={route.canvas}
@@ -433,8 +440,11 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       onAsk={() => setAskOpen((o) => !o)}
       askOpen={askOpen}
     >
-      {initial && initial !== "failed" && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
-      {api && initial && initial !== "failed" && (
+      {(initial === "missing" || initial === "failed") && (
+        <CanvasState kind={initial === "missing" ? "missing" : "error"} canvas={route.canvas} />
+      )}
+      {open && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
+      {api && open && (
         <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
       )}
     </Shell>

@@ -19,6 +19,31 @@
   inset: 0;
   z-index: 1;
 }
+/* The canvas did not open (INK-172): soft ink on paper, one way home. */
+.ink-shell__state {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  background: var(--color-paper);
+  color: var(--color-soft-ink);
+  text-align: center;
+}
+.ink-shell__state p {
+  margin: 0;
+}
+.ink-shell__state .ink-button {
+  text-decoration: none;
+}
+.ink-shell__state-title {
+  margin: 0;
+  color: var(--color-charcoal);
+  font: var(--type-title-weight) var(--type-title-size)/1.2 var(--type-title-family);
+}
 /* Chunk chips, draft tray and notices: above the rail and zoom control, below the top bar (INK-162, 0068). */
 .ink-shell__overlays {
   position: absolute;

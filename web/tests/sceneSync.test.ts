@@ -108,6 +108,19 @@ describe("SceneSync", () => {
     assert.equal(h.states.at(-1), "error");
   });
 
+  it("tells an unknown canvas (404) from a failed load", async () => {
+    const h404 = harness([json(404, { detail: "no" })]);
+    assert.equal(h404.sync.notFound, false);
+    await h404.sync.load();
+    assert.equal(h404.sync.notFound, true);
+    const h500 = harness([json(500, { detail: "boom" })]);
+    await h500.sync.load();
+    assert.equal(h500.sync.notFound, false);
+    const hDown = harness([new Error("down")]);
+    await hDown.sync.load();
+    assert.equal(hDown.sync.notFound, false);
+  });
+
   it("ignores onChange calls that did not change any element", async () => {
     const h = harness([json(200, { version: 1, elements: [el("a", 3)] })]);
     await h.sync.load();

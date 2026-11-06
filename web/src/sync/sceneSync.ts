@@ -104,6 +104,8 @@ export class SceneSync {
   private disposed = false;
   private backedUp = false; // a backup was written during this close()
   private loaded = false;
+  /** The last load got a 404: no canvas has this id (a network error or a 5xx leaves it false). */
+  notFound = false;
   private inflight: Promise<void> | null = null;
   // The most recent scene Excalidraw reported, so a conflict merge never misses newer strokes.
   private latest: readonly SceneElement[] | null = null;
@@ -135,11 +137,13 @@ export class SceneSync {
   /** Fetch the saved scene; null (state "error") if the canvas does not exist or the API is down. */
   async load(): Promise<SceneElement[] | null> {
     this.emit("loading");
+    this.notFound = false;
     const t0 = performance.now();
     try {
       const r = await this.fetchFn(this.url());
       this.o.clock?.mark("fetch"); // time to the response headers
       if (!r.ok) {
+        this.notFound = r.status === 404;
         this.emit("error", r.status === 404 ? "Unknown canvas" : `Load failed (${r.status})`);
         return null;
       }
