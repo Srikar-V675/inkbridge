@@ -155,17 +155,31 @@
   right: 20px;
   bottom: 20px;
   z-index: 5;
-  height: var(--space-touch);
+  height: 36px;
   padding: 0 var(--space-xs);
-  border-radius: var(--radius-card);
+  border-radius: var(--radius-pill);
   background: var(--color-panel);
   display: flex;
   align-items: center;
-  gap: 2px;
-  font: var(--type-control-weight) var(--type-control-size)/1 var(--type-control-family);
+  gap: 0;
+  font: var(--type-note-weight) var(--type-note-size)/1 var(--type-note-family);
+  color: var(--color-soft-ink);
+}
+.ink-zoom .ink-icon-button {
+  position: relative;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  color: var(--color-soft-ink);
+}
+.ink-zoom .ink-icon-button::after { /* 44 px hit area around the 32 px button */
+  content: "";
+  position: absolute;
+  inset: -6px;
 }
 .ink-zoom__value {
-  min-width: 48px;
+  min-width: 40px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }

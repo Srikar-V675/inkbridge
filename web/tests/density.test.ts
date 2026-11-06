@@ -41,3 +41,22 @@ describe("tablet rail (INK-170, decision 0074)", () => {
     assert.match(short, /\.ink-rail__gap\s*\{[^}]*height:\s*6px/);
   });
 });
+
+describe("compact zoom pill (INK-170): 36 px visual, 44 px hit area", () => {
+  it("the pill is 36 px tall, with no hex and no old 148 px width", () => {
+    const r = rule(".ink-zoom");
+    assert.match(r, /height:\s*36px/);
+    assert.doesNotMatch(r, /#[0-9a-f]{3,8}\b/i);
+    assert.doesNotMatch(r, /148px/);
+  });
+
+  it("its icon buttons are 32 px, and a pseudo-element gives a 44 px hit area", () => {
+    const b = rule(".ink-zoom .ink-icon-button");
+    assert.match(b, /height:\s*32px/);
+    assert.match(b, /width:\s*32px/);
+    const after = rule(".ink-zoom .ink-icon-button::after");
+    assert.match(after, /position:\s*absolute/);
+    const inset = Number(/inset:\s*(-?\d+)px/.exec(after)?.[1]);
+    assert.ok(32 - 2 * inset >= 44, `hit area ${32 - 2 * inset}px`);
+  });
+});
