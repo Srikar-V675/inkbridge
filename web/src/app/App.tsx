@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
@@ -17,20 +17,13 @@ import { OpsSocket } from "../sync/opsSocket";
 import { readRoute } from "../lib/route";
 import { createLoadClock } from "../sync/loadClock";
 import { createStartupGate } from "../sync/startupGate";
-import { SceneSync, type SaveState, type SceneElement } from "../sync/sceneSync";
+import { SceneSync, type SceneElement } from "../sync/sceneSync";
 import { createStatusStore } from "../lib/status";
 import { loadView, saveView, type View } from "../lib/view";
 import { initialAppState } from "../lib/excalidrawEnv";
-
-const LABEL: Record<SaveState, string> = {
-  loading: "Loading…",
-  saved: "Saved",
-  dirty: "Unsaved changes",
-  saving: "Saving…",
-  retry: "Offline, retrying",
-  conflict: "Conflict",
-  error: "Error",
-};
+import { fetchTitle } from "./canvasTitle";
+import { Shell } from "./Shell";
+import { StatusSlot } from "./StatusSlot";
 
 type Restored = ReturnType<typeof restoreElements>;
 type Initial = { elements: Restored; view: View | null } | "failed" | null;
@@ -125,31 +118,20 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function SaveBadge({ store }: { store: ReturnType<typeof createStatusStore> }) {
-  const status = useSyncExternalStore(store.subscribe, store.get);
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      style={{
-        position: "absolute",
-        bottom: 12,
-        left: "50%",
-        transform: "translateX(-50%)",
-        padding: "2px 10px",
-        borderRadius: 4,
-        font: "12px system-ui, sans-serif",
-        background: status.state === "saved" ? "#e6f4ea" : "#fff3cd",
-        color: "#202124",
-        pointerEvents: "none",
-        zIndex: 10,
-      }}
-    >
-      {LABEL[status.state]}
-      {status.detail ? `: ${status.detail}` : ""}
-    </div>
-  );
-}
+// Module level so the reference is stable and the memo below never re-renders Excalidraw for it.
+// Excalidraw 0.18 cannot hide its toolbar through UIOptions; shell.css hides the chrome (decision 0066).
+const UI_OPTIONS = {
+  canvasActions: {
+    changeViewBackgroundColor: false,
+    clearCanvas: false,
+    export: false,
+    loadScene: false,
+    saveToActiveFile: false,
+    toggleTheme: false,
+    saveAsImage: false,
+  },
+  tools: { image: false },
+} as const;
 
 // Memoised so nothing outside the canvas (save status, route) can re-render it mid-stroke.
 const Canvas = memo(function Canvas(props: {
@@ -165,7 +147,7 @@ const Canvas = memo(function Canvas(props: {
     () => ({ elements: initial.elements, appState: initialAppState(initial.view) }),
     [initial],
   );
-  return <Excalidraw excalidrawAPI={onApi} initialData={initialData} onChange={onChange as never} />;
+  return <Excalidraw excalidrawAPI={onApi} initialData={initialData} onChange={onChange as never} UIOptions={UI_OPTIONS} />;
 });
 
 export default function App() {
@@ -193,6 +175,11 @@ export default function App() {
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
+  const [askOpen, setAskOpen] = useState(false);
+  const [title, setTitle] = useState(route.canvas);
+  useEffect(() => {
+    void fetchTitle(route.canvas).then(setTitle);
+  }, [route.canvas]);
 
   // Load the saved scene before Excalidraw mounts so restoreElements runs ahead of initialData
   // (it keeps freedraw pressures and simulatePressure=false).
@@ -444,7 +431,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ height: "100dvh", position: "relative" }}>
+    <Shell api={api} title={title} status={<StatusSlot store={status} />} onAsk={() => setAskOpen((o) => !o)} askOpen={askOpen}>
       {initial && initial !== "failed" && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
       {api && initial && initial !== "failed" && (
         <ChunkOverlay
@@ -457,8 +444,9 @@ export default function App() {
       )}
       {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
       {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
-      {api && initial && initial !== "failed" && <AskPanel api={api} canvas={route.canvas} />}
-      <SaveBadge store={status} />
-    </div>
+      {api && initial && initial !== "failed" && (
+        <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
+      )}
+    </Shell>
   );
 }

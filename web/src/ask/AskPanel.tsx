@@ -121,8 +121,7 @@ function Item(props: { api: ExcalidrawImperativeAPI; canvas: string; n: number; 
   );
 }
 
-export default function AskPanel({ api, canvas }: { api: ExcalidrawImperativeAPI; canvas: string }) {
-  const [open, setOpen] = useState(false);
+export default function AskPanel({ api, canvas, open, onClose }: { api: ExcalidrawImperativeAPI; canvas: string; open: boolean; onClose: () => void }) {
   const [qs, setQs] = useState<Question[]>([]);
   const [text, setText] = useState("");
   const [parent, setParent] = useState<{ id: string; n: number } | null>(null);
@@ -159,14 +158,14 @@ export default function AskPanel({ api, canvas }: { api: ExcalidrawImperativeAPI
     }
   };
 
-  const wrap = { position: "absolute", top: 60, right: 12, zIndex: 10, pointerEvents: "none", font: "12px system-ui, sans-serif", color: "#202124" } as const;
-  if (!open) return <div style={wrap}><button style={btn} onClick={() => setOpen(true)}>Ask AI</button></div>;
+  const wrap = { position: "absolute", top: 64, right: 12, zIndex: 10, pointerEvents: "none", font: "12px system-ui, sans-serif", color: "#202124" } as const;
+  if (!open) return null;
   const ordered = [...qs].reverse();
   return (
     <div style={{ ...wrap, width: "min(360px, calc(100% - 24px))", maxHeight: "70dvh", overflow: "auto", background: "#fff", border: "1px solid #bbb", borderRadius: 6, padding: 8, pointerEvents: "auto" }}>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <b>Ask AI</b>
-        <button style={btn} onClick={() => setOpen(false)}>Close</button>
+        <button style={btn} onClick={onClose}>Close</button>
       </div>
       <textarea value={text} maxLength={4000} onChange={(e) => setText(e.target.value)} placeholder="Select the doubt on the canvas, then ask (a follow-up needs no selection)" style={{ width: "100%", boxSizing: "border-box", marginTop: 6, font: "inherit" }} />
       {parent && <div>Follow up on #{parent.n} <button style={btn} onClick={() => setParent(null)}>Clear</button></div>}

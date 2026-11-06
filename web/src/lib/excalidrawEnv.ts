@@ -9,10 +9,14 @@ export function configureExcalidraw(win: object, base: string): void {
   w.EXCALIDRAW_ASSET_PATH = `${base}excalidraw-assets/`; // fonts come from our own server, not esm.sh
 }
 
-/** Initial appState: pen mode on (the pen draws, fingers pan), plus the remembered view if any. */
+/**
+ * Initial appState: pen mode on (the pen draws, fingers pan), a see-through canvas so the paper dots
+ * behind it show (INK-117), plus the remembered view if any.
+ */
 export function initialAppState(view: View | null) {
   return {
     penMode: true,
+    viewBackgroundColor: "transparent",
     ...(view && { scrollX: view.scrollX, scrollY: view.scrollY, zoom: { value: view.zoom as never } }),
   };
 }
