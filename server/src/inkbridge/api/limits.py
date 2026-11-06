@@ -8,10 +8,12 @@ chunked uploads that declare no length) before replaying it to the app.
 
 import json
 import re
+import time
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from inkbridge.api.regions import MAX_UPLOAD_BYTES
+from inkbridge.timing import mark_recv
 
 # Scenes: the whole canvas is one PUT, and a long freedraw stroke with pressures is ~35 KB, so
 # 128 MiB is room for a few thousand dense strokes. It bounds memory, it is not a content limit.
@@ -39,6 +41,7 @@ class BodySizeLimit:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        start = time.perf_counter()
         cap = cap_for(scope["method"], scope["path"])
         declared = dict(scope["headers"]).get(b"content-length")
         if declared is not None:
@@ -64,6 +67,8 @@ class BodySizeLimit:
                 return
             if not message.get("more_body", False):
                 break
+
+        mark_recv(scope, start, time.perf_counter())
 
         async def replay() -> Message:
             return messages.pop(0) if messages else await receive()

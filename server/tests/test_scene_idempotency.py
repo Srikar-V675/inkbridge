@@ -13,9 +13,9 @@ def put(client, key, base, els=(A,), url=SCENE):
 
 
 def test_repeated_key_replays_without_conflict(client):
-    assert put(client, "t1:1", 0).json() == {"version": 1}
+    assert put(client, "t1:1", 0).json()["version"] == 1
     r = put(client, "t1:1", 0)
-    assert r.status_code == 200 and r.json() == {"version": 1}
+    assert r.status_code == 200 and r.json()["version"] == 1
     assert client.get(SCENE).json()["version"] == 1
 
 
@@ -48,7 +48,7 @@ def test_rolled_back_save_does_not_record_the_key(client, monkeypatch):
     assert put(client, "t1:1", 0, els=[A, B]).status_code == 422
     monkeypatch.setattr(api, "MAX_ELEMENTS", 10)
     r = put(client, "t1:1", 0, els=[A, B])
-    assert r.status_code == 200 and r.json() == {"version": 1}
+    assert r.status_code == 200 and r.json()["version"] == 1
     assert len(client.get(SCENE).json()["elements"]) == 2
 
 

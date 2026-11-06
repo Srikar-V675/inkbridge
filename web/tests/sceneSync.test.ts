@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { SceneSync, deltaFor, mergeScenes, type SaveState, type SceneElement } from "../src/sync/sceneSync.ts";
+import { setTimingSink, type TimingRecord } from "../src/lib/timing.ts";
 
 const el = (id: string, version = 1, extra: Record<string, unknown> = {}): SceneElement => ({
   id,
@@ -58,6 +59,22 @@ describe("SceneSync", () => {
     await h.sync.flushNow();
     assert.equal(h.states.at(-1), "saved");
     assert.match(h.details.at(-1) ?? "", /^\d+ ms$/);
+  });
+
+  it("joins the server timing parts onto the scene.save record (INK-102)", async () => {
+    const got: TimingRecord[] = [];
+    setTimingSink((r) => void got.push(r));
+    const timing = { recv: 1, queue: 2, lock: 3, work: 4, commit: 5, total: 15 };
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1, timing })]);
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    await h.sync.flushNow();
+    setTimingSink(() => {});
+    const save = got.find((r) => r.name === "scene.save");
+    assert.equal(save?.counts.s_lock, 3);
+    assert.equal(save?.counts.s_total, 15);
+    assert.ok(save && "elements" in save.counts && "sent" in save.counts && "bytes" in save.counts);
+    assert.deepEqual(Object.keys(save ?? {}).sort(), ["counts", "ms", "name"]);
   });
 
   beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));

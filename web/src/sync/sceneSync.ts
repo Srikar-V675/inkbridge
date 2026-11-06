@@ -2,7 +2,7 @@
 // Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0008).
 
 import type { LoadClock } from "./loadClock.ts";
-import { record } from "../lib/timing.ts";
+import { lastResource, netParts, record, serverParts } from "../lib/timing.ts";
 
 export interface SceneElement {
   id: string;
@@ -253,7 +253,8 @@ export class SceneSync {
       });
       this.unsettled = null; // any HTTP answer is definite
       if (r.ok) {
-        this.version = ((await r.json()) as { version: number }).version;
+        const saved = (await r.json()) as { version: number; timing?: Record<string, number> };
+        this.version = saved.version;
         this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
         this.lastSig = sentSig;
         this.savedIds = liveIds(sent);
@@ -264,6 +265,8 @@ export class SceneSync {
           elements: sent.length,
           sent: changed?.length ?? sent.length,
           bytes: body.length,
+          ...serverParts(saved.timing),
+          ...netParts(lastResource(this.url(), t0)),
         });
         if (this.pendingSig === sentSig) this.pending = null;
         if (this.pending) {

@@ -24,7 +24,7 @@ def test_new_document_has_empty_scene_at_version_zero(client):
 
 def test_put_then_get_round_trips_and_bumps_version(client):
     r = client.put(SCENE, json={"base_version": 0, "elements": [FREEDRAW]})
-    assert r.status_code == 200 and r.json() == {"version": 1}
+    assert r.status_code == 200 and r.json()["version"] == 1
     assert client.get(SCENE).json() == {"version": 1, "elements": [FREEDRAW]}
 
 
@@ -47,7 +47,7 @@ def test_stale_base_version_returns_409_and_does_not_overwrite(client):
 def test_version_increments_on_each_successful_put(client):
     for v in range(3):
         r = client.put(SCENE, json={"base_version": v, "elements": []})
-        assert r.json() == {"version": v + 1}
+        assert r.json()["version"] == v + 1
 
 
 def test_unknown_document_is_404(client):
@@ -105,7 +105,7 @@ def test_delta_replaces_in_place_and_appends_new(client):
     client.put(SCENE, json={"base_version": 0, "elements": [a, b]})
     a2, c = _el("a", version=2, x=5), _el("c")
     r = client.put(SCENE, json={"base_version": 1, "elements": [c, a2], "delta": True})
-    assert r.status_code == 200 and r.json() == {"version": 2}
+    assert r.status_code == 200 and r.json()["version"] == 2
     assert client.get(SCENE).json()["elements"] == [a2, b, c]
 
 

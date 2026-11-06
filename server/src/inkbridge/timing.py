@@ -1,6 +1,7 @@
 """Timing logs for the API process. Counts and milliseconds only: never scene content, keys or
 readings (INK-067). Imports nothing from inkbridge.db, so the MCP boundary test is unaffected."""
 
+import asyncio
 import logging
 import sys
 import time
@@ -10,8 +11,38 @@ from contextlib import contextmanager
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 SLOW_S = 1.0
+SCOPE_KEY = "inkbridge.timing"
 req_log = logging.getLogger("inkbridge.request")
 log = logging.getLogger("inkbridge.timing")
+loop_log = logging.getLogger("inkbridge.loop")
+LAG_SLEEP_S, LAG_LIMIT_S = 0.1, 0.2
+
+
+def _ms(seconds: float) -> float:
+    return round(seconds * 1000, 1)
+
+
+def mark_recv(scope: Scope, start: float, end: float) -> None:
+    """BodySizeLimit calls this once the whole body is in (INK-102)."""
+    scope[SCOPE_KEY] = {"recv": _ms(end - start), "_end": end}
+
+
+def request_parts(scope: Scope, now: float) -> dict[str, float]:
+    """recv and queue in ms; {} when the middleware did not run. `now` is the first line of the handler."""
+    m = scope.get(SCOPE_KEY)
+    if m is None:
+        return {}
+    return {"recv": m["recv"], "queue": _ms(now - m["_end"])}
+
+
+async def sample_loop_lag(sleep_s: float = LAG_SLEEP_S, limit_s: float = LAG_LIMIT_S) -> None:
+    """Log when a sleep overshoots by more than limit_s: the loop was blocked (INK-102)."""
+    while True:
+        t = time.perf_counter()
+        await asyncio.sleep(sleep_s)
+        over = time.perf_counter() - t - sleep_s
+        if over > limit_s:
+            loop_log.warning("loop lag ms=%.0f", over * 1000)
 
 
 @contextmanager

@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
 import math
 import re
+import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -13,18 +15,19 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from inkbridge import config, db
 from inkbridge.agent.ask_runner import AskWorker
-from inkbridge.api import chunks, graph, ops, overrides, questions, regions, search, sync, ws
+from inkbridge.api import chunks, debug, graph, ops, overrides, questions, regions, search, sync, ws
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.api.web import mount_web
 from inkbridge.db import questions as q_db
 from inkbridge.recognizer.worker import RecognitionWorker
-from inkbridge.timing import RequestTiming, configure_logging
+from inkbridge.timing import RequestTiming, configure_logging, request_parts, sample_loop_lag
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    lag = asyncio.create_task(sample_loop_lag())
     db.init_db()
     # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0017).
     worker = RecognitionWorker.from_env(publish=ws.hub.publish)
@@ -44,6 +47,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        lag.cancel()
         try:
             if worker is not None:
                 worker.stop()
@@ -74,6 +78,8 @@ app.include_router(regions.router)
 app.include_router(search.router)
 app.include_router(sync.router)
 app.include_router(ws.router)
+if debug.enabled():  # absent unless INKBRIDGE_DEVICE_LOG=1 (INK-102)
+    app.include_router(debug.router)
 
 
 MAX_ELEMENTS = 50_000
@@ -160,7 +166,8 @@ def put_scene(
     conn: Conn,
     request: Request,
     x_inkbridge_save: Annotated[str | None, Header()] = None,
-) -> dict[str, int]:
+) -> dict[str, Any]:
+    timing = request_parts(request.scope, time.perf_counter())
     key = (
         x_inkbridge_save
         if re.fullmatch(r"[a-z0-9]{1,16}:\d{1,9}", x_inkbridge_save or "")
@@ -186,6 +193,7 @@ def put_scene(
             delta=body.delta,
             max_elements=MAX_ELEMENTS,
             save_key=key,
+            timings=timing,
         )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
@@ -197,7 +205,7 @@ def put_scene(
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
     if replay:
-        return {"version": version}
+        return {"version": version, "timing": timing}
     if key:
         _last_writer[document_id] = (tab, ip)
     ws.hub.publish(
@@ -208,7 +216,7 @@ def put_scene(
             "stale_crops": db.stale_crop_ids(conn, document_id),
         },
     )
-    return {"version": version}
+    return {"version": version, "timing": timing}
 
 
 mount_web(app, config.web_dist())  # last: every API route wins over the static paths (INK-100)

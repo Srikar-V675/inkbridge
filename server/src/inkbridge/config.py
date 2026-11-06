@@ -22,6 +22,10 @@ def crops_dir() -> Path:
     return db_path().parent / "crops"
 
 
+def logs_dir() -> Path:
+    return db_path().parent / "logs"
+
+
 DEFAULT_PUBLIC_URL = "http://localhost:8000"
 
 
