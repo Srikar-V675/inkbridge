@@ -194,7 +194,7 @@ try {
         try {
           const m = await measure(handle, scenario);
           ((raw[variant] ??= {})[cname] ??= {})[scenario] = m;
-          const s = summarise(m);
+          const s = summarise({ ...m, noEffect: m.noEffect });
           rows.push({ variant, cname, scenario, s, cpu: Object.fromEntries(Object.entries(m.cpu).map(([k, v]) => [k, v / m.moves])) });
           if (m.noEffect) console.error(`WARNING ${variant} ${cname} ${scenario}: ${m.noEffect} run(s) had no effect (no pan, no stroke)`);
           console.error(`${variant} ${cname} ${scenario}: p50 ${fmt(s.p50)} p95 ${fmt(s.p95)} p99 ${fmt(s.p99)} main/move ${(m.cpu.task / m.moves).toFixed(2)} long ${fmt(s.longPerRun)} onChange ${s.onChangeMsPerMove.toFixed(2)}`);
@@ -221,7 +221,8 @@ if (guard) {
   for (const cname of Object.keys(canvases)) {
     for (const scenario of scenarios) {
       const pick = (v) => rows.find((r) => r.variant === v && r.cname === cname && r.scenario === scenario)?.s;
-      const v = budgetVerdict({ built: pick("built"), stock: pick("stock") });
+      const built = pick("built"), stock = pick("stock");
+      const v = built && stock ? budgetVerdict({ built, stock }) : { ok: false, reasons: ["no measurement for built or stock"] };
       console.log(`guard ${cname} ${scenario}: ${v.ok ? "ok" : "FAIL " + v.reasons.join("; ")}`);
       ok &&= v.ok;
     }

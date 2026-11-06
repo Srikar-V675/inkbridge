@@ -88,6 +88,8 @@ export interface Summary {
   p99: number;
   longPerRun: number;
   onChangeMsPerMove: number;
+  /** Measured runs in which the driver did nothing (no stroke drawn, no pan): such numbers mean nothing. */
+  noEffect?: number;
 }
 
 /** Nearest-rank percentile; NaN for no data. */
@@ -97,7 +99,7 @@ export function percentile(xs: number[], p: number): number {
   return s[Math.min(s.length - 1, Math.max(0, Math.ceil(p * s.length - 1e-9) - 1))];
 }
 
-export function summarise(i: { deltas: number[]; longtasks: number[]; onChange: number[]; moves: number; runs: number }): Summary {
+export function summarise(i: { deltas: number[]; longtasks: number[]; onChange: number[]; moves: number; runs: number; noEffect?: number }): Summary {
   const sum = i.onChange.reduce((a, b) => a + b, 0);
   return {
     p50: percentile(i.deltas, 0.5),
@@ -105,15 +107,29 @@ export function summarise(i: { deltas: number[]; longtasks: number[]; onChange: 
     p99: percentile(i.deltas, 0.99),
     longPerRun: i.runs > 0 ? i.longtasks.length / i.runs : NaN,
     onChangeMsPerMove: i.moves > 0 ? sum / i.moves : NaN,
+    ...(i.noEffect !== undefined && { noEffect: i.noEffect }),
   };
 }
 
-/** Built must stay within 20 percent (+ 2 ms of 60 Hz frame quantisation) of stock at p95 and under the onChange budget. */
+/**
+ * Built must stay within 20 percent (+ 2 ms of 60 Hz frame quantisation) of stock at p95 and under the
+ * onChange budget. A missing number (NaN compares false against any limit) or a scenario in which the
+ * driver did nothing is a failure, never a pass.
+ */
 export function budgetVerdict(i: { built: Summary; stock: Summary; budgetMs?: number }): { ok: boolean; reasons: string[] } {
   const reasons: string[] = [];
-  const limit = i.stock.p95 * 1.2 + 2;
-  if (i.built.p95 > limit) reasons.push(`p95 ${i.built.p95.toFixed(1)} ms is over ${limit.toFixed(1)} ms (stock ${i.stock.p95.toFixed(1)} x 1.2 + 2)`);
+  for (const [name, s] of [["built", i.built], ["stock", i.stock]] as const) {
+    if (!Number.isFinite(s.p95)) reasons.push(`${name} p95 is not a number (no frames recorded)`);
+    if (name === "built" && !Number.isFinite(s.onChangeMsPerMove)) reasons.push("built onChange cost is not a number (no moves recorded)");
+    if ((s.noEffect ?? 0) > 0) reasons.push(`${name} had ${s.noEffect} run(s) with no effect (no stroke drawn, no pan)`);
+  }
+  if (Number.isFinite(i.built.p95) && Number.isFinite(i.stock.p95)) {
+    const limit = i.stock.p95 * 1.2 + 2;
+    if (i.built.p95 > limit) reasons.push(`p95 ${i.built.p95.toFixed(1)} ms is over ${limit.toFixed(1)} ms (stock ${i.stock.p95.toFixed(1)} x 1.2 + 2)`);
+  }
   const budget = i.budgetMs ?? ONCHANGE_BUDGET_MS;
-  if (i.built.onChangeMsPerMove > budget) reasons.push(`onChange ${i.built.onChangeMsPerMove.toFixed(2)} ms/move is over ${budget} ms`);
+  if (Number.isFinite(i.built.onChangeMsPerMove) && i.built.onChangeMsPerMove > budget) {
+    reasons.push(`onChange ${i.built.onChangeMsPerMove.toFixed(2)} ms/move is over ${budget} ms`);
+  }
   return { ok: reasons.length === 0, reasons };
 }

@@ -23,6 +23,10 @@ describe("summarise", () => {
     assert.equal(s.onChangeMsPerMove, 1);
     assert.equal(s.p50, 17);
   });
+  it("carries the no-effect count through", () => {
+    const s = summarise({ deltas: [16], longtasks: [], onChange: [1], moves: 1, runs: 1, noEffect: 3 });
+    assert.equal(s.noEffect, 3);
+  });
 });
 
 describe("budgetVerdict", () => {
@@ -38,6 +42,22 @@ describe("budgetVerdict", () => {
   it("fails on onChange cost over the budget", () => {
     const v = budgetVerdict({ built: { ...ok, onChangeMsPerMove: ONCHANGE_BUDGET_MS + 0.1 }, stock: ok });
     assert.equal(v.ok, false);
+  });
+  it("fails, never passes silently, on missing numbers (NaN compares false)", () => {
+    for (const bad of [{ p95: NaN }, { onChangeMsPerMove: NaN }]) {
+      const v = budgetVerdict({ built: { ...ok, ...bad }, stock: ok });
+      assert.equal(v.ok, false, JSON.stringify(bad));
+      assert.ok(v.reasons.length >= 1);
+    }
+    assert.equal(budgetVerdict({ built: ok, stock: { ...ok, p95: NaN } }).ok, false);
+    assert.equal(budgetVerdict({ built: ok, stock: { ...ok, p95: Infinity } }).ok, false);
+  });
+  it("fails when a scenario had no effect (no stroke drawn, no pan)", () => {
+    const v = budgetVerdict({ built: { ...ok, noEffect: 2 }, stock: ok });
+    assert.equal(v.ok, false);
+    assert.match(v.reasons.join(" "), /no effect/);
+    assert.equal(budgetVerdict({ built: ok, stock: { ...ok, noEffect: 1 } }).ok, false);
+    assert.equal(budgetVerdict({ built: { ...ok, noEffect: 0 }, stock: { ...ok, noEffect: 0 } }).ok, true);
   });
   it("keeps the budget small and finite", () => {
     assert.ok(Number.isFinite(ONCHANGE_BUDGET_MS) && ONCHANGE_BUDGET_MS > 0 && ONCHANGE_BUDGET_MS <= 5);
