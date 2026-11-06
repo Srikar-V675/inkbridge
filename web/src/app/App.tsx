@@ -2,7 +2,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
-import { ChunkOverlay } from "../chunks/ChunkOverlay";
+import { ChunkOverlay, ChunkToggle } from "../chunks/ChunkOverlay";
+import { createChunkView } from "../chunks/chunkView";
+import { JumpNotice } from "../chunks/JumpNotice";
 import { createRefresh, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
 import { publishQuestion } from "../ask/ask";
@@ -76,36 +78,6 @@ function applyJump(api: Api, jump: JumpResult) {
   });
 }
 
-function Notice({ text, onClose }: { text: string; onClose: () => void }) {
-  return (
-    <div
-      role="alert"
-      style={{
-        position: "absolute",
-        top: 64,
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 10,
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-        maxWidth: "calc(100% - 32px)",
-        padding: "6px 8px 6px 12px",
-        borderRadius: 6,
-        font: "13px system-ui, sans-serif",
-        background: "#fff3cd",
-        color: "#202124",
-        boxShadow: "0 1px 4px rgba(0,0,0,.15)",
-      }}
-    >
-      <span>{text}</span>
-      <button type="button" aria-label="Dismiss" onClick={onClose} style={{ border: 0, background: "none", fontSize: 16 }}>
-        ×
-      </button>
-    </div>
-  );
-}
-
 // How long an op waits for its drafts to be saved before it is reported as failed (about 30 s).
 const SAVE_ATTEMPTS = 15;
 const SAVE_RETRY_MS = 2000;
@@ -153,6 +125,7 @@ const Canvas = memo(function Canvas(props: {
 export default function App({ route }: { route: Extract<Location, { kind: "canvas" }> }) {
   const status = useMemo(() => createStatusStore(), []);
   const refresh = useMemo(() => createRefresh(), []);
+  const chunkView = useMemo(() => createChunkView(), []);
   useEffect(() => () => refresh.dispose(), [refresh]); // drop a pending refetch on unmount
   const [initial, setInitial] = useState<Initial>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
@@ -174,6 +147,10 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
+  // The toast times out, but the ghost box stays until the user dismisses (INK-162 review).
+  const [ghostOpen, setGhostOpen] = useState(true);
+  const expireNotice = useCallback(() => setNoticeOpen(false), []);
+  const closeNotice = useCallback(() => (setNoticeOpen(false), setGhostOpen(false)), []);
   const [askOpen, setAskOpen] = useState(false);
   const [title, setTitle] = useState(route.canvas);
   useEffect(() => {
@@ -432,19 +409,31 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   );
 
   return (
-    <Shell api={api} title={title} status={<StatusSlot store={status} />} onAsk={() => setAskOpen((o) => !o)} askOpen={askOpen}>
+    <Shell
+      api={api}
+      title={title}
+      status={<StatusSlot store={status} />}
+      chunks={<ChunkToggle view={chunkView} />}
+      overlays={
+        <>
+          {api && initial && initial !== "failed" && (
+            <ChunkOverlay
+              api={api}
+              canvas={route.canvas}
+              status={status}
+              view={chunkView}
+              ghost={ghostOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
+              refresh={refresh}
+            />
+          )}
+          {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} onExpire={expireNotice} />}
+          {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
+        </>
+      }
+      onAsk={() => setAskOpen((o) => !o)}
+      askOpen={askOpen}
+    >
       {initial && initial !== "failed" && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
-      {api && initial && initial !== "failed" && (
-        <ChunkOverlay
-          api={api}
-          canvas={route.canvas}
-          status={status}
-          ghost={noticeOpen && jump?.outcome === "orphaned" ? jump.chunk!.bounds : null}
-          refresh={refresh}
-        />
-      )}
-      {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
-      {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
       {api && initial && initial !== "failed" && (
         <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
       )}

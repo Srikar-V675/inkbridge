@@ -10,3 +10,12 @@
   font-weight: 600;
   line-height: 1.2;
 }
+
+.ink-badge-dot {
+  box-sizing: border-box;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--component-draft-badge-background-color);
+}
