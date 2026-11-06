@@ -49,8 +49,11 @@ const MAX_WAIT_FRAMES = 300; // give up waiting for Excalidraw to finish loading
 export function createRailStore(api: RailApi, pens: readonly string[], env: RailEnv) {
   const listeners = new Set<() => void>();
   let lastShape: ShapeTool = "rectangle";
+  let lastPen = 0; // the rail's last chosen pen colour; pen and highlighter return to it (INK-175)
   const read = (): RailSnapshot => {
     const a = api.getAppState();
+    const pi = penIndex(a.currentItemStrokeColor, pens);
+    if (pi >= 0) lastPen = pi;
     if (isShape(a.activeTool.type)) lastShape = a.activeTool.type;
     return { tool: railTool(a), pen: penIndex(a.currentItemStrokeColor, pens), zoom: a.zoom.value, shape: lastShape };
   };
@@ -91,7 +94,13 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
       return () => void listeners.delete(l);
     },
     tap(tool: RailTool) {
-      const { tool: t, patch } = toolTap(tool, api.getAppState().activeTool.type, lastShape);
+      const { tool: t, patch: base } = toolTap(tool, api.getAppState().activeTool.type, lastShape);
+      // A shape or text tool card may have set a background, fill or soft-ink stroke: freedraw copies all
+      // three at the start of a stroke, so the pen and highlighter reset them.
+      const patch: Record<string, unknown> =
+        tool === "pen" || tool === "highlighter"
+          ? { ...base, currentItemBackgroundColor: "transparent", currentItemFillStyle: "solid", currentItemStrokeColor: pens[lastPen] }
+          : base;
       api.setActiveTool(t);
       if (Object.keys(patch).length) scene(patch);
       refresh();
@@ -105,6 +114,7 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
     },
     setPen(i: number) {
       if (colourNeedsPen(api.getAppState().activeTool.type)) api.setActiveTool({ type: "freedraw" });
+      lastPen = i;
       scene({ currentItemStrokeColor: pens[i] });
       refresh();
     },

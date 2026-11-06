@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
-  applyFlag, applyStyle, controlsFor, elementPatch, FONTS, fitText, layerKey, ORDER, palette, PALETTE_TOKENS,
+  applyFlag, applyStyle, applyText, LINE_HEIGHT, controlsFor, elementPatch, FONTS, fitText, layerKey, ORDER, palette, PALETTE_TOKENS,
   PATCH_KEYS, restyle, SIZES, sourceFor, stateValue, statePatch, title, typeOf, unlockAll, valueOf,
   type ControlId, type StyleEl,
 } from "../src/app/props/propsLogic.ts";
@@ -227,5 +227,31 @@ describe("flags", () => {
     assert.equal((un[1] as Record<string, unknown>).locked, false);
     assert.equal(un[2], c);
     assert.equal(unlockAll([a], env).length, 1);
+    const draft = el("dr", "rectangle", { locked: true, customData: { draft: true } });
+    assert.equal(unlockAll([draft], env)[0], draft); // a draft is the agent's: never restyled
+  });
+});
+
+describe("applyText line height", () => {
+  const measure = (line: string, size: number) => line.length * size * 0.5;
+  const t = (extra: Record<string, unknown> = {}) => el("t", "text", { text: "ab\ncd", fontSize: 20, fontFamily: 5, lineHeight: 1.25, width: 20, height: 50, x: 0, y: 0, ...extra });
+  it("pins Excalidraw's per-family line heights", () => {
+    assert.deepEqual(LINE_HEIGHT, { 5: 1.25, 6: 1.35, 3: 1.2 });
+  });
+  it("a family change patches lineHeight and fits the multi-line box with it", () => {
+    const out = applyText([t()], new Set(["t"]), "fontFamily", 6, env, measure)[0] as Record<string, unknown>;
+    assert.equal(out.lineHeight, 1.35);
+    assert.equal(out.height, 2 * 20 * 1.35);
+    assert.equal(out.y, 0 + (50 - 54) / 2);
+    const code = applyText([t()], new Set(["t"]), "fontFamily", 3, env, measure)[0] as Record<string, unknown>;
+    assert.equal(code.height, 2 * 20 * 1.2);
+  });
+  it("a size change keeps the element's own lineHeight; bound text keeps its box and lineHeight", () => {
+    const s = applyText([t()], new Set(["t"]), "fontSize", 36, env, measure)[0] as Record<string, unknown>;
+    assert.equal(s.lineHeight, 1.25);
+    assert.equal(s.height, 2 * 36 * 1.25);
+    const b = applyText([t({ containerId: "c" })], new Set(["t"]), "fontFamily", 6, env, measure)[0] as Record<string, unknown>;
+    assert.equal(b.lineHeight, 1.25);
+    assert.equal(b.height, 50);
   });
 });

@@ -40,6 +40,8 @@ export const HEADS = ["none", "arrow", "triangle", "bar", "dot"] as const;
 export const ARROW_TYPES = ["sharp", "round", "elbow"] as const;
 export const FONTS: readonly (readonly [string, number])[] = [["Hand", 5], ["Normal", 6], ["Code", 3]];
 export const SIZES: readonly (readonly [string, number])[] = [["S", 16], ["M", 20], ["L", 28], ["XL", 36]];
+// Excalidraw 0.18 font metrics `lineHeight` per family (getLineHeight): Excalifont, Nunito, Cascadia.
+export const LINE_HEIGHT: Record<number, number> = { 5: 1.25, 6: 1.35, 3: 1.2 };
 export const ALIGNS = ["left", "center", "right"] as const;
 
 export const PALETTE_TOKENS = {
@@ -145,7 +147,7 @@ export function statePatch(control: ControlId, value: Value): Record<string, unk
 /** Keys a patch may write. Geometry only comes from fitText; points, pressures, simulatePressure never. */
 export const PATCH_KEYS: ReadonlySet<string> = new Set([
   "strokeColor", "backgroundColor", "fillStyle", "strokeWidth", "strokeStyle", "roughness", "opacity", "roundness",
-  "startArrowhead", "endArrowhead", "elbowed", "fontFamily", "fontSize", "textAlign", "locked",
+  "startArrowhead", "endArrowhead", "elbowed", "fontFamily", "fontSize", "textAlign", "locked", "lineHeight",
 ]);
 
 /** Patch for one element, or null when the control does not apply to it. */
@@ -217,7 +219,7 @@ export function applyFlag(
 export function unlockAll(scene: readonly StyleEl[], env: RestyleEnv): StyleEl[] {
   let changed = false;
   const out = scene.map((e) => {
-    if (e.isDeleted || !e.locked) return e;
+    if (e.isDeleted || !e.locked || e.customData?.draft) return e;
     changed = true;
     return restyle(e, { locked: false }, env);
   });
@@ -252,9 +254,11 @@ export function applyText(
       fontSize: control === "fontSize" ? value : (e.fontSize ?? 20),
       fontFamily: control === "fontFamily" ? value : (e.fontFamily ?? 5),
     };
-    const box = fitText(e as unknown as TextBox, next, measure);
+    // A new family brings its own line height (as Excalidraw does); bound or fixed-width text keeps its box and lineHeight.
+    const lineHeight = control === "fontFamily" ? (LINE_HEIGHT[value] ?? (e.lineHeight as number)) : (e.lineHeight as number);
+    const box = fitText({ ...(e as unknown as TextBox), lineHeight }, next, measure);
     changed = true;
-    return restyle(e, { ...patch, ...box }, env);
+    return restyle(e, { ...patch, ...(box ? { ...box, lineHeight } : {}) }, env);
   });
   return changed ? out : (scene as StyleEl[]);
 }

@@ -274,7 +274,46 @@ describe("createRailStore", () => {
     f.calls.scene.length = 0;
     store.tap("highlighter");
     assert.deepEqual(f.calls.tool, [{ type: "freedraw" }]);
-    assert.deepEqual(f.calls.scene, [{ appState: { currentItemOpacity: 35, currentItemStrokeWidth: 4 }, captureUpdate: NEVER }]);
+    assert.deepEqual(f.calls.scene, [{
+      appState: {
+        currentItemOpacity: 35, currentItemStrokeWidth: 4, currentItemBackgroundColor: "transparent",
+        currentItemFillStyle: "solid", currentItemStrokeColor: PENS[0],
+      },
+      captureUpdate: NEVER,
+    }]);
+  });
+
+  it("pen after a shape drops the shape card's colours and fill (INK-175)", () => {
+    const f = fakeApi({ activeTool: { type: "rectangle" }, currentItemBackgroundColor: "#2F55B8", currentItemFillStyle: "hachure", currentItemStrokeColor: "#625C52" });
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    store.setPen(1); // the rail's last chosen pen colour: blue
+    f.calls.scene.length = 0;
+    for (const tool of ["pen", "highlighter"] as const) {
+      store.tap(tool);
+      const patch = (f.calls.scene.pop() as { appState: Record<string, unknown> }).appState;
+      assert.equal(patch.currentItemBackgroundColor, "transparent");
+      assert.equal(patch.currentItemFillStyle, "solid");
+      assert.equal(patch.currentItemStrokeColor, PENS[1]);
+    }
+  });
+
+  it("a stroke colour set on a shape tool that is a pen colour becomes the pen to return to; soft ink does not", () => {
+    const f = fakeApi({ activeTool: { type: "rectangle" } });
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    f.set({ currentItemStrokeColor: "#A63D2A" });
+    f.set({ currentItemStrokeColor: "#625C52" }); // soft ink: not a pen colour
+    f.calls.scene.length = 0;
+    store.tap("pen");
+    assert.equal((f.calls.scene[0].appState as Record<string, unknown>).currentItemStrokeColor, PENS[2]);
+  });
+
+  it("eraser and select tap leave the defaults alone", () => {
+    const f = fakeApi();
+    const store = createRailStore(f.api, PENS, fakeEnv().env as never);
+    f.calls.scene.length = 0;
+    store.tap("eraser");
+    store.tap("select");
+    assert.deepEqual(f.calls.scene, []);
   });
 
   it("a pen colour sets the stroke colour, via the pen when another tool is active", () => {
