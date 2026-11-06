@@ -3,6 +3,7 @@ import { CaptureUpdateAction, Excalidraw, exportToBlob, restoreElements } from "
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { ChunkOverlay } from "../chunks/ChunkOverlay";
+import { JumpNotice } from "../chunks/JumpNotice";
 import { createRefresh, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
 import { publishQuestion } from "../ask/ask";
@@ -76,36 +77,6 @@ function applyJump(api: Api, jump: JumpResult) {
   });
 }
 
-function Notice({ text, onClose }: { text: string; onClose: () => void }) {
-  return (
-    <div
-      role="alert"
-      style={{
-        position: "absolute",
-        top: 64,
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: 10,
-        display: "flex",
-        gap: 8,
-        alignItems: "center",
-        maxWidth: "calc(100% - 32px)",
-        padding: "6px 8px 6px 12px",
-        borderRadius: 6,
-        font: "13px system-ui, sans-serif",
-        background: "#fff3cd",
-        color: "#202124",
-        boxShadow: "0 1px 4px rgba(0,0,0,.15)",
-      }}
-    >
-      <span>{text}</span>
-      <button type="button" aria-label="Dismiss" onClick={onClose} style={{ border: 0, background: "none", fontSize: 16 }}>
-        ×
-      </button>
-    </div>
-  );
-}
-
 // How long an op waits for its drafts to be saved before it is reported as failed (about 30 s).
 const SAVE_ATTEMPTS = 15;
 const SAVE_RETRY_MS = 2000;
@@ -175,6 +146,7 @@ export default function App() {
   const [api, setApi] = useState<Api | null>(null);
   const [jump, setJump] = useState<JumpResult | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
+  const closeNotice = useCallback(() => setNoticeOpen(false), []);
   const [askOpen, setAskOpen] = useState(false);
   const [title, setTitle] = useState(route.canvas);
   useEffect(() => {
@@ -423,7 +395,14 @@ export default function App() {
   );
 
   return (
-    <Shell api={api} title={title} status={<StatusSlot store={status} />} onAsk={() => setAskOpen((o) => !o)} askOpen={askOpen}>
+    <Shell
+      api={api}
+      title={title}
+      status={<StatusSlot store={status} />}
+      overlays={noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} />}
+      onAsk={() => setAskOpen((o) => !o)}
+      askOpen={askOpen}
+    >
       {initial && initial !== "failed" && <Canvas initial={initial} onApi={onApi} onChange={onChange} />}
       {api && initial && initial !== "failed" && (
         <ChunkOverlay
@@ -434,7 +413,6 @@ export default function App() {
           refresh={refresh}
         />
       )}
-      {noticeOpen && jump && jumpNotice(jump) && <Notice text={jumpNotice(jump)!} onClose={() => setNoticeOpen(false)} />}
       {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
       {api && initial && initial !== "failed" && (
         <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />

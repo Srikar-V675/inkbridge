@@ -19,6 +19,13 @@
   inset: 0;
   z-index: 1;
 }
+/* Chunk chips, draft tray and notices: above the rail and zoom control, below the top bar (INK-162, 0068). */
+.ink-shell__overlays {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+}
 
 /* Excalidraw draws on a see-through canvas and its own chrome is hidden (UIOptions cannot do it in 0.18). */
 .ink-shell .excalidraw .layer-ui__wrapper,
@@ -35,7 +42,7 @@
   top: 0;
   left: 0;
   right: 0;
-  z-index: 5;
+  z-index: 7;
   height: var(--component-top-bar-height);
   padding: var(--component-top-bar-padding);
   background: var(--component-top-bar-background-color);
@@ -64,11 +71,6 @@
 .ink-topbar__status {
   font: var(--type-note-weight) var(--type-note-size)/1 var(--type-note-family);
   color: var(--color-soft-ink);
-}
-.ink-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .ink-rail {

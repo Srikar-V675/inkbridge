@@ -1,0 +1,10 @@
+/* Save status in the top bar (INK-162, decision 0068). Font and soft-ink colour come from .ink-topbar__status. */
+.ink-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ink-status--risk {
+  color: var(--component-status-risk-text-color);
+  font-weight: 500;
+}

@@ -1,0 +1,9 @@
+/* Chunk notice dock (INK-162); the overlay rules arrive with the overlay port. Below the 64 px top bar. */
+.ink-notice-dock {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 32px);
+  pointer-events: auto;
+}
