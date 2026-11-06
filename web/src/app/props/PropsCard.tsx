@@ -63,11 +63,16 @@ function PropsCard({ store }: { store: Store }) {
   }, []);
   if (!snap.source) return null;
   const set = (c: ControlId) => (v: Value) => store.set(c, v);
-  const rows = snap.controls.map((c) => (
-    <Row key={c} label={LABELS[c]}>
-      {renderControl(c, snap.values[c] ?? null, set(c), colours)}
-    </Row>
-  ));
+  // Converting a drawn arrow to or from elbow needs Excalidraw's router: a selection offers sharp and round only,
+  // and an elbow arrow has no row. The tool default offers all three (decision 0075).
+  const onSelection = snap.source === "selection";
+  const rows = snap.controls
+    .filter((c) => !(c === "arrowType" && onSelection && snap.values.arrowType === "elbow"))
+    .map((c) => (
+      <Row key={c} label={LABELS[c]}>
+        {renderControl(c, snap.values[c] ?? null, set(c), colours, onSelection)}
+      </Row>
+    ));
   return (
     <Card className="ink-props">
       <div role="region" aria-label="Properties" className="ink-props__body">
@@ -127,7 +132,7 @@ const STYLE_ICONS: Record<string, ReactNode> = { solid: <StyleSolidIcon />, dash
 const ARROW_ICONS: Record<string, ReactNode> = { sharp: <ArrowSharpIcon />, round: <ArrowRoundIcon />, elbow: <ArrowElbowIcon /> };
 const ALIGN_ICONS: Record<string, ReactNode> = { left: <AlignLeftIcon />, center: <AlignCenterIcon />, right: <AlignRightIcon /> };
 
-function renderControl(c: ControlId, cur: Value, on: (v: Value) => void, colours: Palette): ReactNode {
+function renderControl(c: ControlId, cur: Value, on: (v: Value) => void, colours: Palette, onSelection: boolean): ReactNode {
   switch (c) {
     case "stroke":
       return colours.stroke.map((hex, i) => (
@@ -159,7 +164,7 @@ function renderControl(c: ControlId, cur: Value, on: (v: Value) => void, colours
         <Opt key={h} label={`${LABELS[c]} ${h}`} value={h} cur={cur} on={on}><HeadIcon head={h} flip={c === "arrowStart"} /></Opt>
       ));
     case "arrowType":
-      return ARROW_TYPES.map((t) => <Opt key={t} label={`Arrow type ${t}`} value={t} cur={cur} on={on}>{ARROW_ICONS[t]}</Opt>);
+      return ARROW_TYPES.filter((t) => !(onSelection && t === "elbow")).map((t) => <Opt key={t} label={`Arrow type ${t}`} value={t} cur={cur} on={on}>{ARROW_ICONS[t]}</Opt>);
     case "opacity":
       return <Slider cur={cur} on={on} />;
     case "fontFamily":

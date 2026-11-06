@@ -35,10 +35,17 @@
   flex-direction: column;
   gap: var(--space-sm);
 }
+/* The header stays in view when a tall card scrolls, so Collapse is always in reach. */
 .ink-props__head {
+  position: sticky;
+  top: calc(-1 * var(--space-md));
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin: calc(-1 * var(--space-md)) calc(-1 * var(--space-md)) 0;
+  padding: var(--space-md) var(--space-md) var(--space-xs);
+  background: var(--component-canvas-card-background-color);
 }
 .ink-props__title {
   font: var(--type-control-weight) var(--type-control-size)/1 var(--type-control-family);
