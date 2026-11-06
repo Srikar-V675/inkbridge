@@ -12,9 +12,9 @@ import {
 } from "./propsLogic";
 import {
   AlignCenterIcon, AlignLeftIcon, AlignRightIcon, ArrowElbowIcon, ArrowRoundIcon, ArrowSharpIcon,
-  ChevronDownIcon, ChevronUpIcon, EdgeRoundIcon, EdgeSharpIcon, FillCrossIcon, FillHachureIcon,
-  FillSolidIcon, HeadIcon, SloppyIcon, StyleDashedIcon, StyleDottedIcon, StyleSolidIcon,
-  WidthIcon,
+  BackwardIcon, ChevronDownIcon, ChevronUpIcon, DuplicateIcon, EdgeRoundIcon, EdgeSharpIcon, FillCrossIcon, FillHachureIcon,
+  FillSolidIcon, ForwardIcon, HeadIcon, LockIcon, SloppyIcon, StyleDashedIcon, StyleDottedIcon, StyleSolidIcon,
+  ToBackIcon, ToFrontIcon, TrashIcon, WidthIcon,
 } from "./icons";
 import { loadFont, measure } from "./measureText";
 import { createPropsStore } from "./propsStore";
@@ -82,6 +82,24 @@ function PropsCard({ store }: { store: Store }) {
           </IconButton>
         </div>
         {!snap.collapsed && rows}
+        {!snap.collapsed && snap.layers && (
+          <>
+            <Row label="Layers">
+              <IconButton label="Send to back" onClick={() => store.layer("back")}><ToBackIcon /></IconButton>
+              <IconButton label="Send backward" onClick={() => store.layer("backward")}><BackwardIcon /></IconButton>
+              <IconButton label="Bring forward" onClick={() => store.layer("forward")}><ForwardIcon /></IconButton>
+              <IconButton label="Bring to front" onClick={() => store.layer("front")}><ToFrontIcon /></IconButton>
+            </Row>
+            <Row label="Actions">
+              <IconButton label="Duplicate" onClick={store.duplicate}><DuplicateIcon /></IconButton>
+              <IconButton label="Delete" onClick={store.remove}><TrashIcon /></IconButton>
+              <IconButton label="Lock" onClick={store.lock}><LockIcon /></IconButton>
+            </Row>
+          </>
+        )}
+        {!snap.collapsed && snap.anyLocked && (
+          <Button variant="quiet" onClick={store.unlockAll}>Unlock all</Button>
+        )}
       </div>
     </Card>
   );

@@ -190,3 +190,109 @@ describe("gestures and stability", () => {
     assert.equal(f.subs.size, 0);
   });
 });
+
+describe("text controls", () => {
+  const text = (extra: Rec = {}) => el("t", "text", { text: "hello", fontSize: 20, fontFamily: 5, lineHeight: 1.25, width: 50, height: 25, x: 100, y: 100, textAlign: "left", ...extra });
+  const sel = (sc: Rec[], more: Rec = {}) => fake({ activeTool: { type: "selection" }, selectedElementIds: { t: true }, ...more }, sc);
+
+  it("resizes the box about its centre when the size changes", () => {
+    const f = sel([text()]);
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    assert.deepEqual(store.get().controls, ["stroke", "opacity", "fontFamily", "fontSize", "textAlign"]);
+    store.set("fontSize", 36);
+    const out = (f.calls.scene[0].elements as Rec[])[0];
+    assert.equal(out.fontSize, 36);
+    assert.deepEqual([out.width, out.height, out.x, out.y], [90, 45, 80, 90]);
+    assert.equal(out.version, 6);
+    assert.equal(f.calls.scene[0].captureUpdate, NOW);
+  });
+  it("loads the font before it measures and writes", async () => {
+    const f = sel([text()]);
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    loads.length = 0;
+    await store.set("fontFamily", 6);
+    assert.deepEqual(loads, [[6, 20]]);
+    assert.deepEqual(f.calls.order, ["load", "update"]);
+    const out = (f.calls.scene[0].elements as Rec[])[0];
+    assert.equal(out.fontFamily, 6);
+    assert.equal(out.width, 5 * 20 * 0.5);
+  });
+  it("bound text keeps its box", () => {
+    const f = sel([text({ containerId: "c1" })]);
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    store.set("fontSize", 36);
+    const out = (f.calls.scene[0].elements as Rec[])[0];
+    assert.equal(out.fontSize, 36);
+    assert.deepEqual([out.x, out.y, out.width, out.height], [100, 100, 50, 25]);
+  });
+  it("alignment touches no geometry", () => {
+    const f = sel([text()]);
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    store.set("textAlign", "center");
+    const out = (f.calls.scene[0].elements as Rec[])[0];
+    assert.equal(out.textAlign, "center");
+    assert.deepEqual([out.x, out.y, out.width, out.height], [100, 100, 50, 25]);
+  });
+  it("a text tool with nothing selected edits the defaults", async () => {
+    const f = fake({ activeTool: { type: "text" } });
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    await store.set("fontSize", 28);
+    assert.deepEqual(f.calls.scene, [{ appState: { currentItemFontSize: 28 }, captureUpdate: NEVER }]);
+  });
+});
+
+describe("layers, duplicate, delete, lock", () => {
+  const two = () => [el("a", "rectangle"), el("b", "rectangle"), el("x", "rectangle", { locked: true })];
+  it("dispatch the action shortcuts and never edit the scene", () => {
+    const f = fake({ activeTool: { type: "selection" }, selectedElementIds: { a: true } }, two());
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    assert.equal(store.get().layers, true);
+    keys.length = 0;
+    store.layer("front");
+    store.layer("back");
+    store.layer("backward");
+    store.layer("forward");
+    store.duplicate();
+    store.remove();
+    assert.equal(keys.length, 6);
+    assert.equal(keys[0].shiftKey, true);
+    assert.equal(keys[0].code, "BracketRight");
+    assert.equal(keys[5].key, "Delete");
+    assert.equal(f.calls.scene.length, 0);
+    assert.equal(createPropsStore(fake({ activeTool: { type: "rectangle" } }).api, mkEnv() as never).get().layers, false);
+  });
+  it("lock clears the selection in the same update", () => {
+    const sc = two();
+    const f = fake({ activeTool: { type: "selection" }, selectedElementIds: { a: true } }, sc);
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    store.lock();
+    assert.equal(f.calls.scene.length, 1);
+    const call = f.calls.scene[0] as { elements: Rec[]; appState: Rec; captureUpdate: unknown };
+    assert.equal(call.elements[0].locked, true);
+    assert.equal(call.elements[0].version, 6);
+    assert.equal(call.elements[1], sc[1]);
+    assert.deepEqual(call.appState, { selectedElementIds: {} });
+    assert.equal(call.captureUpdate, NOW);
+  });
+  it("unlock all frees every locked element and is a no-op otherwise", () => {
+    const f = fake({ activeTool: { type: "selection" }, selectedElementIds: { a: true } }, two());
+    const store = createPropsStore(f.api, mkEnv(f) as never);
+    assert.equal(store.get().anyLocked, true);
+    store.unlockAll();
+    const out = (f.calls.scene[0].elements as Rec[]);
+    assert.equal(out[2].locked, false);
+    assert.equal(out[2].version, 6);
+    const g = fake({ activeTool: { type: "selection" }, selectedElementIds: { a: true } }, [el("a", "rectangle")]);
+    const s2 = createPropsStore(g.api, mkEnv(g) as never);
+    assert.equal(s2.get().anyLocked, false);
+    s2.unlockAll();
+    assert.equal(g.calls.scene.length, 0);
+  });
+  it("anyLocked is not recomputed on pointer moves", () => {
+    const f = fake({ activeTool: { type: "selection" }, selectedElementIds: { a: true } }, two());
+    createPropsStore(f.api, mkEnv(f) as never);
+    f.calls.read = 0;
+    for (let i = 0; i < 100; i++) f.set({ scrollX: i, cursorButton: "down" });
+    assert.equal(f.calls.read, 0);
+  });
+});

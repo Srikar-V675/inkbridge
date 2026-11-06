@@ -3,7 +3,7 @@
 // field changes. It is hooked on api.onChange, so it must stay cheap: a pointer move reads only
 // appState, and the scene is read once after a gesture ends and only when the card can show.
 import {
-  applyFlag, applyStyle, controlsFor, sourceFor, stateValue, statePatch, title, unlockAll, valueOf,
+  applyFlag, applyStyle, applyText, layerKey, type LayerKind, controlsFor, sourceFor, stateValue, statePatch, title, unlockAll, valueOf,
   type ControlId, type StyleEl, type ToolDefaults, type Value,
 } from "./propsLogic.ts";
 
@@ -133,6 +133,10 @@ export function createPropsStore(api: PropsApi, env: PropsEnv) {
     refresh();
   });
 
+  // Layers, duplicate and delete rebuild indexes, groups, bound text and arrows: Excalidraw's action manager
+  // does it, so the card sends the action's own shortcut to the canvas (the rail does the same for undo).
+  const key = (kind: LayerKind) => void env.container()?.dispatchEvent(env.makeKey(layerKey(kind, env.mac)));
+
   const toolOnly = (a: PropsState) => snap.source !== "selection" || a.editingTextElement != null;
 
   return {
@@ -141,8 +145,22 @@ export function createPropsStore(api: PropsApi, env: PropsEnv) {
       listeners.add(l);
       return () => void listeners.delete(l);
     },
-    set(control: ControlId, value: Value) {
+    /** Fonts load first, so the call may return a promise; the UI ignores it. */
+    set(control: ControlId, value: Value): void | Promise<void> {
       const a = api.getAppState();
+      if (!toolOnly(a) && (control === "fontFamily" || control === "fontSize") && typeof value === "number") {
+        const text = () => api.getSceneElementsIncludingDeleted();
+        const write = () => {
+          const scene = text();
+          const next = applyText(scene, selectedIds(api.getAppState()), control, value, env, env.measure);
+          if (next !== scene) api.updateScene({ elements: next, captureUpdate: env.immediately });
+          refresh();
+        };
+        if (control === "fontSize") return write();
+        const ids = selectedIds(a);
+        const first = text().find((e) => ids.has(e.id) && !e.isDeleted && e.type === "text");
+        return env.loadFont(value, first?.fontSize ?? 20).then(write);
+      }
       if (toolOnly(a)) {
         api.updateScene({ appState: statePatch(control, value), captureUpdate: env.never });
       } else {
@@ -152,6 +170,9 @@ export function createPropsStore(api: PropsApi, env: PropsEnv) {
       }
       refresh();
     },
+    layer: (kind: Exclude<LayerKind, "duplicate" | "delete">) => key(kind),
+    duplicate: () => key("duplicate"),
+    remove: () => key("delete"),
     toggleCollapsed() {
       collapsed = !collapsed;
       refresh();

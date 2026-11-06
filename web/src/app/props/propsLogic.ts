@@ -238,6 +238,27 @@ export function fitText(
   return { x: el.x + (el.width - width) / 2, y: el.y + (el.height - height) / 2, width, height };
 }
 
+/** Font family or size on the selected live, non-draft text: the style patch plus the re-measured box. */
+export function applyText(
+  scene: readonly StyleEl[], ids: ReadonlySet<string>, control: "fontFamily" | "fontSize", value: number, env: RestyleEnv,
+  measure: (line: string, fontSize: number, fontFamily: number) => number,
+): StyleEl[] {
+  let changed = false;
+  const out = scene.map((e) => {
+    if (!editable(e, ids) || e.type !== "text") return e;
+    const patch = elementPatch(control, value, e);
+    if (!patch || Object.entries(patch).every(([k, v]) => e[k] === v)) return e;
+    const next = {
+      fontSize: control === "fontSize" ? value : (e.fontSize ?? 20),
+      fontFamily: control === "fontFamily" ? value : (e.fontFamily ?? 5),
+    };
+    const box = fitText(e as unknown as TextBox, next, measure);
+    changed = true;
+    return restyle(e, { ...patch, ...box }, env);
+  });
+  return changed ? out : (scene as StyleEl[]);
+}
+
 const TOOL_TYPES = ["rectangle", "diamond", "ellipse", "arrow", "line", "text"];
 
 /** What the card edits: the selection, the tool defaults, or nothing (hidden). Drafts are the agent's: never shown. */
