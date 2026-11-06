@@ -77,10 +77,10 @@ const sigOf = (els: readonly SceneElement[]): Sig => {
 };
 const sigMatches = (s: Sig, els: readonly SceneElement[]): boolean => {
   if (s.ids.length !== els.length) return false;
-  for (let i = 0; i < els.length; i++) if (els[i].version !== s.vers[i] || els[i].id !== s.ids[i]) return false;
+  for (let i = 0; i < els.length; i++) if (!Object.is(els[i].version, s.vers[i]) || els[i].id !== s.ids[i]) return false; // Object.is: NaN equals itself
   return true;
 };
-const sameSig = (a: Sig, b: Sig) => a.ids.length === b.ids.length && a.ids.every((id, i) => id === b.ids[i] && a.vers[i] === b.vers[i]);
+const sameSig = (a: Sig, b: Sig) => a.ids.length === b.ids.length && a.ids.every((id, i) => id === b.ids[i] && Object.is(a.vers[i], b.vers[i]));
 
 const nonce = (e: SceneElement) => (e.versionNonce as number | undefined) ?? 0;
 // Excalidraw's undo and edits always bump `version` (never reuse an older number), so deltaFor stays safe.

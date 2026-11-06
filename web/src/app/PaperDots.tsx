@@ -27,8 +27,9 @@ export function PaperDots({ api }: { api: ExcalidrawImperativeAPI }) {
       const snap = (n: number) => Math.round(n * dpr) / dpr;
       node.style.transform = `translate3d(${snap(d.x)}px, ${snap(d.y)}px, 0)`; // pan: compositor only
     };
-    // One write per frame, queued after Excalidraw's own throttled redraw (it requests its frame
-    // earlier in the same commit), so the dots and the ink move in the same frame.
+    // One write per frame, in a requestAnimationFrame callback. Whether it lands in the same frame
+    // as Excalidraw's throttled redraw of the ink is not verified (tablet check, decision 0073); if
+    // the dots trail by a frame, write the transform synchronously in onScrollChange instead.
     const schedule = () => {
       if (!raf) raf = requestAnimationFrame(paint);
     };

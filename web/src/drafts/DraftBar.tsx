@@ -31,8 +31,9 @@ function useDraftOps(api: ExcalidrawImperativeAPI): { opId: string; count: numbe
       setOps(next);
     };
     update(api.getSceneElementsIncludingDeleted());
-    // Drafts only enter or leave through updateScene({ elements }), which replaces the array: while
-    // the same array comes back (a pen point, a pan frame) nothing to rescan (INK-174).
+    // Relies on an Excalidraw invariant: insert, erase and every updateScene({ elements }) hand out a
+    // NEW array, while a pen point or pan frame returns the same one, so identical means nothing to
+    // rescan (INK-174). An in-place `isDeleted` mutation of a draft would leave the bar stale.
     const same = createGate();
     return api.onChange((els) => {
       if (same(els)) return;

@@ -762,6 +762,16 @@ describe("SceneSync.notify cost and exactness (INK-174)", () => {
     assert.equal(h.sync.notify([a]), true);
   });
 
+  it("a NaN version equals itself: an unchanged list never counts as a change (no re-save loop)", async () => {
+    const h = await loaded([]);
+    const els = [el("a", Number.NaN)];
+    assert.equal(h.sync.notify(els), true);
+    assert.equal(h.sync.notify(els), false);
+    await h.sync.flushNow(); // sameSig(pending, sent) must also hold, or the save would stay pending
+    assert.equal(h.sync.notify(els), false);
+    assert.equal(h.sync.settledVersion(), 2);
+  });
+
   it("a reorder, or the same version under another id, is a change", async () => {
     const h = await loaded([el("a"), el("b")]);
     assert.equal(h.sync.notify([el("b"), el("a")]), true);
