@@ -76,6 +76,8 @@ describe("text helpers", () => {
   it("canvasMeta", () => {
     assert.equal(canvasMeta(canvas("a", { updated_at: ago(12 * MIN), chunk_count: 11 }), NOW), "Edited 12 minutes ago, 11 chunks");
     assert.equal(canvasMeta(canvas("a", { updated_at: ago(12 * MIN), chunk_count: 1 }), NOW), "Edited 12 minutes ago, 1 chunk");
+    assert.equal(canvasMeta(canvas("a", { updated_at: ago(5_000), chunk_count: 2 }), NOW), "Edited just now, 2 chunks");
+    assert.equal(canvasMeta(canvas("a", { updated_at: new Date(2026, 10, 5, 22, 0).toISOString(), chunk_count: 2 }), NOW), "Edited yesterday, 2 chunks");
     assert.equal(canvasMeta(canvas("a", { element_count: 0, chunk_count: 0 }), NOW), "No ink yet");
   });
   it("offerLabel and newCanvasTitle", () => {

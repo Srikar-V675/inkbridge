@@ -60,7 +60,8 @@ export function relativeTime(iso: string, now: Date): string {
 export function canvasMeta(c: CanvasSummary, now: Date): string {
   if (c.element_count === 0) return "No ink yet";
   const when = relativeTime(c.updated_at, now);
-  return `Edited ${when === "Yesterday" ? "yesterday" : when}, ${plural(c.chunk_count, "chunk")}`;
+  const phrase = when === "Yesterday" || when === "Just now" ? when.toLowerCase() : when;
+  return `Edited ${phrase}, ${plural(c.chunk_count, "chunk")}`;
 }
 
 export const offerLabel = (n: number): string => (n > 0 ? plural(n, "draft") : "");

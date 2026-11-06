@@ -159,7 +159,7 @@ export function Home() {
     />
   );
   const item = (c: CanvasSummary, variant: "feature" | "row" | "tile") => (
-    <Item key={c.id} canvas={c} variant={variant} now={now} menuOpen={menuFor === c.id} openMenu={() => setMenuFor(c.id)} menu={menuFrom(c)} />
+    <Item key={c.id} canvas={c} variant={variant} now={now} menuOpen={menuFor === `${variant}:${c.id}`} openMenu={() => setMenuFor(`${variant}:${c.id}`)} menu={menuFrom(c)} />
   );
 
   const sections = useMemo(() => homeSections(canvases ?? [], archivedView ? "" : query, now), [canvases, query, now, archivedView]);
@@ -184,7 +184,7 @@ export function Home() {
           <span className="ink-home-spacer" />
           <button type="button" className="ink-home-textlink" onClick={() => showArchived(false)}>Back to canvases</button>
         </div>
-        {canvases.length === 0 ? <p className="ink-home-state">Nothing archived.</p> : <div className="ink-home-grid">{sections.all.map((c) => item(c, "tile"))}</div>}
+        {canvases.length === 0 ? <p className="ink-home-state">Nothing archived.</p> : <div className="ink-home-grid">{canvases.map((c) => item(c, "tile"))}</div>}
       </section>
     );
   } else if (canvases.length === 0) {
