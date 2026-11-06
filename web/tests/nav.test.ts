@@ -95,6 +95,7 @@ describe("backTo and history", () => {
     backTo("/", f.win);
     navigate("/?view=archived", {}, f.win);
     backTo("/", f.win);
+    assert.deepEqual(f.calls.filter((c) => c === "back"), ["back"]);
     assert.equal(f.urls().length, 3);
     assert.equal(f.index(), 1);
     assert.equal(f.here(), "/");
@@ -103,6 +104,7 @@ describe("backTo and history", () => {
     const f = fakeWin("/", "?canvas=a");
     navigate("/?canvas=b", {}, f.win);
     backTo("/", f.win);
+    assert.ok(!f.calls.includes("back"));
     assert.equal(f.urls().length, 3);
     assert.equal(f.here(), "/");
   });
@@ -123,6 +125,16 @@ describe("backTo and history", () => {
     assert.equal(titleHint("b", f.win), null);
     navigate("/?canvas=b", {}, f.win);
     assert.equal(titleHint("b", f.win), null);
+  });
+  it("titleHint is null without history state or with a foreign one", () => {
+    const f = fakeWin();
+    assert.equal(titleHint("a", f.win), null); // state is null
+    (f.win as unknown as Window).history.replaceState("junk", "", "/");
+    assert.equal(titleHint("a", f.win), null);
+    (f.win as unknown as Window).history.replaceState({ hint: { canvas: "a", title: "" } }, "", "/");
+    assert.equal(titleHint("a", f.win), null); // an empty title is no hint
+    (f.win as unknown as Window).history.replaceState({ other: 1 }, "", "/");
+    assert.equal(titleHint("a", f.win), null);
   });
   it("replace keeps prev", () => {
     const f = fakeWin("/", "");

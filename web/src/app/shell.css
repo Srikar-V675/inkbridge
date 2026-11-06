@@ -19,6 +19,13 @@
   inset: 0;
   z-index: 1;
 }
+/* While the scene loads Excalidraw is already mounted: this catches pen and touch so nothing is drawn into it. */
+.ink-shell__loading {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  touch-action: none;
+}
 /* The canvas did not open (INK-172): soft ink on paper, one way home. */
 .ink-shell__state {
   position: absolute;

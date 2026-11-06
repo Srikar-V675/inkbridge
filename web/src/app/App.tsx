@@ -160,7 +160,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const [title, setTitle] = useState(hint ?? route.canvas);
   useEffect(() => {
     // A hint can be stale (renamed elsewhere), so it is refreshed once the canvas has painted.
-    if (hint) return gate.whenReady(() => void fetchTitle(route.canvas).then(setTitle));
+    // fetchTitle answers the raw id when the request fails: that must not replace a real title.
+    if (hint) return gate.whenReady(() => void fetchTitle(route.canvas).then((t) => t !== route.canvas && setTitle(t)));
     void fetchTitle(route.canvas).then(setTitle);
   }, [route.canvas, hint, gate]);
 
@@ -296,11 +297,11 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
 
   // Agent ops arrive over the WebSocket once the canvas exists; they are drawn as dashed drafts.
   const open = initial !== null && initial !== "failed" && initial !== "missing";
-  const canvasReady = open;
-  // Excalidraw is up before the scene arrives, but not when the canvas did not open: no rail then.
-  const liveApi = open || initial === null ? api : null;
+  // Excalidraw is up before the scene arrives, but nothing may act on it until the scene is open:
+  // a stroke or a rail tap in that window would be replaced by the scene when it lands.
+  const liveApi = open ? api : null;
   useEffect(() => {
-    if (!canvasReady) return;
+    if (!open) return;
     const sweep = (opId: string) => {
       const api = apiRef.current;
       if (!api) return;
@@ -368,7 +369,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       socket.dispose();
       wire.off();
     };
-  }, [canvasReady, route.canvas, apiReady, refresh, unseen, gate]);
+  }, [open, route.canvas, apiReady, refresh, unseen, gate]);
 
   const onChange = useCallback(
     (
@@ -450,6 +451,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       {(initial === "missing" || initial === "failed") && (
         <CanvasState kind={initial === "missing" ? "missing" : "error"} canvas={route.canvas} />
       )}
+      {initial === null && <div className="ink-shell__loading" aria-hidden />}
       {open || initial === null ? <Canvas initialData={sceneData.promise} onApi={onApi} onChange={onChange} /> : null}
       {api && open && (
         <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
