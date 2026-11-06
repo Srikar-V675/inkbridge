@@ -23,7 +23,7 @@ function sources(): Record<string, string> {
 
 const HEX = /#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b/;
 // Pre-v4 surfaces that still hold inline hex; later screen tickets rebuild them. The list can only shrink.
-const LEGACY = ["app/App.tsx", "ask/AskPanel.tsx", "chunks/ChunkOverlay.tsx", "drafts/DraftBar.tsx"];
+const LEGACY = ["app/App.tsx", "ask/AskPanel.tsx", "chunks/ChunkOverlay.tsx"];
 
 /** Files (relative to src) that name a hex colour, except tokens.css. */
 function hexOffenders(files: Record<string, string>): string[] {

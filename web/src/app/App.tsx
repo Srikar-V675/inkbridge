@@ -399,7 +399,12 @@ export default function App() {
       api={api}
       title={title}
       status={<StatusSlot store={status} />}
-      overlays={noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} />}
+      overlays={
+        <>
+          {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} />}
+          {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
+        </>
+      }
       onAsk={() => setAskOpen((o) => !o)}
       askOpen={askOpen}
     >
@@ -413,7 +418,6 @@ export default function App() {
           refresh={refresh}
         />
       )}
-      {api && <DraftBar api={api} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
       {api && initial && initial !== "failed" && (
         <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
       )}

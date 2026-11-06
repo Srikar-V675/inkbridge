@@ -23,3 +23,16 @@ describe("shell layers (decision 0068)", () => {
     assert.match(css, /\.ink-shell__overlays\s*\{[^}]*pointer-events:\s*none/);
   });
 });
+
+describe("draft bar css (INK-162)", () => {
+  const css = read("drafts/DraftBar.css");
+  it("the tray and card use tokens, the card is dashed charcoal, never the agent colour", () => {
+    assert.match(css, /\.ink-draft-card\s*\{[^}]*dashed var\(--color-charcoal\)/);
+    assert.match(css, /\.ink-draft-tray\s*\{[^}]*background:\s*var\(--color-charcoal\)/);
+  });
+  it("DraftBar composes Button, Badge, Chip and Toast, not raw buttons", () => {
+    const tsx = read("drafts/DraftBar.tsx");
+    assert.ok(!tsx.includes("<button"));
+    for (const name of ["Button", "Badge", "Chip", "Toast", "DraftDot"]) assert.ok(tsx.includes(name), name);
+  });
+});

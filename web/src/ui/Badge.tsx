@@ -5,3 +5,8 @@ import './Badge.css'
 export function Badge({ children = 'Draft' }: { children?: ReactNode }) {
   return <span className="ink-badge">{children}</span>
 }
+
+/** The small dot on the draft tray. */
+export function DraftDot() {
+  return <span className="ink-badge-dot" aria-hidden />
+}
