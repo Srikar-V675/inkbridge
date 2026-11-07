@@ -127,7 +127,7 @@ def test_migration_0007(tmp_path, monkeypatch):
     )
     conn.commit()
     monkeypatch.undo()
-    assert db.migrate(conn) == [7]
+    assert db.migrate(conn) == [7, 8]
     r = conn.execute("SELECT pinned, archived_at, last_opened_at FROM documents").fetchone()
     assert (r["pinned"], r["archived_at"], r["last_opened_at"]) == (0, None, None)
     # the stored count is backfilled: live elements only, no deleted ones and no drafts

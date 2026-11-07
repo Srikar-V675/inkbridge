@@ -3,6 +3,7 @@ import shutil
 
 from inkbridge import db
 from inkbridge.canvas.hashes import content_hash, stroke_hash, text_hash
+from tests.scene_rows import set_scene
 from tests.test_regions_api import SCENE, A, B, post
 from tests.test_search import recognise, search
 
@@ -116,7 +117,7 @@ def test_migration_applies_on_a_v1_database_without_losing_readings(tmp_path, mo
     )
     conn.commit()
     monkeypatch.undo()  # back to the real migrations directory
-    assert db.migrate(conn) == [4, 5, 6, 7]
+    assert db.migrate(conn) == [4, 5, 6, 7, 8]
     region = db.get_region(conn, "r1")
     assert region["content_hash"] == content_hash([A])
     assert region["text"] == "kept reading"
@@ -130,10 +131,7 @@ def test_backfill_reruns_if_a_previous_run_was_interrupted(tmp_path):
     conn = db.connect(tmp_path / "t.db")
     db.migrate(conn)
     db.ensure_default_document(conn)
-    conn.execute(
-        "UPDATE scenes SET version = 1, elements_json = ? WHERE document_id = 'default'",
-        (json.dumps([A]),),
-    )
+    set_scene(conn, "default", [A], version=1)
     conn.execute(
         "INSERT INTO regions (id, document_id, element_ids_json, bbox, created_by, stroke_hash,"
         " png_path, status, updated_at) VALUES ('r1','default','[\"a\"]','{}','user',?,'p','active','t')",
