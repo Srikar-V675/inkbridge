@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from inkbridge.db import tasks as tasks_db
 from inkbridge.db.common import DocumentNotFound, _now
 
 OFFER_BUDGET = 3
@@ -159,7 +160,7 @@ def open_offers(conn: sqlite3.Connection, document_id: str) -> list[dict]:
     return list_offers(conn, document_id, "open")
 
 
-def _resolve(conn: sqlite3.Connection, offer_id: str, status: str) -> dict:
+def _resolve(conn: sqlite3.Connection, offer_id: str, status: str, after=None) -> dict:
     conn.execute("BEGIN IMMEDIATE")
     try:
         cur = get_offer(conn, offer_id)
@@ -168,6 +169,8 @@ def _resolve(conn: sqlite3.Connection, offer_id: str, status: str) -> dict:
         conn.execute(
             "UPDATE offers SET status=?, resolved_at=? WHERE id=?", (status, _now(), offer_id)
         )
+        if after:
+            after(conn, cur)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -176,7 +179,23 @@ def _resolve(conn: sqlite3.Connection, offer_id: str, status: str) -> dict:
 
 
 def tap_offer(conn: sqlite3.Connection, offer_id: str) -> dict:
-    return _resolve(conn, offer_id, "tapped")  # task_id stays null until the agent_tasks ticket
+    def make_task(conn: sqlite3.Connection, o: dict) -> None:
+        task = tasks_db.create_task(
+            conn,
+            o["document_id"],
+            "offer",
+            offer_id=o["id"],
+            input={
+                "mode": tasks_db.OFFER_MODE.get(o["kind"], "question"),
+                "offer_kind": o["kind"],
+                "anchor_chunk": o["anchor_chunk"],
+                "reason": o["reason"],
+                "payload": o["payload"],
+            },
+        )
+        conn.execute("UPDATE offers SET task_id=? WHERE id=?", (task["id"], o["id"]))
+
+    return _resolve(conn, offer_id, "tapped", make_task)
 
 
 def dismiss_offer(conn: sqlite3.Connection, offer_id: str) -> dict:
