@@ -137,6 +137,7 @@ def read_canvas(
     offset continues it.
     read_status `too_large` (with read_note) means the chunk is not readable at a useful scale:
     ask the user to split it, do not guess.
+    The reply starts with the canvas `brief` (set_canvas_brief).
     The overview images are for orientation only: a spread-out canvas is drawn in several images
     (at most three per call, in reading order), and the reply names the offset that continues
     them. Read a chunk's ink and reading with get_region.
@@ -147,6 +148,10 @@ def read_canvas(
     except ApiError as e:
         raise ToolError(str(e)) from e
     head = {k: data[k] for k in ("document", "version", "chunk_count")}
+    try:
+        head["brief"] = client.get_brief(document_id)["brief"]
+    except ApiError as e:
+        raise ToolError(str(e)) from e
     chunks = [_outline_chunk(c) for c in data["chunks"][offset:]]
     content: list = [_fit(head, chunks, offset)]
     if include_overview:

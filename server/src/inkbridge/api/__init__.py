@@ -19,6 +19,7 @@ from inkbridge.api import (
     chunks,
     debug,
     graph,
+    memory,
     offers,
     ops,
     overrides,
@@ -95,6 +96,7 @@ app.include_router(retrieve.router)
 app.include_router(search.router)
 app.include_router(sync.router)
 app.include_router(watch.router)
+app.include_router(memory.router)
 app.include_router(ws.router)
 if debug.enabled():  # absent unless INKBRIDGE_DEVICE_LOG=1 (INK-102)
     app.include_router(debug.router)

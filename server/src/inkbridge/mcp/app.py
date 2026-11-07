@@ -11,7 +11,11 @@ mcp = MCPServer(
     instructions=(
         "Inkbridge exposes a handwritten canvas split into chunks (one idea each). Call "
         "read_canvas first for the whole canvas in reading order, then get_region for the image "
-        "and transcription of one chunk or saved region."
+        "and transcription of one chunk or saved region. "
+        "Before anything else call what_changed (the chunks the user touched since you last "
+        "looked; pass mark_seen=true once you have handled them), and read the brief that "
+        "read_canvas returns; if the brief is empty or out of date, write one with "
+        "set_canvas_brief."
     ),
 )
 

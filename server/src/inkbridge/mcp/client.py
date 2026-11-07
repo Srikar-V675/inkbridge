@@ -117,6 +117,19 @@ class ApiClient:
             raise self._status_error(r.status_code)
         return r
 
+    def _put(self, path: str, body: dict) -> httpx.Response:
+        try:
+            r = self.http.put(path, json=body)
+        except httpx.HTTPError as e:
+            raise self._wrap(e) from e
+        if r.status_code == 404:
+            raise NotFound(NO_CANVAS)
+        if r.status_code == 422:
+            raise ApiError("The Inkbridge API rejected the request (422): brief is over 4000 characters.")
+        if not r.is_success:
+            raise self._status_error(r.status_code)
+        return r
+
     def _json(self, r: httpx.Response) -> Any:
         try:
             return r.json()
@@ -187,6 +200,19 @@ class ApiClient:
             "direction": direction,
             "mermaid": str(mermaid).lower(),
         }
+        return self._json(self._get(path, params, not_found=NO_CANVAS))
+
+    def get_brief(self, document_id: str | None) -> dict:
+        path = f"/documents/{self._document(document_id)}/brief"
+        return self._json(self._get(path, not_found=NO_CANVAS))
+
+    def set_brief(self, document_id: str | None, brief: str) -> dict:
+        path = f"/documents/{self._document(document_id)}/brief"
+        return self._json(self._put(path, {"brief": brief}))
+
+    def get_changes(self, document_id: str | None, since: int | None, mark_seen: bool) -> dict:
+        path = f"/documents/{self._document(document_id)}/changes"
+        params = {"since": since, "mark_seen": "true" if mark_seen else None}
         return self._json(self._get(path, params, not_found=NO_CANVAS))
 
     def get_components(self, document_id: str | None) -> dict:
