@@ -156,8 +156,9 @@ export class SceneSync {
   // Saves send only elements whose version differs, so a save costs the edit, not the page.
   private baseline: Map<string, number> | null = null;
   // LAN HTTP is not a secure context, so crypto.randomUUID may be missing.
-  private readonly tabId = Math.random().toString(36).slice(2, 10);
+  readonly tabId = Math.random().toString(36).slice(2, 10);
   private seq = 0;
+  private loadSeq = 0;
   // Set while a PUT has no definite HTTP answer (network error or timeout); the next attempt reuses it.
   private unsettled: SaveRequest | null = null;
 
@@ -193,12 +194,14 @@ export class SceneSync {
       const body = (await r.json()) as { version: number; elements: SceneElement[] };
       this.o.clock?.mark("parse", { elements: body.elements.length }); // body download + parse
       this.version = body.version;
+      this.loadSeq = body.version;
       this.lastSig = sigOf(body.elements);
       this.savedIds = liveIds(body.elements);
       this.baseline = versions(body.elements);
       this.pending = null;
       this.unsettled = null;
       this.loaded = true;
+      this.latest ??= body.elements; // a remote delta before the first onChange still needs the whole scene
       record("scene.load", performance.now() - t0, { elements: body.elements.length });
       this.emit("saved");
       return body.elements;
@@ -365,6 +368,16 @@ export class SceneSync {
     } finally {
       this.saving = false;
     }
+  }
+
+  get loadedSeq() {
+    return this.loadSeq;
+  }
+
+  /** Show elements another device wrote (scene.delta). Moves the save baseline so they are not saved back. */
+  applyRemote(remote: readonly SceneElement[]) {
+    if (this.disposed || !this.loaded || remote.length === 0) return;
+    this.applyNewerAnswer(remote, !this.pending);
   }
 
   // The server kept elements that beat ours (another device's ink, or a higher version). Show them

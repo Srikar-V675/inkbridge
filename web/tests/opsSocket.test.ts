@@ -138,6 +138,19 @@ describe("OpsSocket", () => {
     assert.deepEqual(got, [{ id: "q1" }]);
   });
 
+  it("passes scene.delta to its hook", () => {
+    let sock!: FakeSocket;
+    const got: unknown[] = [];
+    new OpsSocket({
+      url: "x",
+      onOp: async () => [],
+      onSceneDelta: (m) => got.push(m),
+      createSocket: () => (sock = new FakeSocket()),
+    }).start();
+    sock.push({ type: "scene.delta", seq: 4, origin: "t1", elements: [{ id: "a" }] });
+    assert.deepEqual(got, [{ type: "scene.delta", seq: 4, origin: "t1", elements: [{ id: "a" }] }]);
+  });
+
   it("reports connect and disconnect, so the chunk list refetches on reconnect", () => {
     const got: boolean[] = [];
     let sock!: FakeSocket;
