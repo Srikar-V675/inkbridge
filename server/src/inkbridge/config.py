@@ -76,3 +76,14 @@ def crop_source() -> str:
         file=sys.stderr,
     )
     return "browser"
+
+
+def chunker() -> str:
+    """INKBRIDGE_CHUNKER: 'v1' (default) or 'v2' (INK-122). A canvas's own setting wins. Read at call time."""
+    raw = (os.environ.get("INKBRIDGE_CHUNKER") or "").strip().lower()
+    if raw in ("", "v1"):
+        return "v1"
+    if raw == "v2":
+        return "v2"
+    print(f"inkbridge: ignoring INKBRIDGE_CHUNKER={raw!r} (want v1 or v2)", file=sys.stderr)
+    return "v1"

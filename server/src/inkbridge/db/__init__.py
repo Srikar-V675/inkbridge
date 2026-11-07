@@ -14,6 +14,7 @@ from inkbridge.db.chunks import (
     _read_agent_chunk,
     _sync_chunks,
     merge_chunks,
+    set_chunker,
     split_chunk,
 )
 from inkbridge.db.common import AUTO, DEFAULT_DOCUMENT_ID, DocumentNotFound, _now, connect
@@ -30,6 +31,7 @@ from inkbridge.db.documents import (
     document_summary,
     document_updated_at,
     ensure_default_document,
+    get_chunker,
     get_live_scene,
     get_scene,
     list_documents,
@@ -143,6 +145,7 @@ __all__ = [
     "document_updated_at",
     "ensure_crop",
     "ensure_default_document",
+    "get_chunker",
     "get_live_scene",
     "get_region",
     "get_region_ink",
@@ -170,6 +173,7 @@ __all__ = [
     "scene_version",
     "scene_version_of_region",
     "search",
+    "set_chunker",
     "shrink_tombstones",
     "split_chunk",
     "stale_crop_ids",

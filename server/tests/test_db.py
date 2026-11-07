@@ -5,7 +5,15 @@ import pytest
 from inkbridge import config, db
 
 EXPECTED = {
-    "documents": {"id", "title", "updated_at", "pinned", "archived_at", "last_opened_at"},
+    "documents": {
+        "id",
+        "title",
+        "updated_at",
+        "pinned",
+        "archived_at",
+        "last_opened_at",
+        "chunker",
+    },
     "scenes": {"document_id", "version", "elements_json", "updated_at", "element_count"},
     "scene_elements": {
         "document_id",
