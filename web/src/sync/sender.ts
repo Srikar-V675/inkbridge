@@ -26,9 +26,9 @@ export class Sender {
   private now() {
     return (this.o.now ?? Date.now)();
   }
-  /** Requests on the wire, and whether the last one failed (no definite answer since). */
+  /** Entries on the wire, and whether the last one failed (no definite answer since). */
   get busy() {
-    return this.flights.size;
+    return this.inflight.size;
   }
   get failing() {
     return this.failures > 0;
@@ -44,22 +44,24 @@ export class Sender {
       ctl.signal.addEventListener("abort", () => bad(new Error("send timed out")));
     });
     const timer = setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);
-    const flight: Promise<void> = Promise.race([this.o.send(batch.map((e) => e.el), ctl.signal), timeout])
-      .then(
-        () => {
-          this.failures = 0;
-          this.o.ack(batch);
-        },
-        (err) => {
-          this.notBefore = now + BACKOFF_MS[Math.min(this.failures++, BACKOFF_MS.length - 1)];
-          this.o.fail(err);
-        },
-      )
-      .finally(() => {
-        clearTimeout(timer);
-        batch.forEach((e) => this.inflight.delete(e.k));
-        this.flights.delete(flight);
-      });
+    // Free the entries before ack/fail run, so a caller reading state in them sees nothing in flight.
+    const free = () => {
+      clearTimeout(timer);
+      batch.forEach((e) => this.inflight.delete(e.k));
+      this.flights.delete(flight);
+    };
+    const flight: Promise<void> = Promise.race([this.o.send(batch.map((e) => e.el), ctl.signal), timeout]).then(
+      () => {
+        free();
+        this.failures = 0;
+        this.o.ack(batch);
+      },
+      (err) => {
+        free();
+        this.notBefore = now + BACKOFF_MS[Math.min(this.failures++, BACKOFF_MS.length - 1)];
+        this.o.fail(err);
+      },
+    );
     this.flights.add(flight);
   }
   /** Send now, ignoring the backoff (online event, page hide). */

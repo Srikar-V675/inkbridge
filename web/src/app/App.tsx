@@ -22,6 +22,7 @@ import { LiveDelta } from "../sync/liveDelta";
 import type { Location } from "../lib/route";
 import { createLoadClock } from "../sync/loadClock";
 import { createStartupGate } from "../sync/startupGate";
+import { openJournal } from "../sync/journal";
 import { SceneSync, type SceneElement } from "../sync/sceneSync";
 import { titleHint } from "../lib/nav";
 import { createStatusStore } from "../lib/status";
@@ -138,6 +139,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const syncRef = useRef<SceneSync | null>(null);
   const cropRef = useRef<CropSync | null>(null);
   const liveRef = useRef<LiveDelta | null>(null);
+  // Merges what the server has beyond the device copy; runs once the scene is mounted (INK-113).
+  const catchUpRef = useRef<(() => void) | null>(null);
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
   const pendingJump = useRef<JumpResult | null>(null);
@@ -173,9 +176,10 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   // (it keeps freedraw pressures and simulatePressure=false).
   useEffect(() => {
     // Server-made chunks get their crop PNGs from here, only while the canvas is idle and saved.
+    let sync: SceneSync | null = null; // created once the journal is open; Excalidraw does not wait for it
     const crops = new CropSync({
       documentId: route.canvas,
-      settledVersion: () => sync.settledVersion(),
+      settledVersion: () => sync?.settledVersion() ?? null,
       exportPng: async (ids) => {
         const api = apiRef.current;
         if (!api) return null;
@@ -202,33 +206,6 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
         if (serverRendersCrops(h)) crops.dispose();
       })
       .catch(() => {});
-    const sync = new SceneSync({
-      documentId: route.canvas,
-      clock,
-      storage: window.localStorage,
-      onState: (state, detail) => {
-        status.set(state, detail);
-        // Every save may have left chunks with stale crops (chunks.updated also asks, when connected).
-        if (state === "saved") crops.request();
-      },
-      onReload: (elements) => {
-        const api = apiRef.current;
-        if (!api) return;
-        // Keep the live objects of local elements (one may be a stroke still being drawn) and
-        // restore only the ones that came from the server.
-        const live = new Set<unknown>(api.getSceneElementsIncludingDeleted());
-        const restored = restoreElements(elements.filter((e) => !live.has(e)) as never, null);
-        const byId = new Map(restored.map((e) => [e.id, e]));
-        try {
-          api.updateScene({
-            elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
-            // Ink another device wrote is not this user's edit: Ctrl+Z must not undo it.
-            captureUpdate: CaptureUpdateAction.NEVER,
-          });
-        } catch {} // the final save on leave (sync.close) can land after Excalidraw unmounted
-      },
-    });
-    syncRef.current = sync;
     let cancelled = false;
     // The deep-linked chunk resolves beside the scene load and never holds the canvas back: it is
     // applied on the first change event, or as soon as it arrives if the scene is already up.
@@ -241,27 +218,62 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
         else pendingJump.current = resolved;
       });
     }
-    void sync.load().then((elements) => {
+    void openJournal().then((journal) => {
       if (cancelled) return;
-      if (!elements) {
-        sceneData.resolve(null);
-        return setInitial(sync.notFound ? "missing" : "failed");
-      }
-      // A link wins over the remembered view (it is fitted to all ink until the chunk arrives).
-      const view = route.chunk ? null : loadView(window.localStorage, route.canvas);
-      const restored = restoreElements(elements as never, null);
-      clock.mark("restore", { elements: restored.length });
-      // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
-      fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
-      sceneData.resolve({ elements: restored, appState: initialAppState(view) });
-      setInitial({ elements: restored, view });
+      const created = new SceneSync({
+        documentId: route.canvas,
+        clock,
+        journal,
+        onState: (state, detail) => {
+          status.setDevice(created.journalOk);
+          status.set(state, detail);
+          // Every save may have left chunks with stale crops (chunks.updated also asks, when connected).
+          if (state === "saved") crops.request();
+        },
+        onReload: (elements) => {
+          const api = apiRef.current;
+          if (!api) return;
+          // Keep the live objects of local elements (one may be a stroke still being drawn) and
+          // restore only the ones that came from the server.
+          const live = new Set<unknown>(api.getSceneElementsIncludingDeleted());
+          const restored = restoreElements(elements.filter((e) => !live.has(e)) as never, null);
+          const byId = new Map(restored.map((e) => [e.id, e]));
+          try {
+            api.updateScene({
+              elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
+              // Ink another device wrote is not this user's edit: Ctrl+Z must not undo it.
+              captureUpdate: CaptureUpdateAction.NEVER,
+            });
+          } catch {} // the final save on leave (sync.close) can land after Excalidraw unmounted
+        },
+      });
+      sync = created;
+      syncRef.current = created;
+      created.load().then((elements) => {
+        if (cancelled) return;
+        if (!elements) {
+          sceneData.resolve(null);
+          return setInitial(created.notFound ? "missing" : "failed");
+        }
+        status.setDevice(created.journalOk);
+        created.sender.start();
+        // A link wins over the remembered view (it is fitted to all ink until the chunk arrives).
+        const view = route.chunk ? null : loadView(window.localStorage, route.canvas);
+        const restored = restoreElements(elements as never, null);
+        clock.mark("restore", { elements: restored.length });
+        // Fit only a canvas that has ink: on a blank one the "first change" is the user's first stroke.
+        fitOnOpen.current = !view && restored.some((e) => !e.isDeleted);
+        sceneData.resolve({ elements: restored, appState: initialAppState(view) });
+        setInitial({ elements: restored, view });
+      });
     });
+    const onOnline = () => sync?.sender.kick();
     const onHide = () => {
       if (document.visibilityState !== "hidden") return;
       onBlur();
-      void sync.flushNow();
+      void sync?.flushNow();
     };
-    const onPageHide = () => void sync.flushNow();
+    const onPageHide = () => void sync?.flushNow();
     // A pen, finger or mouse held down on the canvas means drawing: no crop export until it lifts.
     const down = new Set<number>();
     const onDown = (e: PointerEvent) => (down.add(e.pointerId), crops.setDrawing(true));
@@ -277,6 +289,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     window.addEventListener("pointerup", onUp, true);
     window.addEventListener("pointercancel", onUp, true);
     window.addEventListener("blur", onBlur);
+    window.addEventListener("online", onOnline);
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onHide);
@@ -285,7 +298,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       window.removeEventListener("pointerup", onUp, true);
       window.removeEventListener("pointercancel", onUp, true);
       window.removeEventListener("blur", onBlur);
-      void sync.close();
+      window.removeEventListener("online", onOnline);
+      void sync?.close();
       crops.dispose();
     };
   }, [route.canvas, route.chunk, status, clock, sceneData]);
@@ -330,6 +344,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     });
     live.setSeq(syncRef.current?.loadedSeq ?? 0);
     liveRef.current = live;
+    catchUpRef.current = () => void live.catchUp().then(() => syncRef.current?.snapshot(live.lastSeq));
+    if (sceneReady.current) catchUpRef.current();
     const offWake = onVisible(document, () => void live.catchUp());
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}&device=${encodeURIComponent(tab)}`,
@@ -392,6 +408,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       wire.off();
       offWake();
       liveRef.current = null;
+      catchUpRef.current = null;
     };
   }, [open, route.canvas, apiReady, refresh, unseen, gate]);
 
@@ -413,6 +430,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
         // Crop sync and the ops socket wait until the scene has painted and the browser is idle.
         gate.whenReady(() => cropRef.current?.start());
         gate.open();
+        catchUpRef.current?.();
       }
       sceneReady.current = true;
       if (pendingJump.current && apiRef.current) {

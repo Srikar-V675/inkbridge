@@ -7,7 +7,7 @@ import "./status.css";
 
 export function StatusSlot({ store }: { store: ReturnType<typeof createStatusStore> }) {
   const status = useSyncExternalStore(store.subscribe, store.get);
-  const v = statusView(status);
+  const v = statusView(status, status.onDevice);
   return (
     <span role="status" aria-live="polite" className={`ink-status ink-status--${v.tone}`} title={v.title}>
       {v.tone === "quiet" && <CheckIcon />}
