@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from inkbridge import db
 from inkbridge.canvas.sketch import read_sketch
+from inkbridge.db import offers as offers_db
 
 SCORE = {
     "question": 0.9,
@@ -175,3 +176,33 @@ def _related(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> 
             }
         out.append(_cand("related", c["id"], payload, "Related note elsewhere"))
     return out
+
+
+def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> list[dict]:
+    """Create offers for new candidates, best first. Returns the rows the budget expired."""
+    seen = {
+        (o["kind"], o["anchor_chunk"], o["payload"].get("key"))
+        for o in offers_db.list_offers(conn, document_id)  # any status: dismissed ones stay away
+    }
+    changed: list[dict] = []
+    for c in scan(conn, document_id):
+        k = (c.kind, c.anchor, c.payload.get("key"))
+        if k in seen:
+            continue
+        try:
+            _, expired = offers_db.create_offer(
+                conn,
+                document_id,
+                kind=c.kind,
+                anchor_chunk=c.anchor,
+                reason=c.reason,
+                payload=c.payload,
+                score=c.score,
+                source="detector",
+                session_start=session_start,
+            )
+        except (offers_db.BudgetFull, offers_db.KindMuted, offers_db.AnchorUnknown):
+            continue
+        seen.add(k)
+        changed += expired
+    return changed

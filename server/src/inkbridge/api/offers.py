@@ -4,6 +4,7 @@ Offers are stored whenever they are created; `flush` pushes `offer.created` only
 attention allows it and Focus is off. Updates reach the browser only for offers it was sent.
 """
 
+import logging
 import threading
 from typing import Annotated, Literal
 
@@ -12,16 +13,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from inkbridge import db
 from inkbridge.agent import attention as attention_mod
+from inkbridge.agent import detectors
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub
 from inkbridge.db import offers as offers_db
 
 router = APIRouter()
+log = logging.getLogger("inkbridge.offers")
 
 pushed: dict[str, set[str]] = {}  # document -> offer ids this process sent to a browser
 _seen_session: dict[str, str] = {}
 _timers: dict[str, threading.Timer] = {}
 _ARM_TIMERS = True
+DETECT_DEBOUNCE_S = 2.0  # hypothesis (decision 0091)
+_scans: dict[str, threading.Timer] = {}
 
 
 class _Strict(BaseModel):
@@ -80,6 +85,38 @@ def publish_updates(rows: list[dict]) -> None:
     for o in rows:
         if o["id"] in pushed.get(o["document_id"], ()):
             hub.publish(o["document_id"], {"type": "offer.updated", "offer": o})
+
+
+def scan_now(document_id: str) -> None:
+    """Run the detectors on their own connection and push what they made. Never raises."""
+    try:
+        conn = db.connect()
+        try:
+            changed = detectors.run(conn, document_id, hub.session_start(document_id))
+        finally:
+            conn.close()
+        publish_updates(changed)
+        flush(document_id)
+    except Exception:
+        log.exception("detector scan failed doc=%s", document_id)
+
+
+def schedule_scan(document_id: str) -> None:
+    """Debounce: each save or reading re-arms one timer, so a burst scans once, off the save path."""
+    if not _ARM_TIMERS:
+        return
+    t = _scans.pop(document_id, None)
+    if t:
+        t.cancel()
+    t = threading.Timer(DETECT_DEBOUNCE_S, scan_now, [document_id])
+    t.daemon = True
+    t.start()
+    _scans[document_id] = t
+
+
+def publish_chunks(document_id: str, msg: dict) -> None:
+    hub.publish(document_id, msg)
+    schedule_scan(document_id)
 
 
 @router.post("/documents/{document_id}/offers", status_code=201)

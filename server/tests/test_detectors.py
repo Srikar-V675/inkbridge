@@ -1,6 +1,5 @@
 """INK-132: detectors turn the canvas into offer candidates with no model."""
 
-
 from inkbridge import db
 from inkbridge.agent import detectors
 from inkbridge.db import questions as q_db
@@ -193,3 +192,94 @@ def test_related_finds_a_past_answer(client, monkeypatch):
     monkeypatch.setattr(detectors, "RELATED_MIN_SCORE", 0)
     (found,) = of_kind("related")
     assert found.payload["other_question"] == q["id"] and found.payload["action"] == "link"
+
+
+def run(**kw):
+    conn = db.connect()
+    try:
+        detectors.run(conn, "default", **kw)
+        return db.offers.list_offers(conn, "default")
+    finally:
+        conn.close()
+
+
+def test_run_creates_offers_and_dedupes(client):
+    _, (a,) = chunks(client, "Why is it so?")
+    (o,) = run()
+    assert (o["source"], o["kind"], o["anchor_chunk"], o["status"]) == (
+        "detector",
+        "question",
+        a["id"],
+        "open",
+    )
+    assert o["reason"] and run() == [o]
+    conn = db.connect()
+    db.offers.dismiss_offer(conn, o["id"])
+    conn.close()
+    assert len(run()) == 1  # a dismissed offer does not come back
+    recognise(a, "Why would it fall?", source="user")
+    assert len(run()) == 2  # new reading, new key
+
+
+def test_run_swallows_budget_refusals(client):
+    chunks(client, *["Why a?", "Why b?", "Why c?", "Why d?"])
+    assert len(run()) == 3
+
+
+def test_scan_now_publishes(client, monkeypatch):
+    from inkbridge.agent import attention as attention_mod
+    from inkbridge.api import offers as offers_api
+    from tests.test_offers_api import WS, Clock, open_gate, recv
+
+    monkeypatch.setenv("INKBRIDGE_QUIET_S", "8")
+    clock = Clock()
+    monkeypatch.setattr(attention_mod.attention, "clock", clock)
+    monkeypatch.setattr(offers_api, "_ARM_TIMERS", False)
+    offers_api.pushed.clear()
+    offers_api._seen_session.clear()
+    chunks(client, "Why is it so?")
+    with client.websocket_connect(WS) as ws:
+        open_gate(ws, clock)
+        offers_api.scan_now("default")
+        msg = recv(ws)
+    assert msg["type"] == "offer.created" and msg["offer"]["kind"] == "question"
+
+
+def test_scan_now_survives_a_detector_bug(client, monkeypatch):
+    from inkbridge.api import offers as offers_api
+
+    def boom(*a, **k):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(detectors, "scan", boom)
+    offers_api.scan_now("default")  # logged, not raised
+
+
+def test_save_triggers_scan(client, monkeypatch):
+    from inkbridge.api import offers as offers_api
+
+    calls = []
+    monkeypatch.setattr(offers_api, "schedule_scan", calls.append)
+    canvas = Canvas(client, row("a", 3))
+    assert calls == ["default"]
+    canvas.put()  # nothing changed
+    assert calls == ["default"]
+
+
+def test_no_model_in_detectors():
+    import ast
+    from pathlib import Path
+
+    banned = ("inkbridge.recognizer", "google", "httpx", "anthropic", "requests", "urllib")
+    tree = ast.parse(Path(detectors.__file__).read_text())
+    for n in ast.walk(tree):
+        names = (
+            [a.name for a in n.names]
+            if isinstance(n, ast.Import)
+            else [n.module or ""]
+            if isinstance(n, ast.ImportFrom)
+            else []
+        )
+        assert not [x for x in names if x.startswith(banned)], names
+        if isinstance(n, ast.ImportFrom):
+            assert not [a for a in n.names if a.name == "genai"]

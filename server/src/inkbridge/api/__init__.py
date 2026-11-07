@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
     lag = asyncio.create_task(sample_loop_lag())
     db.init_db()
     # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0017).
-    worker = RecognitionWorker.from_env(publish=ws.hub.publish)
+    worker = RecognitionWorker.from_env(publish=offers.publish_chunks)
     if worker is not None:
         worker.start()
     app.state.recognition_worker = worker  # check_sync asks it for readings (INK-036)
@@ -263,6 +263,7 @@ def _publish_if_changed(conn, document_id: str, r: db.MergeResult, origin: str) 
             "stale_crops": db.stale_crop_ids(conn, document_id),
         },
     )
+    offers.schedule_scan(document_id)
 
 
 @app.put("/documents/{document_id}/scene")
