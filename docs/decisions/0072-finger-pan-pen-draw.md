@@ -2,6 +2,8 @@
 
 Status: accepted. Tablet check pending (one finger pans, pinch, pen pressure, palm rest, Finger draws toggle, top bar fit).
 
+See 0085 for the toggle's pressed look and penMode reconcile.
+
 ## What Excalidraw 0.18.1 does (read from `web/node_modules/@excalidraw/excalidraw/dist/dev/`)
 - `penMode: true` from `initialData.appState` survives `restoreAppState` (`chunk-4FTI6OG3.js:20795-20815`, supplied value wins). Only `togglePenMode` (`index.js:25744`) and the first pen contact (`:27431-27437`, sets `penMode` and `penDetected`) write it; `penDetected` is forced to `false` on restore.
 - With penMode on, `handleCanvasPointerDown` (`index.js:27512`) returns before creating an element when `pointerType === "touch"` and the tool is not selection, text or image. **A finger does not draw with the pen, eraser or shapes** (the ticket premise "a finger can still draw" does not hold for these tools).

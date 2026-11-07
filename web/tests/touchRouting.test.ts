@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import {
-  anchorFor, createPenTracker, hitsElement, isExcalidrawCanvas, penPatch, routePointer, viewFor, viewPatch, PEN_DOWN_MAX_MS,
+  anchorFor, createPenTracker, hitsElement, isExcalidrawCanvas, penPatch, reconcilePen, routePointer, viewFor, viewPatch, PEN_DOWN_MAX_MS,
   type Route, type RouteInput,
 } from "../src/app/touchRouting.ts";
 import { ZOOM_MAX, ZOOM_MIN } from "../src/app/shellLogic.ts";
@@ -149,6 +149,45 @@ describe("penPatch", () => {
   it("maps Finger draws to penMode and penDetected", () => {
     assert.deepEqual(penPatch(true), { penMode: false, penDetected: true });
     assert.deepEqual(penPatch(false), { penMode: true, penDetected: false });
+  });
+  // Model of Excalidraw 0.18.1 index.js:27431 (first pen contact) and :27512 (touch gate).
+  type Pen = { penMode: boolean; penDetected: boolean };
+  const penContact = (s: Pen): Pen => (!s.penDetected ? { penMode: true, penDetected: true } : s);
+  const fingerDraws = (s: Pen) => !s.penMode;
+  const starts: Pen[] = [0, 1, 2, 3].map((n) => ({ penMode: !!(n & 1), penDetected: !!(n & 2) }));
+
+  it("Finger draws off leaves a finger unable to draw from any state, also after a pen contact", () => {
+    for (const s of starts) {
+      const off = { ...s, ...penPatch(false) };
+      assert.equal(fingerDraws(off), false);
+      assert.equal(fingerDraws(penContact(off)), false);
+    }
+  });
+  it("Finger draws on lets a finger draw from any state, also after a pen contact", () => {
+    for (const s of starts) {
+      const on = { ...s, ...penPatch(true) };
+      assert.equal(fingerDraws(on), true);
+      assert.equal(fingerDraws(penContact(on)), true);
+    }
+  });
+  it("on, pen, off, pen, on cycles without drift", () => {
+    let s: Pen = { penMode: true, penDetected: false };
+    for (const on of [true, false, true, false]) {
+      s = { ...s, ...penPatch(on) };
+      s = penContact(s);
+      assert.equal(fingerDraws(s), on);
+    }
+  });
+  it("reconcilePen repairs penMode that drifted from the store and is silent otherwise", () => {
+    assert.equal(reconcilePen({ penMode: true, penDetected: false }, false), null);
+    assert.equal(reconcilePen({ penMode: false, penDetected: true }, true), null);
+    assert.deepEqual(reconcilePen({ penMode: true, penDetected: true }, true), penPatch(true)); // pen flipped it back
+    assert.deepEqual(reconcilePen({ penMode: false, penDetected: true }, false), penPatch(false)); // Excalidraw let fingers draw
+  });
+  it("Excalidraw still has the touch gate and the pen-contact flip this model mirrors", () => {
+    const js = readFileSync(new URL("../node_modules/@excalidraw/excalidraw/dist/dev/index.js", import.meta.url), "utf8");
+    assert.ok(js.includes('!this.state.penMode || event.pointerType !== "touch"'));
+    assert.ok(js.includes('!this.state.penDetected && event.pointerType === "pen"'));
   });
 });
 
