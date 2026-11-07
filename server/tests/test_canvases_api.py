@@ -156,7 +156,9 @@ def test_stored_count_follows_every_save_including_deltas(client):
     )
     assert r.status_code == 200
     assert listing(client)[doc]["element_count"] == 2
-    rest = [{**e, "isDeleted": True, "version": 2} for e in els[1:]]  # a save never deletes by omission
+    rest = [
+        {**e, "isDeleted": True, "version": 2} for e in els[1:]
+    ]  # a save never deletes by omission
     r = client.put(f"/documents/{doc}/scene", json={"base_version": 2, "elements": rest})
     assert r.status_code == 200
     assert listing(client)[doc]["element_count"] == 0
@@ -253,7 +255,13 @@ def test_active_chunk_bounds_lists_active_auto_chunks_only(client):
         assert len(boxes) == 2
         assert all(set(b) == {"x", "y", "width", "height"} for b in boxes)
         assert sorted(b["x"] for b in boxes)[1] >= 2000 - 20
-        save(client, doc, row("a", 3) + [{**e, "isDeleted": True} for e in row("b", 3, x=2000)], v)
+        save(
+            client,
+            doc,
+            row("a", 3)
+            + [{**e, "isDeleted": True, "version": e["version"] + 1} for e in row("b", 3, x=2000)],
+            v,
+        )
         assert len(db.active_chunk_bounds(conn, doc)) == 1
     finally:
         conn.close()
