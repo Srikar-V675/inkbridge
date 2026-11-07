@@ -58,7 +58,7 @@ def test_migration_11_moves_drafts_out_of_the_scene(tmp_path, monkeypatch):
     conn.commit()
     before = conn.execute("SELECT json FROM scene_elements WHERE id = 'user-1'").fetchone()[0]
 
-    assert db.migrate(conn) == [11]
+    assert db.migrate(conn) == [11, 12]
     got = {r["id"]: json.loads(r["json"]) for r in conn.execute("SELECT id, json FROM scene_elements")}
     assert conn.execute("SELECT json FROM scene_elements WHERE id = 'user-1'").fetchone()[0] == before
     assert "draft" not in got["acc:1"]["customData"] and got["acc:1"]["version"] == 4

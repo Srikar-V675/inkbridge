@@ -4,8 +4,10 @@ server -> browser: `op.pending {op_id, type, payload}`, `op.updated {op_id, stat
 `op.error {op_id, code, detail}` (a refused ack), `chunks.updated {version, stale_crops}`,
 `op.placed {op_id, elements, placement, anchor}` (INK-114: the server placed the measured drafts),
 `question.update {question}` (INK-047),
-`scene.delta {seq, origin, elements}` (INK-112; not sent to the socket whose `device` is `origin`).
-browser -> server: `op.measured {op_id, elements, width, height}` (the drafts as drawn, to be
+`scene.delta {seq, origin, elements}` (INK-112; not sent to the socket whose `device` is `origin`),
+`offer.created {offer}` and `offer.updated {offer}` (INK-130; only while the attention gate is open).
+browser -> server: `attention {pen, view}` (INK-130; any frame, pen down or up, counts as a stroke
+moment), `op.measured {op_id, elements, width, height}` (the drafts as drawn, to be
 placed), `op.failed {op_id, error}`.
 
 On every connect the server replays all pending and delivered ops for the document; an op is
@@ -20,6 +22,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import math
 import re
 from typing import Any
 from urllib.parse import urlsplit
@@ -28,8 +31,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 
 from inkbridge import db
+from inkbridge.agent.attention import attention
 from inkbridge.db import drafts
 from inkbridge.db import ops as ops_db
+from inkbridge.db.common import _now
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -83,15 +88,24 @@ class Hub:
         self._sockets: dict[str, set[WebSocket]] = {}
         self._device: dict[WebSocket, str] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._session: dict[str, str] = {}  # document -> when its first socket joined
+
+    def session_start(self, document_id: str) -> str:
+        """'' until a browser has joined, so all history counts toward the mute (INK-130)."""
+        return self._session.get(document_id, "")
 
     def join(self, document_id: str, ws: WebSocket, device: str = "") -> None:
         self._device[ws] = device
         self._loop = asyncio.get_running_loop()
+        if not self._sockets.get(document_id):
+            self._session[document_id] = _now()
         self._sockets.setdefault(document_id, set()).add(ws)
 
     def leave(self, document_id: str, ws: WebSocket) -> None:
         self._sockets.get(document_id, set()).discard(ws)
         self._device.pop(ws, None)
+        if not self._sockets.get(document_id):
+            attention.forget(document_id)  # no browser, no attention
 
     def connected(self, document_id: str) -> int:
         return len(self._sockets.get(document_id, ()))
@@ -142,7 +156,34 @@ def _log_failure(future) -> None:
 hub = Hub()
 
 
+_VIEW_KEYS = ("x", "y", "width", "height", "zoom")
+
+
+def _good_attention(msg: dict) -> bool:
+    view = msg.get("view")
+    if not isinstance(msg.get("pen"), bool):
+        return False
+    return view is None or (
+        isinstance(view, dict)
+        and all(
+            isinstance(view.get(k), int | float)
+            and not isinstance(view.get(k), bool)
+            and math.isfinite(view[k])
+            for k in _VIEW_KEYS
+        )
+    )
+
+
 async def _handle(ws: WebSocket, document_id: str, msg: Any) -> None:
+    if isinstance(msg, dict) and msg.get("type") == "attention":
+        if not _good_attention(msg):
+            await ws.send_json({"type": "error", "detail": "bad attention"})
+            return
+        from inkbridge.api import offers  # lazy: offers imports the hub from this module
+
+        attention.update(document_id, msg["pen"], msg.get("view"))
+        await run_in_threadpool(offers.flush, document_id)
+        return
     if not isinstance(msg, dict) or not isinstance(msg.get("op_id"), str):
         await ws.send_json({"type": "error", "detail": "expected {type, op_id, ...}"})
         return
