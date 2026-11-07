@@ -270,3 +270,29 @@ def test_consecutive_placements_stay_close(scale, anchored):
     first = spots[0]
     for p in spots:
         assert ((p["x"] - first["x"]) ** 2 + (p["y"] - first["y"]) ** 2) ** 0.5 <= bound
+
+
+def test_big_scene_with_view_is_bounded_and_matches_small_scene(monkeypatch):
+    import time
+
+    from inkbridge.agent import placement
+
+    view = _box(0, 0, 4000, 3000)
+    small = [_box(100, 100, 50, 50)]
+    want = place(small, (200, 50), view=view)
+    far = [_box(100000 + i * 60, 100000 + (i % 7) * 60, 50, 50) for i in range(4000)]
+    calls = 0
+    real = placement.overlaps
+
+    def counting(*a, **k):
+        nonlocal calls
+        calls += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(placement, "overlaps", counting)
+    t = time.perf_counter()
+    assert place(small + far, (200, 50), view=view) == want
+    assert calls < 200 and time.perf_counter() - t < 1
+    dense = [_box(i * 60, j * 60, 50, 50) for i in range(70) for j in range(70)]
+    p = place(dense, (200, 50), view=view)
+    assert not any(real(_box(p["x"], p["y"], 200, 50), o) for o in dense)

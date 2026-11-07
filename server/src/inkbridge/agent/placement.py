@@ -209,7 +209,7 @@ def place(
                 add(o["x"] + o["width"] + gap, o["y"], 0.2)
                 add(o["x"], o["y"] + o["height"] + gap, 0.2)
     elif view is not None:
-        step = max(gap, w / 2, view["width"] / 20, view["height"] / 20)  # at most 20 x 20 cells
+        step = max(gap, w / 2, view["width"] / 8, view["height"] / 8)  # at most 9 x 9 cells
         for i in range(int(view["width"] / step) + 1):
             for j in range(int(view["height"] / step) + 1):
                 add(view["x"] + i * step, view["y"] + j * step, 0.0)
@@ -219,10 +219,18 @@ def place(
         add(recent["x"], recent["y"] + recent["height"] + gap, 0.0)
         add(recent["x"] + recent["width"] + gap, recent["y"], 0.2)
 
+    # Only boxes near some candidate can overlap it; the fallback below still uses all of them.
+    x0, y0 = min(x for x, _ in cands) - margin, min(y for _, y in cands) - margin
+    x1, y1 = max(x for x, _ in cands) + w + margin, max(y for _, y in cands) + h + margin
+    near = [
+        o
+        for o in occupied
+        if o["x"] < x1 and o["x"] + o["width"] > x0 and o["y"] < y1 and o["y"] + o["height"] > y0
+    ]
     best = None
     for (x, y), pen in cands.items():
         box: Box = {"x": x, "y": y, "width": w, "height": h}
-        if any(overlaps(box, o, margin) for o in occupied):
+        if any(overlaps(box, o, margin) for o in near):
             continue
         ref = anchor or recent
         score = (
