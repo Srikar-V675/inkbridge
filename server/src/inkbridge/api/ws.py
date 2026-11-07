@@ -2,7 +2,8 @@
 
 server -> browser: `op.pending {op_id, type, payload}`, `op.updated {op_id, status, error}`,
 `op.error {op_id, code, detail}` (a refused ack), `chunks.updated {version, stale_crops}`,
-`question.update {question}` (INK-047). browser -> server: `op.applied {op_id, element_ids}`,
+`question.update {question}` (INK-047),
+`scene.delta {seq, origin, elements}` (INK-112; not sent to the socket whose `device` is `origin`). browser -> server: `op.applied {op_id, element_ids}`,
 `op.failed {op_id, error}`.
 
 On every connect the server replays all pending and delivered ops for the document; an op is
@@ -17,6 +18,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -69,14 +71,17 @@ def _with_conn(fn, *args):
 class Hub:
     def __init__(self) -> None:
         self._sockets: dict[str, set[WebSocket]] = {}
+        self._device: dict[WebSocket, str] = {}
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def join(self, document_id: str, ws: WebSocket) -> None:
+    def join(self, document_id: str, ws: WebSocket, device: str = "") -> None:
+        self._device[ws] = device
         self._loop = asyncio.get_running_loop()
         self._sockets.setdefault(document_id, set()).add(ws)
 
     def leave(self, document_id: str, ws: WebSocket) -> None:
         self._sockets.get(document_id, set()).discard(ws)
+        self._device.pop(ws, None)
 
     def connected(self, document_id: str) -> int:
         return len(self._sockets.get(document_id, ()))
@@ -84,7 +89,10 @@ class Hub:
     async def send(self, document_id: str, message: dict) -> int:
         """Send to every socket of the document; return how many got it."""
         sent = 0
+        origin = message.get("origin")
         for ws in list(self._sockets.get(document_id, ())):
+            if origin and self._device.get(ws) == origin:
+                continue  # the writer already has this change
             try:
                 await ws.send_json(message)
                 sent += 1
@@ -173,7 +181,9 @@ async def _handle(ws: WebSocket, document_id: str, msg: Any) -> None:
 
 
 @router.websocket("/ws")
-async def ws_endpoint(ws: WebSocket, document: str = db.DEFAULT_DOCUMENT_ID) -> None:
+async def ws_endpoint(
+    ws: WebSocket, document: str = db.DEFAULT_DOCUMENT_ID, device: str = ""
+) -> None:
     if not _same_origin(ws):
         await ws.close(code=4403, reason="cross-origin")
         return
@@ -181,7 +191,8 @@ async def ws_endpoint(ws: WebSocket, document: str = db.DEFAULT_DOCUMENT_ID) -> 
         await ws.close(code=4404, reason="unknown document")
         return
     await ws.accept()
-    hub.join(document, ws)
+    device = device if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", device) else ""
+    hub.join(document, ws, device)
     try:
         # Replay after joining, so an op created in between is pushed at least once (the browser
         # ignores a second copy of an op it already drew).
