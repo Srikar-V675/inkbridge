@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any
 
+from inkbridge.canvas.strokes import StrokeKinds
+
 # Elements that join chunks through other rules, not by proximity.
 _CONNECTORS = {"arrow", "line"}
 _SHAPES = {"rectangle", "ellipse", "diamond", "arrow", "line", "frame"}
@@ -23,11 +25,33 @@ class ChunkerConfig:
     match_containment: float | None = None
     # A chunk is at most this * its own median stroke size wide or tall (INK-081, decision 0038).
     max_extent: float = 80.0
+    # Chunker v2 (INK-122, decision 0081). "v1" is the original; the fields below only matter to v2
+    # and are in units of T, the writing scale from the stroke kinds (start values, E5 tunes them).
+    version: str = "v1"
+    next_line: float = (
+        0.5  # a line below joins when closer than this * T and the boxes overlap in x
+    )
+    long_stroke: float = 2.0  # a stroke longer than this * T joins by its ink, not its box
+
+    @classmethod
+    def v2(cls, **kw: Any) -> "ChunkerConfig":
+        """The v2 settings: connectors merge only when a tick (1 T) and link within 2 T."""
+        return cls(version="v2", arrow_merge=1.0, link_reach=2.0, **kw)
 
     def __post_init__(self) -> None:
-        for name in ("k", "arrow_merge", "link_reach", "min_median", "max_extent"):
+        for name in (
+            "k",
+            "arrow_merge",
+            "link_reach",
+            "min_median",
+            "max_extent",
+            "next_line",
+            "long_stroke",
+        ):
             if not getattr(self, name) > 0:
                 raise ValueError(f"ChunkerConfig.{name} must be positive")
+        if self.version not in ("v1", "v2"):
+            raise ValueError("ChunkerConfig.version must be 'v1' or 'v2'")
         if not 0 <= self.match_threshold < 1:
             raise ValueError("ChunkerConfig.match_threshold must be in [0, 1)")
         if self.match_containment is not None and not 0 < self.match_containment <= 1:
@@ -89,3 +113,8 @@ def connector_ids(elements: list[dict[str, Any]]) -> set[str]:
         if e.get("containerId") is not None and str(e["containerId"]) in connectors
     }
     return connectors | labels
+
+
+def stroke_connector_ids(kinds: StrokeKinds) -> set[str]:
+    """Ids the stroke kinds keep out of v2 chunks: connectors (pen and native) and their heads."""
+    return {i for i, k in kinds.kinds.items() if k == "connector"} | set(kinds.head_of)
