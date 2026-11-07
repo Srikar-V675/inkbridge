@@ -112,6 +112,16 @@ def get_region_png_path(conn: sqlite3.Connection, region_id: str) -> str | None:
     return row["png_path"] if row else None
 
 
+def active_chunk_bounds(conn: sqlite3.Connection, document_id: str) -> list[dict]:
+    """Bounding boxes {x, y, width, height} of the active auto chunks, for the home thumbnail (INK-179)."""
+    rows = conn.execute(
+        "SELECT bbox FROM regions WHERE document_id = ? AND created_by = ? AND status = 'active'"
+        " AND bbox IS NOT NULL ORDER BY id",
+        (document_id, AUTO),
+    )
+    return [json.loads(r["bbox"]) for r in rows]
+
+
 def list_regions(
     conn: sqlite3.Connection,
     document_id: str,

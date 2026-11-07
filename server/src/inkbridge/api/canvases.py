@@ -1,5 +1,6 @@
 """Canvases home (INK-118, decision 0069): rename, pin, archive, duplicate, open."""
 
+import hashlib
 import json
 import os
 import re
@@ -91,12 +92,18 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 # "<doc>-<version>.png" is still recognised so it can be removed.
 
 
-def _thumb_path(document_id: str, version: int) -> Path:
-    return config.thumbs_dir() / f"{document_id}.r{THUMB_REVISION}.{version}.png"
+def _chunk_sig(boxes: list[dict]) -> str:
+    """8 hex of the active chunk boxes: a manual merge or split changes the chunks, not the scene version."""
+    rows = sorted((b["x"], b["y"], b["width"], b["height"]) for b in boxes)
+    return hashlib.sha1(json.dumps(rows).encode()).hexdigest()[:8]
 
 
-def _etag(version: int) -> str:
-    return f'"r{THUMB_REVISION}v{version}"'
+def _thumb_path(document_id: str, version: int, sig: str) -> Path:
+    return config.thumbs_dir() / f"{document_id}.r{THUMB_REVISION}.{version}.{sig}.png"
+
+
+def _etag(version: int, sig: str) -> str:
+    return f'"r{THUMB_REVISION}v{version}c{sig}"'
 
 
 def _store(path: Path, png: bytes, document_id: str) -> None:
@@ -105,14 +112,14 @@ def _store(path: Path, png: bytes, document_id: str) -> None:
     tmp = path.with_name(f".{uuid.uuid4().hex}.tmp")
     tmp.write_bytes(png)
     os.replace(tmp, path)
-    own = re.compile(re.escape(document_id) + r"(?:\.r\d+\.\d+|-\d+)\.png")
+    own = re.compile(re.escape(document_id) + r"(?:\.r\d+\.\d+(?:\.[0-9a-f]{8})?|-\d+)\.png")
     for old in path.parent.iterdir():
         if old != path and own.fullmatch(old.name):
             old.unlink(missing_ok=True)
 
 
-def _headers(version: int) -> dict[str, str]:
-    return {"ETag": _etag(version), "Cache-Control": "no-cache"}
+def _headers(version: int, sig: str) -> dict[str, str]:
+    return {"ETag": _etag(version, sig), "Cache-Control": "no-cache"}
 
 
 def _read(path: Path) -> bytes | None:
@@ -124,22 +131,25 @@ def _read(path: Path) -> bytes | None:
 
 @router.get("/documents/{document_id}/thumbnail")
 def thumbnail(document_id: str, conn: Conn, request: Request) -> Response:
-    """960x640 PNG of the whole canvas, cached per scene version beside the database."""
+    """960x640 PNG of the centre chunk of the canvas, cached per scene version and chunk boxes."""
     if not _SAFE_ID.fullmatch(document_id):
         raise HTTPException(404, NOT_FOUND)
     try:
         version = db.scene_version(conn, document_id)  # the 304 path never loads the elements
     except db.DocumentNotFound:
         raise HTTPException(404, NOT_FOUND) from None
-    if request.headers.get("if-none-match") == _etag(version):
-        return Response(status_code=304, headers=_headers(version))
-    png = _read(_thumb_path(document_id, version))
+    sig = _chunk_sig(db.active_chunk_bounds(conn, document_id))
+    if request.headers.get("if-none-match") == _etag(version, sig):
+        return Response(status_code=304, headers=_headers(version, sig))
+    png = _read(_thumb_path(document_id, version, sig))
     if png is None:
         try:
             # The scene may have moved on since the version above: key the file by what is rendered.
             version, raw = db.get_scene(conn, document_id)
         except db.DocumentNotFound:
             raise HTTPException(404, NOT_FOUND) from None
-        png = render_thumbnail(json.loads(raw))
-        _store(_thumb_path(document_id, version), png, document_id)
-    return Response(png, media_type="image/png", headers=_headers(version))
+        boxes = db.active_chunk_bounds(conn, document_id)
+        sig = _chunk_sig(boxes)
+        png = render_thumbnail(json.loads(raw), chunks=boxes)
+        _store(_thumb_path(document_id, version, sig), png, document_id)
+    return Response(png, media_type="image/png", headers=_headers(version, sig))

@@ -181,6 +181,11 @@ def png_size(data):
     return im.size, im
 
 
+def sig_of(etag):
+    """The chunk signature in a thumbnail ETag `"r<rev>v<version>c<sig>"`."""
+    return etag.strip('"').split("c", 1)[1]
+
+
 def test_thumbnail_png_and_cache(client, monkeypatch):
     from inkbridge import config
     from inkbridge.api import canvases
@@ -191,13 +196,17 @@ def test_thumbnail_png_and_cache(client, monkeypatch):
     version = save(client, doc, row("a", 3))
     calls = []
     real = canvases.render_thumbnail
-    monkeypatch.setattr(canvases, "render_thumbnail", lambda els: calls.append(1) or real(els))
+    monkeypatch.setattr(
+        canvases, "render_thumbnail", lambda els, **kw: calls.append(1) or real(els, **kw)
+    )
     r = client.get(f"/documents/{doc}/thumbnail")
     assert r.status_code == 200 and r.headers["content-type"] == "image/png"
     assert png_size(r.content)[0] == (960, 640)
-    etag = f'"r{rev}v{version}"'
-    assert r.headers["etag"] == etag and r.headers["cache-control"] == "no-cache"
-    assert (config.thumbs_dir() / f"{doc}.r{rev}.{version}.png").is_file()
+    etag = r.headers["etag"]
+    sig = sig_of(etag)
+    assert etag == f'"r{rev}v{version}c{sig}"' and len(sig) == 8
+    assert r.headers["cache-control"] == "no-cache"
+    assert (config.thumbs_dir() / f"{doc}.r{rev}.{version}.{sig}.png").is_file()
     assert client.get(f"/documents/{doc}/thumbnail").status_code == 200
     assert len(calls) == 1
     cached = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": etag})
@@ -211,11 +220,11 @@ def test_thumbnail_follows_version(client):
 
     doc = new_canvas(client)
     v1 = save(client, doc, row("a", 3))
-    client.get(f"/documents/{doc}/thumbnail")
+    s1 = sig_of(client.get(f"/documents/{doc}/thumbnail").headers["etag"])
     v2 = save(client, doc, row("a", 3) + row("b", 2, y=200), version=v1)
-    client.get(f"/documents/{doc}/thumbnail")
-    assert (config.thumbs_dir() / f"{doc}.r{rev}.{v2}.png").is_file()
-    assert not (config.thumbs_dir() / f"{doc}.r{rev}.{v1}.png").exists()
+    s2 = sig_of(client.get(f"/documents/{doc}/thumbnail").headers["etag"])
+    assert (config.thumbs_dir() / f"{doc}.r{rev}.{v2}.{s2}.png").is_file()
+    assert not (config.thumbs_dir() / f"{doc}.r{rev}.{v1}.{s1}.png").exists()
 
 
 def test_thumbnail_empty_and_draft_only_canvas(client):
@@ -232,6 +241,47 @@ def test_thumbnail_empty_and_draft_only_canvas(client):
         assert [c for _, c in im.convert("RGB").getcolors()] == [raster.THUMB_BG]
 
 
+def test_active_chunk_bounds_lists_active_auto_chunks_only(client):
+    doc = new_canvas(client)
+    v = save(client, doc, row("a", 3) + row("b", 3, x=2000))
+    conn = db.connect()
+    try:
+        db.create_region(conn, doc, ["a0"], "manual.png")
+        boxes = db.active_chunk_bounds(conn, doc)
+        assert len(boxes) == 2
+        assert all(set(b) == {"x", "y", "width", "height"} for b in boxes)
+        assert sorted(b["x"] for b in boxes)[1] >= 2000 - 20
+        save(client, doc, row("a", 3) + [{**e, "isDeleted": True} for e in row("b", 3, x=2000)], v)
+        assert len(db.active_chunk_bounds(conn, doc)) == 1
+    finally:
+        conn.close()
+
+
+def test_thumbnail_shows_the_centre_chunk(client, monkeypatch):
+    from inkbridge.api import canvases
+    from inkbridge.canvas import raster
+
+    doc = new_canvas(client)
+    els = row("a", 3, x=0) + row("b", 3, x=2000) + row("c", 3, x=4000)
+    save(client, doc, els)
+    seen = {}
+    real = canvases.render_thumbnail
+    monkeypatch.setattr(
+        canvases, "render_thumbnail", lambda e, **kw: seen.update(kw) or real(e, **kw)
+    )
+    png = client.get(f"/documents/{doc}/thumbnail").content
+    conn = db.connect()
+    try:
+        assert seen["chunks"] == db.active_chunk_bounds(conn, doc) and len(seen["chunks"]) == 3
+    finally:
+        conn.close()
+    assert png != raster.render_thumbnail(els)
+    im = png_size(png)[1].convert("RGB")
+    third = 960 // 3
+    for x0 in (0, 2 * third):
+        assert im.crop((x0, 0, x0 + third, 640)).getcolors(10) == [(third * 640, raster.THUMB_BG)]
+
+
 def test_thumbnail_unknown_canvas_404(client):
     from inkbridge import config
 
@@ -246,12 +296,14 @@ def test_thumbnail_304_asks_for_the_version_only(client, monkeypatch):
 
     doc = new_canvas(client)
     version = save(client, doc, row("a", 3))
+    sig = sig_of(client.get(f"/documents/{doc}/thumbnail").headers["etag"])
 
     def boom(*a, **k):
         raise AssertionError("the 304 path must not load the scene")
 
     monkeypatch.setattr(canvases.db, "get_scene", boom)
-    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": f'"r{rev}v{version}"'})
+    etag = f'"r{rev}v{version}c{sig}"'
+    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": etag})
     assert r.status_code == 304
     assert (
         client.get(
@@ -266,10 +318,36 @@ def test_thumbnail_serves_the_bytes_it_rendered(client, monkeypatch):
 
     doc = new_canvas(client)
     save(client, doc, row("a", 3))
-    monkeypatch.setattr(canvases, "render_thumbnail", lambda els: b"rendered")
+    monkeypatch.setattr(canvases, "render_thumbnail", lambda els, **kw: b"rendered")
     monkeypatch.setattr(canvases, "_store", lambda *a, **k: None)  # nothing on disk to re-read
     r = client.get(f"/documents/{doc}/thumbnail")
     assert r.status_code == 200 and r.content == b"rendered"
+
+
+def test_thumbnail_follows_a_manual_merge_without_a_scene_save(client):
+    from inkbridge import config
+
+    doc = new_canvas(client)
+    version = save(client, doc, row("a", 3) + row("b", 3, y=200) + row("c", 3, y=900))
+    first = client.get(f"/documents/{doc}/thumbnail")
+    etag = first.headers["etag"]
+    # nothing changed: the cached hit still answers 304
+    again = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": etag})
+    assert again.status_code == 304
+    ids = [c["id"] for c in client.get(f"/documents/{doc}/regions", params={"chunks": True}).json()]
+    assert len(ids) == 3
+    merged = client.post(f"/documents/{doc}/chunks/merge", json={"chunk_ids": ids[:2]})
+    assert merged.status_code == 200
+    assert client.get(f"/documents/{doc}/scene").json()["version"] == version  # no scene save
+    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": etag})
+    assert r.status_code == 200 and r.headers["etag"] != etag
+    assert r.headers["etag"].startswith(f'"r3v{version}c')
+    new_sig = sig_of(r.headers["etag"])
+    assert [p.name for p in config.thumbs_dir().glob(f"{doc}.*")] == [
+        f"{doc}.r3.{version}.{new_sig}.png"
+    ]
+    cached = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": r.headers["etag"]})
+    assert cached.status_code == 304
 
 
 def test_thumbnail_revision_replaces_old_cache(client, monkeypatch):
@@ -281,12 +359,28 @@ def test_thumbnail_revision_replaces_old_cache(client, monkeypatch):
     doc = new_canvas(client)
     version = save(client, doc, row("a", 3))
     old = client.get(f"/documents/{doc}/thumbnail")
-    assert old.headers["etag"] == f'"r{rev}v{version}"'
+    sig = sig_of(old.headers["etag"])
+    assert old.headers["etag"] == f'"r{rev}v{version}c{sig}"'
     monkeypatch.setattr(canvases, "THUMB_REVISION", rev + 1)
     r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": old.headers["etag"]})
-    assert r.status_code == 200 and r.headers["etag"] == f'"r{rev + 1}v{version}"'
-    assert (config.thumbs_dir() / f"{doc}.r{rev + 1}.{version}.png").is_file()
-    assert not (config.thumbs_dir() / f"{doc}.r{rev}.{version}.png").exists()
+    assert r.status_code == 200 and r.headers["etag"] == f'"r{rev + 1}v{version}c{sig}"'
+    assert (config.thumbs_dir() / f"{doc}.r{rev + 1}.{version}.{sig}.png").is_file()
+    assert not (config.thumbs_dir() / f"{doc}.r{rev}.{version}.{sig}.png").exists()
+
+
+def test_thumbnail_revision_two_cache_is_replaced_by_three(client):
+    from inkbridge import config
+
+    doc = new_canvas(client)
+    version = save(client, doc, row("a", 3))
+    config.thumbs_dir().mkdir(parents=True, exist_ok=True)
+    old = config.thumbs_dir() / f"{doc}.r2.{version}.png"
+    old.write_bytes(b"old")
+    r = client.get(f"/documents/{doc}/thumbnail", headers={"If-None-Match": f'"r2v{version}"'})
+    sig = sig_of(r.headers["etag"])
+    assert r.status_code == 200 and r.headers["etag"] == f'"r3v{version}c{sig}"'
+    assert not old.exists()
+    assert (config.thumbs_dir() / f"{doc}.r3.{version}.{sig}.png").is_file()
 
 
 def test_thumbnail_legacy_cache_file_is_ignored_and_removed(client):
@@ -315,19 +409,25 @@ def test_thumbnail_cleanup_never_touches_a_canvas_whose_id_looks_like_a_revision
 
     d = config.thumbs_dir()
     d.mkdir(parents=True, exist_ok=True)
-    mine = {"x.r1.4.png", "x.r2.3.png", "x-4.png"}  # older revisions and a legacy file of "x"
+    mine = {
+        "x.r1.4.png",
+        "x.r2.3.png",
+        "x.r3.4.deadbeef.png",
+        "x-4.png",
+    }  # older revisions and a legacy file of "x"
     theirs = {
         "x-r2.r2.3.png",
         "x-r2-3.png",
         "x-2-1.png",
         "y.r2.3.png",
+        "x-r2.r3.3.deadbeef.png",
     }  # canvases "x-r2", "x-2", "y"
     for name in mine | theirs:
         (d / name).write_bytes(b"old")
-    current = canvases._thumb_path("x", 5)
+    current = canvases._thumb_path("x", 5, "0badf00d")
     canvases._store(current, b"new", "x")
     assert current.read_bytes() == b"new"
     assert {p.name for p in d.iterdir()} == theirs | {current.name}
-    other = canvases._thumb_path("x-r2", 7)
+    other = canvases._thumb_path("x-r2", 7, "0badf00d")
     canvases._store(other, b"new", "x-r2")
     assert {p.name for p in d.iterdir()} == {"x-2-1.png", "y.r2.3.png", current.name, other.name}
