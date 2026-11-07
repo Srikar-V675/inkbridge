@@ -61,6 +61,14 @@ EXPECTED = {
         "created_at",
         "result_json",
         "error",
+        "elements_json",
+        "box_json",
+        "question_id",
+        "task_id",
+        "offer_id",
+        "revises",
+        "diagram_id",
+        "resolved_at",
     },
 }
 

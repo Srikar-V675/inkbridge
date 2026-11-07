@@ -8,7 +8,9 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from inkbridge import db
+from inkbridge.db import drafts
 from inkbridge.db import ops as ops_db
+from tests.test_drafts import els
 
 OPS = "/documents/default/ops"
 WS = "/ws?document=default"
@@ -73,34 +75,53 @@ def test_delivered_but_unacked_ops_are_replayed_on_reconnect(client):
         assert recv(ws)["op_id"] == op["id"]
 
 
-def test_ack_over_the_socket_applies_and_stops_the_replay(client):
-    op = write(client)
-    ids = [f"{op['id']}:1"]
-    with client.websocket_connect(WS) as ws:
-        recv(ws)
-        ws.send_json({"type": "op.applied", "op_id": op["id"], "element_ids": ids})
-        assert recv(ws) == {
-            "type": "op.updated",
-            "op_id": op["id"],
-            "status": "applied",
-            "error": None,
-        }
-    assert client.get(f"/ops/{op['id']}").json()["result"] == {"element_ids": ids}
-    later = write(client, "later")
-    with client.websocket_connect(WS) as ws:
-        assert recv(ws)["op_id"] == later["id"]  # the applied op is not sent again
+def _measured(op_id, n=1, **extra):
+    from tests.test_drafts import els
+
+    return {
+        "type": "op.measured",
+        "op_id": op_id,
+        "elements": els(op_id, n),
+        "width": 200,
+        "height": 60,
+        **extra,
+    }
 
 
-def test_ack_naming_user_ink_is_refused_over_the_socket(client):
-    client.put("/documents/default/scene", json={"base_version": 0, "elements": [{"id": "ink"}]})
+def test_measured_places_and_pushes_op_placed_to_every_tab(client):
     op = write(client)
+    with client.websocket_connect(WS) as a, client.websocket_connect(WS) as b:
+        assert recv(a)["type"] == "op.pending"
+        assert recv(b)["type"] == "op.pending"
+        a.send_json(_measured(op["id"]))
+        for ws in (a, b):
+            msg = recv(ws)
+            assert (msg["type"], msg["op_id"]) == ("op.placed", op["id"])
+            assert msg["elements"][0]["id"] == f"{op['id']}:1"
+            assert set(msg["placement"]) == {"x", "y"} and msg["anchor"] is None
+    assert client.get(f"/ops/{op['id']}").json()["status"] == "placed"
+    with client.websocket_connect(WS) as late:  # a late tab gets the placed op without a GET
+        assert recv(late)["type"] == "op.placed"
+
+
+def test_measured_with_foreign_id_is_op_error(client):
+    op = write(client)
+    bad = _measured(op["id"])
+    bad["elements"][0]["id"] = "ink"
     with client.websocket_connect(WS) as ws:
         recv(ws)
-        ws.send_json({"type": "op.applied", "op_id": op["id"], "element_ids": ["ink"]})
+        ws.send_json(bad)
         msg = recv(ws)
     assert msg["type"] == "op.error" and msg["code"] == "existing_element_id"
-    assert msg["detail"] == ["ink"]
     assert status(client, op["id"]) == "delivered"
+
+
+def test_old_applied_ack_is_unknown(client):
+    op = write(client)
+    with client.websocket_connect(WS) as ws:
+        recv(ws)
+        ws.send_json({"type": "op.applied", "op_id": op["id"], "element_ids": [f"{op['id']}:1"]})
+        assert recv(ws)["type"] == "error"
 
 
 def test_failed_over_the_socket_records_the_error(client):
@@ -114,7 +135,7 @@ def test_failed_over_the_socket_records_the_error(client):
     assert client.get(f"/ops/{op['id']}").json()["error"] == "parse error"
 
 
-def test_ack_for_an_op_of_another_document_is_refused(client):
+def test_measure_for_an_op_of_another_document_is_refused(client):
     conn = db.connect()
     try:
         conn.execute("INSERT INTO documents (id, title, updated_at) VALUES ('other', 'O', 'now')")
@@ -129,7 +150,7 @@ def test_ack_for_an_op_of_another_document_is_refused(client):
         "/documents/other/ops", json={"type": "write_text", "payload": {"text": "x"}}
     ).json()
     with client.websocket_connect(WS) as ws:
-        ws.send_json({"type": "op.applied", "op_id": other["id"], "element_ids": ["other-id:1"]})
+        ws.send_json(_measured(other["id"]))
         assert recv(ws)["code"] == "not_found"
     assert status(client, other["id"]) == "pending"
 
@@ -179,9 +200,9 @@ def test_mark_delivered_reports_whether_it_moved_the_op(client):
     try:
         assert ops_db.mark_delivered(conn, op["id"]) is True
         assert ops_db.mark_delivered(conn, op["id"]) is False
-        ops_db.update_status(conn, op["id"], "applied", [f"{op['id']}:1"])
+        drafts.measure_op(conn, op["id"], els(op["id"]), 100, 30)
         assert ops_db.mark_delivered(conn, op["id"]) is False
-        assert ops_db.get_op(conn, op["id"])["status"] == "applied"
+        assert ops_db.get_op(conn, op["id"])["status"] == "placed"
     finally:
         conn.close()
 
@@ -213,14 +234,13 @@ def test_a_binary_frame_gets_an_error_and_keeps_the_socket(client):
         assert recv(ws)["op_id"] == op["id"]
 
 
-def test_an_ack_over_the_http_limits_is_refused(client):
+def test_a_bad_measure_is_refused(client):
     op = write(client)
-    prefix = op["payload"]["id_prefix"]
     with client.websocket_connect(WS) as ws:
         recv(ws)
-        for ids in ([prefix + "x" * 300], [f"{prefix}{i}" for i in range(10_001)]):
-            ws.send_json({"type": "op.applied", "op_id": op["id"], "element_ids": ids})
-            assert recv(ws)["code"] == "bad_ack"
+        for bad in ({"elements": []}, {"width": 0}, {"width": "x"}):
+            ws.send_json({**_measured(op["id"]), **bad})
+            assert recv(ws)["code"] == "bad_measure"
     assert status(client, op["id"]) == "delivered"
 
 
@@ -304,10 +324,11 @@ def test_create_sweep_pushes_op_updated_expired(client):
         assert any(m.get("op_id") == fresh["id"] and m["type"] == "op.pending" for m in got)
 
 
-def test_late_ack_for_expired_op_is_a_clean_409(client):
+def test_late_measure_for_expired_op_is_op_error(client):
     old = write(client, "old")
     _backdate(old["id"])
     client.get(OPS)
-    r = client.patch(f"/ops/{old['id']}", json={"status": "applied", "element_ids": [f"{old['id']}:a"]})
-    assert r.status_code == 409
-    assert r.json()["detail"]["code"] == "invalid_transition"
+    with client.websocket_connect(WS) as ws:
+        ws.send_json(_measured(old["id"]))
+        msg = recv(ws)
+    assert msg["code"] == "invalid_transition"

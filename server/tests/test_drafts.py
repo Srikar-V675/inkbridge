@@ -8,7 +8,7 @@ import pytest
 from inkbridge import db
 from inkbridge.db import drafts
 from inkbridge.db import ops as ops_db
-from tests.test_ops_api import OPS, SCENE, seed, stroke, write
+from tests.test_ops_api import SCENE, seed, write
 
 
 def els(op_id, n=1, **extra):
@@ -252,7 +252,8 @@ def test_unaccept_on_placed_is_409(client):
 
 
 def test_get_drafts(client):
-    a, b, c = post(client, "a"), post(client, "b"), post(client, "c")
+    a, b = post(client, "a"), post(client, "b")
+    post(client, "c")
     measure(client, b)
     measure(client, a)
     r = client.get("/documents/default/drafts")

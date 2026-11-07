@@ -114,7 +114,6 @@ def _row_dict(row: sqlite3.Row) -> dict:
         "elements": json.loads(row["elements_json"]) if row["elements_json"] else None,
         "box": json.loads(row["box_json"]) if row["box_json"] else None,
         "resolved_at": row["resolved_at"],
-        **{k: row[k] for k in ("question_id", "task_id", "offer_id", "revises", "diagram_id")},
     }
 
 

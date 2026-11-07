@@ -9,6 +9,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
 from inkbridge.mcp.tools import write
+from tests.test_drafts import measure
 
 FLOW = "flowchart TD\n  A[Start] --> B[Done]"
 
@@ -28,8 +29,7 @@ class Browser:
 
 
 def apply(client, op):
-    ids = [f"{op['payload']['id_prefix']}{i}" for i in (1, 2, 3)]
-    client.patch(f"/ops/{op['id']}", json={"status": "applied", "element_ids": ids})
+    measure(client, op, n=3)
 
 
 def fail(client, op):
@@ -59,10 +59,10 @@ def tool(client, monkeypatch):
     server.set_client(None)
 
 
-def test_applied_diagram_returns_its_element_count(tool, client):
+def test_placed_diagram_returns_its_element_count(tool, client):
     out = json.loads(tool(apply, after=2).content[0].text)
     (op,) = client.get("/documents/default/ops").json()["ops"]
-    assert out == {"op_id": op["id"], "status": "applied", "element_count": 3}
+    assert out == {"op_id": op["id"], "status": "placed", "element_count": 3}
     assert op["type"] == "draw_diagram" and op["payload"]["mermaid"] == FLOW
 
 
@@ -90,7 +90,7 @@ def test_waits_no_longer_than_asked(tool, client):
 
 def test_browser_finishing_as_the_wait_ends_still_counts(tool, client, monkeypatch):
     # The ack lands between the last poll and the expiry PATCH: the PATCH conflicts, the op is
-    # re-read and reported as applied rather than as a timeout.
+    # re-read and reported as placed rather than as a timeout.
     real = ApiClient.set_op_status
 
     def late_ack(self, op_id, status):
@@ -100,7 +100,7 @@ def test_browser_finishing_as_the_wait_ends_still_counts(tool, client, monkeypat
 
     monkeypatch.setattr(ApiClient, "set_op_status", late_ack)
     out = json.loads(tool(wait_seconds=1).content[0].text)
-    assert out["status"] == "applied" and out["element_count"] == 3
+    assert out["status"] == "placed" and out["element_count"] == 3
 
 
 @pytest.mark.parametrize("source", ["sequenceDiagram\n  A->>B: hi", "classDiagram\n  A <|-- B"])
