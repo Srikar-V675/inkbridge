@@ -156,7 +156,9 @@ def test_stored_count_follows_every_save_including_deltas(client):
     )
     assert r.status_code == 200
     assert listing(client)[doc]["element_count"] == 2
-    save(client, doc, [])
+    rest = [{**e, "isDeleted": True, "version": 2} for e in els[1:]]  # a save never deletes by omission
+    r = client.put(f"/documents/{doc}/scene", json={"base_version": 2, "elements": rest})
+    assert r.status_code == 200
     assert listing(client)[doc]["element_count"] == 0
 
 

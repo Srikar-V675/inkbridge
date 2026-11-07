@@ -181,7 +181,7 @@ def test_load_fixture_is_idempotent(client):
     first = load_fixture.load(client, "fixture-real")
     second = load_fixture.load(client, "fixture-real")
     scene = client.get("/documents/fixture-real/scene", params=ALL).json()
-    assert second == first + 1 == scene["version"]
+    assert second == first == scene["version"]  # the second load changes no row, so no bump
     assert len(scene["elements"]) == len(make_real_scale.build())
 
 

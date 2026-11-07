@@ -79,14 +79,17 @@ def test_max_nodes_is_passed_through(api):
 
 
 def test_path_errors_are_tool_errors(api):
-    _, (a, *_) = chain(api)
+    old, (a, *_) = chain(api)
     with pytest.raises(ToolError, match="not on this canvas"):
         call("get_subgraph", chunk_id=a, to_chunk_id="nope")
-    canvas = Canvas(api, row("a", 3) + row("b", 3, y=500))
-    gone = canvas.chunk_of("a0")["id"]
-    other = canvas.chunk_of("b0")["id"]
+    for e in old.elements:  # a full save no longer replaces the scene: delete the chain, then start over
+        e["isDeleted"] = True
+    old.put()
+    canvas = Canvas(api, row("p", 3) + row("q", 3, y=500))
+    gone = canvas.chunk_of("p0")["id"]
+    other = canvas.chunk_of("q0")["id"]
     for i in range(3):
-        canvas.el(f"a{i}")["isDeleted"] = True
+        canvas.el(f"p{i}")["isDeleted"] = True
     canvas.put()
     with pytest.raises(ToolError, match="read_canvas"):
         call("get_subgraph", chunk_id=other, to_chunk_id=gone)

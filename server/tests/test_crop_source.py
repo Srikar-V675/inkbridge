@@ -178,7 +178,9 @@ def test_orphaned_region_with_history_returns_existing_crop_and_does_not_render(
     old = canvas.chunk_of("a0")["id"]
     assert client.get(f"/regions/{old}/png").status_code == 200
     before = crop_file(old).read_bytes()
-    canvas.elements = [e for e in canvas.elements if e["id"].startswith("b")]
+    for e in canvas.elements:
+        if e["id"].startswith("a"):
+            e["isDeleted"] = True  # a save never deletes by omission (decision 0080)
     canvas.put()  # chunk a is orphaned; its crop file stays
     assert client.get(f"/regions/{old}/png").status_code == 410
     assert client.get(f"/regions/{old}/png", params={"history": "true"}).content == before

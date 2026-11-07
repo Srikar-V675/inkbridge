@@ -8,7 +8,7 @@ the `default` canvas: that canvas is refused with exit code 2, so the real notes
 
 The API assigns canvas ids, so a missing canvas is created with POST /documents and its real id is
 printed; open the web app with `?canvas=<that id>` (decision 0053). Re-running with `--canvas <id>`
-overwrites that canvas with the fixture again (a non-delta save; the version goes up by one).
+merges the fixture into that canvas again (decision 0080: an unchanged fixture leaves the version as it was).
 """
 
 import argparse
@@ -34,7 +34,7 @@ class CanvasMissing(Exception):
 
 
 def load(client: httpx.Client, canvas: str = "fixture-real", elements=None) -> int:
-    """Replace the canvas scene with the fixture (or `elements`); return the new scene version."""
+    """Merge the fixture (or `elements`) into the canvas scene; return the scene version."""
     if canvas == DEFAULT_CANVAS:
         raise Refused(f"refusing to overwrite the {DEFAULT_CANVAS!r} canvas")
     els = make_real_scale.build() if elements is None else elements

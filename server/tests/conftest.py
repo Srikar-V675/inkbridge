@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from inkbridge import api, db
+from inkbridge import db
 from inkbridge.api import app
 from tests.fts_check import fts_problems
 from tests.integrity_check import successor_problems

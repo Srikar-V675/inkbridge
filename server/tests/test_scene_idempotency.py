@@ -19,10 +19,12 @@ def test_repeated_key_replays_without_conflict(client):
     assert client.get(SCENE).json()["version"] == 1
 
 
-def test_new_key_with_stale_base_still_conflicts(client):
+def test_stale_base_version_never_conflicts(client):
     put(client, "t1:1", 0)
-    assert put(client, "t1:2", 0).status_code == 409
-    assert put(client, None, 0).status_code == 409
+    r = put(client, "t1:2", 0, els=[B])
+    assert r.status_code == 200 and r.json()["version"] == 2
+    assert [e["id"] for e in r.json()["newer"]] == ["a"]  # the other device's row since base 0
+    assert put(client, None, 0, els=[B]).status_code == 200
 
 
 def test_same_key_on_another_document_does_not_collide(client):
@@ -31,16 +33,6 @@ def test_same_key_on_another_document_does_not_collide(client):
     put(client, "t1:1", 0)
     r = put(client, "t1:1", 0, url=url)
     assert r.status_code == 200 and client.get(url).json()["version"] == 1
-
-
-def test_conflict_names_the_last_writer(client):
-    put(client, "t1:1", 0)
-    r = put(client, "t2:1", 0)
-    assert r.status_code == 409
-    assert r.json()["detail"] == {
-        "current_version": 1,
-        "last_writer": {"tab": "t1", "same_ip": True},
-    }
 
 
 def test_rolled_back_save_does_not_record_the_key(client, monkeypatch):
@@ -57,19 +49,17 @@ def test_invalid_key_is_ignored(client):
     assert put(client, "bad key\nforged", 1).status_code == 200  # not remembered, applied again
     assert not db._applied
     assert put(client, "t2:1", 2).status_code == 200
-    r = put(client, "t3:1", 0)
-    assert r.json()["detail"]["last_writer"]["tab"] == "t2"
 
 
-def test_replay_does_not_publish_or_change_last_writer(client, monkeypatch):
+def test_replay_does_not_publish(client, monkeypatch):
     sent = []
     monkeypatch.setattr(api.ws.hub, "publish", lambda d, m: sent.append(m))
     put(client, "t1:1", 0)
-    put(client, "t2:1", 1)
+    put(client, "t2:1", 1, els=[B])
     n = len(sent)
+    assert n == 2
     put(client, "t1:1", 0)  # replay of the first save
     assert len(sent) == n
-    assert api._last_writer["default"][0] == "t2"
 
 
 def test_oldest_key_is_evicted_at_the_cap(client, monkeypatch):

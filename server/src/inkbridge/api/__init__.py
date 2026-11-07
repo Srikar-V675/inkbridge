@@ -133,23 +133,39 @@ def _check_geometry(el: dict[str, Any]) -> None:
         raise ValueError(f"element {el['id']!r}: pressures must be a list of numbers")
 
 
+def _check_elements(v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The checks every element list gets, whichever route it arrives on."""
+    if len(v) > MAX_ELEMENTS:
+        raise ValueError(f"too many elements (max {MAX_ELEMENTS})")
+    if not all(isinstance(e.get("id"), str) for e in v):
+        raise ValueError("every element needs a string id")
+    if not all(_all_finite(e) for e in v):
+        raise ValueError("NaN and Infinity are not allowed")
+    for e in v:
+        _check_geometry(e)
+    return v
+
+
 class SceneIn(BaseModel):
-    base_version: int = Field(ge=0)
+    base_version: int = Field(ge=0)  # kept so old tabs validate; it no longer locks (decision 0080)
     elements: list[dict[str, Any]]
-    delta: bool = False  # elements are only those changed since base_version (INK-075)
+    delta: bool = False  # accepted and ignored: a full list and a delta are the same merge
 
     @field_validator("elements")
     @classmethod
     def _elements_valid(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if len(v) > MAX_ELEMENTS:
-            raise ValueError(f"too many elements (max {MAX_ELEMENTS})")
-        if not all(isinstance(e.get("id"), str) for e in v):
-            raise ValueError("every element needs a string id")
-        if not all(_all_finite(e) for e in v):
-            raise ValueError("NaN and Infinity are not allowed")
-        for e in v:
-            _check_geometry(e)
-        return v
+        return _check_elements(v)
+
+
+class ElementsIn(BaseModel):
+    device: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    batch: int = Field(ge=0)
+    elements: list[dict[str, Any]]
+
+    @field_validator("elements")
+    @classmethod
+    def _elements_valid(cls, v: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return _check_elements(v)
 
 
 @app.get("/health")
@@ -193,6 +209,48 @@ _log = logging.getLogger("inkbridge.request")
 _scene_log = logging.getLogger("inkbridge.scene")
 
 
+@app.post("/documents/{document_id}/elements")
+def post_elements(
+    document_id: str, body: ElementsIn, conn: Conn, request: Request
+) -> dict[str, Any]:
+    """Merge a batch of elements (INK-111, decision 0080). N1: drafts and new `<op_id>:` ids are refused."""
+    timing = request_parts(request.scope, time.perf_counter())
+    try:
+        r = db.merge_elements(
+            conn,
+            document_id,
+            body.elements,
+            key=f"{body.device}:{body.batch}",
+            strict=True,
+            max_elements=MAX_ELEMENTS,
+            timings=timing,
+        )
+    except db.DocumentNotFound:
+        raise HTTPException(404, "document not found") from None
+    except db.ElementsRefused as e:
+        raise HTTPException(
+            422,
+            {"refused": e.ids, "reason": "drafts and op-prefixed new ids are not accepted"},
+        ) from None
+    except db.SceneTooLarge:
+        raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
+    _publish_if_changed(conn, document_id, r)
+    return {"seq": r.seq, "newer": r.newer, "timing": timing}
+
+
+def _publish_if_changed(conn, document_id: str, r: db.MergeResult) -> None:
+    if r.replay or not r.changed:
+        return
+    ws.hub.publish(
+        document_id,
+        {
+            "type": "chunks.updated",
+            "version": r.seq,
+            "stale_crops": db.stale_crop_ids(conn, document_id),
+        },
+    )
+
+
 @app.put("/documents/{document_id}/scene")
 def put_scene(
     document_id: str,
@@ -233,15 +291,7 @@ def put_scene(
         raise HTTPException(404, "document not found") from None
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
-    if not r.replay and r.changed:
-        ws.hub.publish(
-            document_id,
-            {
-                "type": "chunks.updated",
-                "version": r.seq,
-                "stale_crops": db.stale_crop_ids(conn, document_id),
-            },
-        )
+    _publish_if_changed(conn, document_id, r)
     return {"version": r.seq, "seq": r.seq, "newer": r.newer, "timing": timing}
 
 

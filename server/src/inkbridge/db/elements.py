@@ -54,9 +54,9 @@ def n1_violations(elements: list[dict], existing: set[str]) -> list[str]:
     bad: list[str] = []
     for e in elements:
         data = e.get("customData")
-        if isinstance(data, dict) and data.get("draft"):
-            bad.append(e["id"])
-        elif ":" in e["id"] and e["id"] not in existing:
+        draft = isinstance(data, dict) and data.get("draft")
+        new_op_id = ":" in e["id"] and e["id"] not in existing
+        if draft or new_op_id:
             bad.append(e["id"])
     return bad
 

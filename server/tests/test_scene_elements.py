@@ -179,10 +179,11 @@ def test_deleted_element_becomes_a_deleted_row_with_full_json(client):
     assert r["is_deleted"] == 1 and json.loads(r["json"])["points"] == [[0, 0], [5, 5]]
 
 
-def test_full_put_drops_omitted_rows(client):
+def test_full_put_keeps_omitted_rows(client):
+    # Omission is no evidence of deletion (decision 0080, supersedes 0077's hard delete).
     put(client, [el("a"), el("b")])
     put(client, [el("a")])
-    assert [r["id"] for r in rows()] == ["a"]
+    assert [r["id"] for r in rows()] == ["a", "b"]
 
 
 def test_undo_of_a_deleted_element_revives_the_row(client):

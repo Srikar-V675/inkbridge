@@ -36,18 +36,20 @@ def test_pressures_and_custom_data_survive_exactly(client):
     assert el["customData"] == FREEDRAW["customData"]
 
 
-def test_stale_base_version_returns_409_and_does_not_overwrite(client):
+def test_stale_base_version_never_conflicts_or_overwrites(client):
     client.put(SCENE, json={"base_version": 0, "elements": [FREEDRAW]})
     r = client.put(SCENE, json={"base_version": 0, "elements": []})
-    assert r.status_code == 409
-    assert r.json()["detail"] == {"current_version": 1}
+    assert r.status_code == 200
+    assert r.json()["newer"] == [FREEDRAW]  # what the stale tab missed
     assert client.get(SCENE).json()["elements"] == [FREEDRAW]
 
 
-def test_version_increments_on_each_successful_put(client):
+def test_version_increments_on_each_put_that_changes_something(client):
     for v in range(3):
-        r = client.put(SCENE, json={"base_version": v, "elements": []})
+        r = client.put(SCENE, json={"base_version": v, "elements": [_el(f"e{v}")]})
         assert r.json()["version"] == v + 1
+    r = client.put(SCENE, json={"base_version": 3, "elements": [_el("e2")]})
+    assert r.json()["version"] == 3  # nothing changed: the head stays
 
 
 def test_unknown_document_is_404(client):
@@ -118,11 +120,12 @@ def test_delta_keeps_deleted_flag_and_never_drops_untouched_ink(client):
     assert client.get(SCENE, params={"deleted": "true"}).json()["elements"] == [ink, gone]
 
 
-def test_delta_on_stale_base_version_is_a_conflict_and_changes_nothing(client):
+def test_delta_on_stale_base_version_merges_and_reports_the_other_rows(client):
     client.put(SCENE, json={"base_version": 0, "elements": [_el("a")]})
     r = client.put(SCENE, json={"base_version": 0, "elements": [_el("b")], "delta": True})
-    assert r.status_code == 409
-    assert [e["id"] for e in client.get(SCENE).json()["elements"]] == ["a"]
+    assert r.status_code == 200
+    assert [e["id"] for e in r.json()["newer"]] == ["a"]
+    assert [e["id"] for e in client.get(SCENE).json()["elements"]] == ["a", "b"]
 
 
 def test_delta_cannot_grow_the_scene_past_the_cap(client, monkeypatch):

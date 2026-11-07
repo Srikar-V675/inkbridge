@@ -168,8 +168,9 @@ def test_patch_is_broadcast_as_op_updated(client):
 
 def test_scene_save_pushes_chunks_updated(client):
     with client.websocket_connect(WS) as ws:
-        client.put("/documents/default/scene", json={"base_version": 0, "elements": []})
-        assert recv(ws) == {"type": "chunks.updated", "version": 1, "stale_crops": []}
+        client.put("/documents/default/scene", json={"base_version": 0, "elements": [{"id": "w", "type": "rectangle", "version": 1}]})
+        msg = recv(ws)
+        assert (msg["type"], msg["version"]) == ("chunks.updated", 1)
 
 
 def test_mark_delivered_reports_whether_it_moved_the_op(client):

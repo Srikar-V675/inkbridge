@@ -73,7 +73,7 @@ def test_changed_content_drops_the_search_row_and_undo_brings_it_back(client):
     canvas.elements.append(stroke("a3", 45, 0))
     canvas.put()
     assert search(client, "gradient") == []
-    canvas.elements.pop()
+    canvas.el("a3")["isDeleted"] = True  # undo of the stroke: deleted, not omitted
     canvas.put()
     assert [h["region_id"] for h in search(client, "gradient")] == [chunk["id"]]
 
@@ -136,6 +136,8 @@ def test_undo_of_a_split_reactivates_the_orphaned_chunk_with_the_same_id(client)
     canvas.put()
     pieces = [canvas.chunk_of("e0")["id"], canvas.chunk_of("e9")["id"]]
     canvas.elements = saved
+    for e in canvas.elements:  # an undo is a new edit: Excalidraw gives it a higher version
+        e["version"] = 5
     canvas.put()
     back = canvas.chunk_of("e0")
     assert back["id"] == original["id"]
@@ -253,7 +255,7 @@ def test_put_scene_rolls_back_on_its_own_connection(client, monkeypatch):
     conn = db.connect()
     try:
         with pytest.raises(RuntimeError):
-            db.put_scene(conn, "default", canvas.version, "[]")
+            db.put_scene(conn, "default", canvas.version, json.dumps([stroke("a3", 45, 0)]))
         assert not conn.in_transaction
         assert db.get_scene(conn, "default")[0] == canvas.version
     finally:
@@ -276,7 +278,7 @@ class _RacingConn:
         return self._conn.execute(sql, *args)
 
 
-def test_two_writers_with_the_same_base_version_cannot_both_win(client):
+def test_a_second_writer_is_locked_out_while_the_first_merges(client):
     canvas = Canvas(client, row("a", 3))
     base, results = canvas.version, []
 
@@ -284,7 +286,7 @@ def test_two_writers_with_the_same_base_version_cannot_both_win(client):
         try:
             db.put_scene(conn, "default", base, json.dumps(elements))
             results.append("ok")
-        except (db.VersionConflict, sqlite3.OperationalError):  # conflict, or locked out
+        except sqlite3.OperationalError:  # locked out: the first merge holds the write lock
             results.append("refused")
 
     rival_conn = sqlite3.connect(config.db_path(), timeout=0.1)

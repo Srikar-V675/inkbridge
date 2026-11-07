@@ -481,7 +481,7 @@ def test_sparse_anchor_falls_back_to_latest_strokes_not_default(client):
 def test_font_size_at_10x_is_10x_of_1x(client):
     seed(client, _strokes("s", 0, 0, 20))
     one = _font(client)
-    seed(client, _strokes("s", 0, 0, 200))
+    seed(client, _strokes("s", 0, 0, 200, version=2))  # same ids edited: a higher version wins
     ten = _font(client)
     assert abs(ten - 10 * one) <= 1 and ten > 64
 
