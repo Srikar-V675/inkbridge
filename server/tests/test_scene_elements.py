@@ -41,7 +41,7 @@ def test_migration_8_keeps_every_element_byte_identical(tmp_path, monkeypatch):
     conn, els = old_database(tmp_path, monkeypatch)
     assert any(e.get("pressures") and e.get("simulatePressure") is False for e in els)
     blob = conn.execute("SELECT elements_json FROM scenes").fetchone()[0]
-    assert db.migrate(conn) == [8]
+    assert db.migrate(conn)[0] == 8  # later migrations may follow
     rows = conn.execute("SELECT * FROM scene_elements ORDER BY pos").fetchall()
     assert len(rows) == len(els)
     assert [r["json"] for r in rows] == [dump(e) for e in els]
@@ -60,7 +60,7 @@ def test_migration_8_keeps_every_element_byte_identical(tmp_path, monkeypatch):
 
 def test_migration_8_runs_once(tmp_path, monkeypatch):
     conn, els = old_database(tmp_path, monkeypatch)
-    assert db.migrate(conn) == [8]
+    assert db.migrate(conn)[0] == 8  # later migrations may follow
     assert db.migrate(conn) == []
     assert conn.execute("SELECT COUNT(*) FROM scene_elements").fetchone()[0] == len(els)
     conn.execute("DELETE FROM scene_elements")
@@ -77,7 +77,7 @@ def test_migration_8_duplicate_ids_keep_the_last_at_the_first_position(tmp_path,
     a, b, a2 = {"id": "a", "v": 1}, {"id": "b"}, {"id": "a", "v": 2}
     conn.execute("UPDATE scenes SET elements_json = ?", (dump([a, b, a2]),))
     conn.commit()
-    assert db.migrate(conn) == [8]
+    assert db.migrate(conn)[0] == 8  # later migrations may follow
     rows = conn.execute("SELECT id, json FROM scene_elements ORDER BY pos").fetchall()
     assert [(r["id"], r["json"]) for r in rows] == [("a", dump(a2)), ("b", dump(b))]
     conn.close()
@@ -85,7 +85,9 @@ def test_migration_8_duplicate_ids_keep_the_last_at_the_first_position(tmp_path,
 
 def test_fresh_database_has_the_table(tmp_path):
     conn = db.connect(tmp_path / "fresh.db")
-    assert db.migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert db.migrate(conn) == sorted(
+        int(f.name.split("_")[0]) for f in db.MIGRATIONS_DIR.glob("*.sql")
+    )
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(scene_elements)")}
     assert cols == {"document_id", "id", "pos", "seq", "version", "nonce", "is_deleted", "json", "updated_at"}
     indexes = {r["name"] for r in conn.execute("PRAGMA index_list(scene_elements)")}
