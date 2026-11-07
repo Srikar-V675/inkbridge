@@ -6,10 +6,14 @@ import { useRef } from "react";
 import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+import { startMeasure } from "../src/lib/measure";
 
 const w = window as unknown as Record<string, unknown>;
-w.EXCALIDRAW_THROTTLE_RENDER = true;
+w.EXCALIDRAW_THROTTLE_RENDER = new URLSearchParams(location.search).get("throttle") !== "0";
 w.EXCALIDRAW_ASSET_PATH = "/excalidraw-assets/";
+
+// The same opt-in device log as the app (?devicelog=1), so a tablet A/B compares like with like (INK-181).
+startMeasure(location.search, "stock");
 
 const q = new URLSearchParams(location.search);
 export const canvas = q.get("canvas"); // exported only so the file counts as a module with exports for the lint rule

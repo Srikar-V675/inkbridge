@@ -2,7 +2,7 @@
 // Dev tooling only: the patches below are applied by scripts/perf/vite.perf.config.ts, never by the
 // shipped build, so the app carries no perf switches.
 
-export const OFF_FLAGS = ["dots", "rail", "railstore", "topbar", "overlay", "drafts", "crops", "ops", "refresh", "autosave", "touch", "touchzoom", "touchcap", "touchbare", "nostrict"] as const;
+export const OFF_FLAGS = ["dots", "rail", "railstore", "topbar", "overlay", "drafts", "crops", "ops", "refresh", "autosave", "touch", "touchzoom", "touchcap", "touchbare", "nostrict", "throttle", "fastink"] as const;
 export type OffFlag = (typeof OFF_FLAGS)[number];
 
 /** find/replace on a file under web/src; `{{OFF}}` in `replace` is the flag name. `find` must occur exactly once. */
@@ -67,6 +67,10 @@ export const PATCHES: Record<OffFlag, Patch[]> = {
   touchcap: [setViewProbe("touchcap", "{ scrollX: v.scrollX, scrollY: v.scrollY, zoom: { value: v.zoom as never } }", "")],
   touchbare: [setViewProbe("touchbare", "{ scrollX: v.scrollX, scrollY: v.scrollY }", "")],
   // Dev builds double-invoke renders under StrictMode (the stock page has none): off = render without it.
+  // Excalidraw's render throttle (INK-101) delays drawing the stroke in progress by a frame: off = render on every event (INK-181).
+  throttle: [{ file: "lib/excalidrawEnv.ts", find: "w.EXCALIDRAW_THROTTLE_RENDER = true;", replace: 'w.EXCALIDRAW_THROTTLE_RENDER = !__off("throttle");' }],
+  // The INK-181 fast ink layer and pen-sample collector (the patched Excalidraw then falls back to one point per event).
+  fastink: [wrap("ink/FastInk.tsx", "FastInk", "fastink")],
   nostrict: [
     {
       file: "main.tsx",

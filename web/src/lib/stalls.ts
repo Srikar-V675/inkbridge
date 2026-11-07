@@ -57,3 +57,10 @@ export function createFrameMeter(opts: { raf: (cb: (t: number) => void) => void;
     },
   };
 }
+
+/** Pointermove count and event age (handling time minus event.timeStamp, i.e. queueing) for one stroke. */
+export function inputStats(ages: number[]) {
+  const s = [...ages].sort((a, b) => a - b);
+  const at = (q: number) => (s.length ? Math.round(s[Math.min(s.length - 1, Math.floor(q * s.length))]) : 0);
+  return { moves: s.length, age_p50: at(0.5), age_p95: at(0.95), age_max: s.length ? Math.round(s[s.length - 1]) : 0 };
+}

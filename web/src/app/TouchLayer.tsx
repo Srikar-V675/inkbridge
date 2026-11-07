@@ -2,21 +2,12 @@ import { useEffect, useSyncExternalStore } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { Button } from "../ui/Button";
-import { createFingerDraws } from "./fingerDraws";
+import { fingerDraws } from "./fingerDrawsStore";
 import { installTouchInput, whenLoaded } from "./touchInput";
 import { isExcalidrawCanvas, penPatch, viewPatch } from "./touchRouting";
 
 // One finger pans, two pinch, the pen draws (INK-173, docs/decisions/0072). The router lives in
 // touchInput.ts; this file only wires it to Excalidraw and the top bar.
-function safeStorage(): Storage | null {
-  try {
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-const fingerDraws = createFingerDraws(safeStorage());
-
 const frame = (cb: () => void) => {
   const id = requestAnimationFrame(cb);
   return () => cancelAnimationFrame(id);

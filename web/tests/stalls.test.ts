@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bucketCounts, createFrameMeter, createHeartbeat } from "../src/lib/stalls.ts";
+import { bucketCounts, createFrameMeter, createHeartbeat, inputStats } from "../src/lib/stalls.ts";
 
 describe("createHeartbeat", () => {
   it("reports only gaps over the limit and can reset", () => {
@@ -42,5 +42,12 @@ describe("createFrameMeter", () => {
     m.stop();
     m.stop();
     assert.deepEqual(done, [["pointer", [16, 17, 117]]]);
+  });
+});
+
+describe("inputStats", () => {
+  it("summarises pointermove ages and counts per stroke", () => {
+    assert.deepEqual(inputStats([4, 8, 12, 50, 6]), { moves: 5, age_p50: 8, age_p95: 50, age_max: 50 });
+    assert.deepEqual(inputStats([]), { moves: 0, age_p50: 0, age_p95: 0, age_max: 0 });
   });
 });
