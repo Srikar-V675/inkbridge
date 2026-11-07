@@ -157,7 +157,7 @@ def test_answers_are_retrieved_and_carry_their_chunk(client):
 
 
 def test_no_vault_text_in_the_index(client):
-    doc, chunk = canvas_with_reading(client, "Plants", "leaf diagram")
+    doc, _ = canvas_with_reading(client, "Plants", "leaf diagram")
     q = client.post(f"/documents/{doc}/questions", json={"text": "what?"}).json()["id"]
     assert answer(client, q, "the answer is photosynthesis", [NOTE]).status_code == 200
     assert retrieve(client, "zebra", scope="all") == []
