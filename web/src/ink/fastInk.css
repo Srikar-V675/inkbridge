@@ -1,0 +1,10 @@
+/* Fast ink (INK-181): above Excalidraw's canvases, under nothing that takes input. Placed and sized
+   to the Excalidraw canvas from script. */
+.ink-fastink {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}

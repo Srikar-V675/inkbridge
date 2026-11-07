@@ -44,8 +44,12 @@ test("pressure data flow is intact", () => {
   assert.ok(p.includes("simulatePressure:e.simulatePressure"));
 });
 
-test("patch only changes the thinning and streamline numbers", () => {
-  const lines = read(patchPath).split("\n");
+// The pen-feel hunks (the two chunk files) change only these numbers; the index.js hunks are the
+// INK-181 sample hook, pinned by the last test in this file.
+test("patch only changes the thinning and streamline numbers in the freedraw chunks", () => {
+  const files = read(patchPath).split(/^diff --git /m).filter((f) => /dist\/(dev|prod)\/chunk-/.test(f.split("\n")[0]));
+  assert.equal(files.length, 2, "pen-feel hunks for the dev and prod chunk");
+  const lines = files.join("\n").split("\n");
   const norm = (l: string) =>
     l
       .slice(1)
@@ -66,4 +70,17 @@ test("package.json wires patch-package", () => {
   const pkg = JSON.parse(read(new URL("package.json", web)));
   assert.equal(pkg.scripts.postinstall, "patch-package");
   assert.ok(pkg.devDependencies["patch-package"]);
+});
+
+// INK-181 (decision 0076): the freedraw move and pointerup handlers take every collected pen sample
+// through globalThis.__inkbridgePenSamples, falling back to their own event when it is absent.
+test("both builds drain the pen sample hook in freedraw move and pointerup", () => {
+  const dev = read(new URL(dist + "dev/index.js", web));
+  assert.ok(dev.includes("for (const sample of globalThis.__inkbridgePenSamples?.(event) ?? [event])"));
+  assert.ok(dev.includes("for (const sample of globalThis.__inkbridgePenSamples?.(childEvent) ?? [])"));
+  const prod = read(new URL(dist + "prod/index.js", web));
+  assert.ok(prod.includes("globalThis.__inkbridgePenSamples?.(r)??[r]"));
+  assert.ok(prod.includes("globalThis.__inkbridgePenSamples?.(r)??[]"));
+  const patch = read(patchPath);
+  assert.ok(patch.includes("__inkbridgePenSamples"), "the patch file must carry the sample hook, or npm ci drops it");
 });
