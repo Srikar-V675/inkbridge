@@ -24,7 +24,8 @@ from inkbridge.canvas.hashes import (
 
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 
-from inkbridge.db.common import AUTO, DocumentNotFound, _now
+from inkbridge.db.common import AUTO, _now
+from inkbridge.db.documents import get_scene
 from inkbridge.db.recognitions import _put_recognition, _reindex_region
 from inkbridge.db.regions import get_region
 
@@ -283,11 +284,7 @@ def _override(conn, document_id, chunk_ids, make_groups, chunker_config):
     now = _now()
     conn.execute("BEGIN IMMEDIATE")  # same lock as a scene save: the chunks cannot move meanwhile
     try:
-        scene = conn.execute(
-            "SELECT elements_json FROM scenes WHERE document_id = ?", (document_id,)
-        ).fetchone()
-        if scene is None:
-            raise DocumentNotFound(document_id)
+        _, scene_json = get_scene(conn, document_id)  # raises DocumentNotFound
         rows = []
         for cid in chunk_ids:
             r = conn.execute(
@@ -299,7 +296,7 @@ def _override(conn, document_id, chunk_ids, make_groups, chunker_config):
             if r["status"] != "active":
                 raise ChunkNotActive(cid)
             rows.append(r)
-        elements = json.loads(scene["elements_json"])
+        elements = json.loads(scene_json)
         wanted = make_groups(rows, elements)
         groups = pin_groups(elements, wanted)
         # A group with no ink of its own (only connectors, or nothing left after a split) vanishes.

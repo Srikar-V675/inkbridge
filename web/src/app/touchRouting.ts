@@ -87,6 +87,11 @@ export function viewFor(a: Anchor, pts: readonly Pt[]): ViewState {
 /** appState patch for the "Finger draws" setting. penDetected stops the first pen contact flipping penMode back. */
 export const penPatch = (fingerDraws: boolean) => ({ penMode: !fingerDraws, penDetected: fingerDraws });
 
+/** The appState patch that puts Excalidraw back in line with the Finger draws store, or null when it already is. Compares only penMode (what decides whether a finger draws), so Excalidraw's own first-pen-contact flip of penDetected while off writes nothing. */
+export function reconcilePen(s: { penMode?: boolean }, fingerDraws: boolean): ReturnType<typeof penPatch> | null {
+  return s.penMode === !fingerDraws ? null : penPatch(fingerDraws);
+}
+
 /** appState patch for a view write. One finger never changes the zoom, and a fresh zoom object makes Excalidraw redo zoom-dependent work every frame (INK-174), so it is sent only when the value changed. */
 export function viewPatch(v: ViewState, currentZoom: number): { scrollX: number; scrollY: number; zoom?: { value: number } } {
   const patch = { scrollX: v.scrollX, scrollY: v.scrollY };

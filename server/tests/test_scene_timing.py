@@ -10,7 +10,9 @@ from tests.test_regions_api import SCENE
 def test_a_save_logs_one_timing_record(client, caplog):
     with caplog.at_level(logging.INFO, logger="inkbridge.scene"):
         Canvas(client, row("a", 3))
-    (rec,) = [r for r in caplog.records if r.name == "inkbridge.scene"]
+    (rec,) = [
+        r for r in caplog.records if r.name == "inkbridge.scene" and "put_scene" in r.getMessage()
+    ]
     assert "elements=3" in rec.getMessage() and "total=" in rec.getMessage()
 
 

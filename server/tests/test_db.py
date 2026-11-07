@@ -7,6 +7,17 @@ from inkbridge import config, db
 EXPECTED = {
     "documents": {"id", "title", "updated_at", "pinned", "archived_at", "last_opened_at"},
     "scenes": {"document_id", "version", "elements_json", "updated_at", "element_count"},
+    "scene_elements": {
+        "document_id",
+        "id",
+        "pos",
+        "seq",
+        "version",
+        "nonce",
+        "is_deleted",
+        "json",
+        "updated_at",
+    },
     "regions": {
         "id",
         "document_id",

@@ -114,7 +114,8 @@ def _row_dict(row: sqlite3.Row) -> dict:
 
 
 def _scene_elements(conn: sqlite3.Connection, document_id: str) -> list[dict]:
-    _, elements_json = get_scene(conn, document_id)
+    # Tombstone stubs count: an element deleted long ago still holds its id (INK-110, decision 0077).
+    _, elements_json = get_scene(conn, document_id, stubs=True)
     return json.loads(elements_json)
 
 

@@ -57,4 +57,23 @@ describe("finger draws setting", () => {
     f.set(true);
     assert.equal(n, 2);
   });
+  it("toggles on and off through set(!get()) and a reload sees the last value", () => {
+    const s = store();
+    const f = createFingerDraws(s);
+    f.set(!f.get());
+    assert.equal(f.get(), true);
+    f.set(!f.get());
+    assert.equal(f.get(), false);
+    assert.equal(s.data[KEY], "0");
+    assert.equal(createFingerDraws(s).get(), false); // reload after off
+    f.set(true);
+    assert.equal(createFingerDraws(s).get(), true); // reload after on
+  });
+  it("a second instance on the same storage disagrees until reload (one store per page)", () => {
+    const s = store();
+    const a = createFingerDraws(s);
+    const b = createFingerDraws(s);
+    a.set(true);
+    assert.equal(b.get(), false); // documents why fingerDrawsStore.ts must stay the only instance
+  });
 });

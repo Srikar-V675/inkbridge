@@ -246,6 +246,37 @@ describe("SceneSync", () => {
     assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2"]);
   });
 
+  it("a 409 reload asks for deleted elements too, the first load does not", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [] }),
+      json(409, { detail: {} }),
+      json(200, { version: 2, elements: [] }),
+      json(200, { version: 3 }),
+    ]);
+    await h.sync.load();
+    assert.equal(h.calls[0].url, "/documents/default/scene");
+    h.sync.notify([el("s1", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    const gets = h.calls.filter((c) => c.method === "GET");
+    assert.equal(gets[1].url, "/documents/default/scene?deleted=true");
+  });
+
+  it("a stroke another device deleted stays deleted after the conflict reload", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [el("x", 2)] }),
+      json(409, { detail: {} }),
+      json(200, { version: 5, elements: [el("x", 5, { isDeleted: true })] }),
+      json(200, { version: 6 }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("x", 2), el("y", 1)]);
+    mock.timers.tick(1500);
+    await settle();
+    const merged = h.reloads.at(-1)!;
+    assert.equal(merged.find((e) => e.id === "x")?.isDeleted, true);
+  });
+
   it("mergeScenes keeps the newer version of an element and never drops a local one", () => {
     const merged = mergeScenes(
       [el("a", 2, { from: "server" }), el("b", 1)],

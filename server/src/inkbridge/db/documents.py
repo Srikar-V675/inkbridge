@@ -6,6 +6,7 @@ import sqlite3
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 
 from inkbridge.db.common import DEFAULT_DOCUMENT_ID, DocumentNotFound, _now
+from inkbridge.db.elements import concat, read_rows
 
 
 def ensure_default_document(conn: sqlite3.Connection) -> None:
@@ -22,14 +23,32 @@ def ensure_default_document(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def get_scene(conn: sqlite3.Connection, document_id: str) -> tuple[int, str]:
-    """Return (version, elements_json) or raise DocumentNotFound."""
-    row = conn.execute(
-        "SELECT version, elements_json FROM scenes WHERE document_id = ?", (document_id,)
-    ).fetchone()
-    if row is None:
-        raise DocumentNotFound(document_id)
-    return row["version"], row["elements_json"]
+def get_scene(
+    conn: sqlite3.Connection, document_id: str, *, stubs: bool = False
+) -> tuple[int, str]:
+    """Return (version, elements_json) or raise DocumentNotFound.
+
+    The elements are every stored element, deleted ones included, in scene order, as a JSON array
+    text built from the rows. Tombstone stubs are left out unless `stubs` (INK-110).
+    """
+    version = scene_version(conn, document_id)
+    return version, concat(read_rows(conn, document_id, stubs=stubs))
+
+
+def get_live_scene(
+    conn: sqlite3.Connection, document_id: str, *, include_deleted: bool = False
+) -> tuple[int, str, int]:
+    """(seq, elements array text, element count) for the scene load: live rows only by default."""
+    seq = scene_version(conn, document_id)
+    rows = read_rows(conn, document_id, live_only=not include_deleted)
+    return seq, concat(rows), len(rows)
+
+
+def scene_changes(conn: sqlite3.Connection, document_id: str, since: int) -> tuple[int, str, int]:
+    """(head seq, array text, count) of every row written after `since`, deleted rows and stubs too."""
+    head = scene_version(conn, document_id)
+    rows = read_rows(conn, document_id, stubs=True, since=since)
+    return head, concat(rows), len(rows)
 
 
 def scene_version(conn: sqlite3.Connection, document_id: str) -> int:

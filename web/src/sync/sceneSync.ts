@@ -152,17 +152,19 @@ export class SceneSync {
     if (!this.disposed) this.o.onState(state, detail);
   }
 
-  private url() {
-    return `/documents/${encodeURIComponent(this.o.documentId)}/scene`;
+  private url(includeDeleted = false) {
+    // The load leaves deleted elements out (INK-110); only the conflict reload asks for them, so
+    // the merge does not bring back a stroke another device deleted.
+    return `/documents/${encodeURIComponent(this.o.documentId)}/scene${includeDeleted ? "?deleted=true" : ""}`;
   }
 
   /** Fetch the saved scene; null (state "error") if the canvas does not exist or the API is down. */
-  async load(): Promise<SceneElement[] | null> {
+  async load(includeDeleted = false): Promise<SceneElement[] | null> {
     this.emit("loading");
     this.notFound = false;
     const t0 = performance.now();
     try {
-      const r = await this.fetchFn(this.url());
+      const r = await this.fetchFn(this.url(includeDeleted));
       this.o.clock?.mark("fetch"); // time to the response headers
       if (!r.ok) {
         this.notFound = r.status === 404;
@@ -366,7 +368,7 @@ export class SceneSync {
     this.pending = null;
     this.pendingSig = EMPTY_SIG;
     this.emit("conflict", notice(0));
-    const fresh = await this.load();
+    const fresh = await this.load(true);
     // The canvas stays live during the reload: merge whatever the user has drawn since, too.
     const newest = this.latest ?? local;
     if (!fresh) {

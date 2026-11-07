@@ -105,13 +105,21 @@ def _fetch_scene(canvas: str, api: str | None, db: str | None) -> tuple[int, lis
             row = conn.execute(
                 "SELECT version, elements_json FROM scenes WHERE document_id = ?", (canvas,)
             ).fetchone()
+            if row is not None and conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scene_elements'"
+            ).fetchone():  # migration 0008 (INK-110): the rows are the scene, the blob is retired
+                rows = conn.execute(
+                    "SELECT json FROM scene_elements WHERE document_id = ? ORDER BY pos", (canvas,)
+                ).fetchall()
+                elements = [e for e in (json.loads(r[0]) for r in rows) if "type" in e]  # no stubs
+                return row[0], elements
         finally:
             conn.close()
         if row is None:
             raise SystemExit(f"no canvas {canvas!r} in {db}")
         return row[0], json.loads(row[1])
     with httpx.Client(base_url=api, timeout=30) as client:
-        r = client.get(f"/documents/{canvas}/scene")  # GET only
+        r = client.get(f"/documents/{canvas}/scene", params={"deleted": "true"})  # GET only
         r.raise_for_status()
         body = r.json()
         return body["version"], body["elements"]

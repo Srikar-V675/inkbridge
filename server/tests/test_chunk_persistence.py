@@ -8,6 +8,7 @@ import time
 import pytest
 
 from inkbridge import config, db
+from tests.scene_rows import set_scene
 from tests.test_chunker import stroke as _stroke
 from tests.test_region_staleness import Scene
 from tests.test_region_staleness import region as get
@@ -314,8 +315,7 @@ def test_restart_leaves_a_reading_alone_when_the_ink_changed_since(client):
             "UPDATE regions SET content_hash = ?, status = 'orphaned' WHERE id = ?",
             (old, chunk["id"]),
         )
-        conn.execute("UPDATE scenes SET elements_json = ?", (json.dumps(edited),))
-        conn.commit()
+        set_scene(conn, "default", edited)
         recognise(chunk, "gradient", content_hash=old)
         db.init_db()
         keys = [r[0] for r in conn.execute("SELECT content_hash FROM recognitions")]

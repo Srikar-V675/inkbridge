@@ -1,0 +1,12 @@
+/* Finger draws (INK-180, decision 0085): on is a charcoal fill like the pressed rail buttons. */
+.ink-button.ink-finger-toggle[aria-pressed="true"],
+.ink-button.ink-finger-toggle[aria-pressed="true"]:hover {
+  background: var(--color-charcoal);
+  color: var(--color-paper);
+}
+/* A touch screen leaves :hover stuck on the last tapped button; off must not keep a tint. */
+@media (hover: none) {
+  .ink-button.ink-finger-toggle[aria-pressed="false"]:hover {
+    background: var(--component-button-quiet-background-color);
+  }
+}
