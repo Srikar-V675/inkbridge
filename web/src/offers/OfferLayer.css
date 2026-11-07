@@ -1,0 +1,51 @@
+/* Offer chips (INK-131, decision 0097): one transformed plane, chips keep their size with --z. */
+.ink-offer-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ink-offer-plane {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  --z: 1;
+}
+.ink-offer-pin {
+  position: absolute;
+  transform: scale(calc(1 / var(--z)));
+  transform-origin: 0 0;
+  pointer-events: auto;
+}
+.ink-offer-popover {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  width: calc(280px * var(--ui-scale, 1));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  box-shadow: var(--shadow-popover);
+}
+.ink-offer-popover p {
+  margin: 0;
+}
+.ink-offer-link {
+  display: flex;
+  align-items: center;
+  min-height: var(--space-touch);
+  color: var(--color-charcoal);
+}
+.ink-focus-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(84px * var(--ui-scale, 1));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  max-width: calc(100% - 32px);
+  box-shadow: var(--shadow-popover);
+  pointer-events: auto;
+}

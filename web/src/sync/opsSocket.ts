@@ -9,6 +9,15 @@
 import type { PendingOp } from "../drafts/drafts";
 import type { Question } from "../ask/ask";
 import type { SceneDelta } from "./liveDelta.ts";
+import type { Offer } from "../offers/offers.ts";
+
+export interface AttentionView {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  zoom: number;
+}
 
 export interface ChunksUpdated {
   version: number;
@@ -38,6 +47,8 @@ export interface OpsSocketOptions {
   onOpUpdated?: (msg: OpUpdated) => void;
   onQuestionUpdate?: (question: Question) => void;
   onSceneDelta?: (d: SceneDelta) => void;
+  onOfferCreated?: (o: Offer) => void;
+  onOfferUpdated?: (o: Offer) => void;
   onOpError?: (msg: { op_id: string; code: string; detail?: unknown }) => void;
   onConnection?: (connected: boolean) => void;
   createSocket?: (url: string) => SocketLike;
@@ -89,6 +100,11 @@ export class OpsSocket {
     return this.queue;
   }
 
+  /** Tells the server whether the pen is down and what is in view; it gates offer pushes. */
+  sendAttention(a: { pen: boolean; view: AttentionView | null }) {
+    this.send({ type: "attention", ...a });
+  }
+
   // A socket that is closed or still connecting throws on send. Drop the message instead: the
   // server replays a pending op on the next connect and it is measured again. Throwing here would
   // report a measured op as failed, and a rejected queue would never run another op.
@@ -120,6 +136,10 @@ export class OpsSocket {
         return this.o.onOpError?.(msg as never);
       case "scene.delta":
         return this.o.onSceneDelta?.(msg as unknown as SceneDelta);
+      case "offer.created":
+        return this.o.onOfferCreated?.((msg as unknown as { offer: Offer }).offer);
+      case "offer.updated":
+        return this.o.onOfferUpdated?.((msg as unknown as { offer: Offer }).offer);
       case "question.update":
         return this.o.onQuestionUpdate?.((msg as { question: Question }).question);
     }
