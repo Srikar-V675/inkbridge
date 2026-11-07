@@ -40,6 +40,18 @@ def public_url() -> str:
     return (os.environ.get("INKBRIDGE_PUBLIC_URL") or DEFAULT_PUBLIC_URL).rstrip("/")
 
 
+DEFAULT_QUIET_S = 8.0
+
+
+def quiet_s() -> float:
+    """INKBRIDGE_QUIET_S: seconds after the last stroke before an offer may appear (INK-130)."""
+    try:
+        v = float(os.environ.get("INKBRIDGE_QUIET_S", ""))
+    except ValueError:
+        return DEFAULT_QUIET_S
+    return v if v >= 0 else DEFAULT_QUIET_S
+
+
 def chunk_containment() -> float | None:
     """INKBRIDGE_CHUNK_CONTAINMENT, a fraction in (0, 1] (for example 0.6). Unset, blank or 0 = off.
 
