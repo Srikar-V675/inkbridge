@@ -24,6 +24,9 @@ import replay_fixture
 import snapshot_canvas
 
 
+ALL = {"deleted": "true"}  # the scene GET leaves deleted elements out unless asked (INK-110)
+
+
 def live(els):
     return [e for e in els if not e["isDeleted"]]
 
@@ -166,7 +169,7 @@ def test_load_fixture_seeds_document(client):
     make_canvas("fixture-real")
     els = make_real_scale.build()
     version = load_fixture.load(client, "fixture-real")
-    scene = client.get("/documents/fixture-real/scene").json()
+    scene = client.get("/documents/fixture-real/scene", params=ALL).json()
     assert version == scene["version"] == 1
     assert sorted(e["id"] for e in scene["elements"]) == sorted(e["id"] for e in els)
     assert len(scene["elements"]) == len(els)
@@ -176,7 +179,7 @@ def test_load_fixture_is_idempotent(client):
     make_canvas("fixture-real")
     first = load_fixture.load(client, "fixture-real")
     second = load_fixture.load(client, "fixture-real")
-    scene = client.get("/documents/fixture-real/scene").json()
+    scene = client.get("/documents/fixture-real/scene", params=ALL).json()
     assert second == first + 1 == scene["version"]
     assert len(scene["elements"]) == len(make_real_scale.build())
 
@@ -199,7 +202,7 @@ def test_load_fixture_cli_loads_existing_canvas(client, capsys):
         == 0
     )
     assert "?canvas=fixture-real" in capsys.readouterr().out
-    assert len(client.get("/documents/fixture-real/scene").json()["elements"]) == len(
+    assert len(client.get("/documents/fixture-real/scene", params=ALL).json()["elements"]) == len(
         make_real_scale.build()
     )
 
@@ -212,7 +215,7 @@ def test_load_fixture_cli_creates_missing_canvas(client, capsys):
     out = capsys.readouterr().out
     assert "created" in out and "?canvas=" in out
     (doc,) = [d for d in client.get("/documents").json() if d["title"] == "fixture-real"]
-    assert len(client.get(f"/documents/{doc['id']}/scene").json()["elements"]) == len(
+    assert len(client.get(f"/documents/{doc['id']}/scene", params=ALL).json()["elements"]) == len(
         make_real_scale.build()
     )
 

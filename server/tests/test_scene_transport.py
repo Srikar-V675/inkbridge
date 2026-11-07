@@ -1,10 +1,7 @@
-"""INK-080: the scene GET is gzipped when accepted and returns the stored JSON verbatim."""
+"""INK-080: the scene GET is gzipped when accepted. The verbatim-row test lives in test_scene_elements."""
 
 import json
 
-import pytest
-
-from inkbridge import db
 from tests.test_chunk_persistence import Canvas, row
 from tests.test_regions_api import SCENE
 
@@ -20,24 +17,6 @@ def test_no_gzip_unless_accepted(client):
     Canvas(client, row("a", 400))
     r = client.get(SCENE, headers={"Accept-Encoding": "identity"})
     assert "content-encoding" not in r.headers
-
-
-@pytest.mark.fts_unchecked  # writes the stored text directly
-def test_scene_body_is_the_stored_json_verbatim(client):
-    Canvas(client, row("a", 1))
-    # Spacing and float spelling that a decode/encode round trip would normalise.
-    raw = (
-        '[ {"id":"a0", "type":"freedraw", "points":[[0,0],[10.50,10.0]],'
-        ' "pressures":[0.50,0.7000], "simulatePressure":false} ]'
-    )
-    conn = db.connect()
-    conn.execute("UPDATE scenes SET elements_json = ? WHERE document_id = 'default'", (raw,))
-    conn.commit()
-    version = conn.execute("SELECT version FROM scenes WHERE document_id='default'").fetchone()[0]
-    conn.close()
-    body = client.get(SCENE, headers={"Accept-Encoding": "identity"}).content
-    assert body == f'{{"version":{version},"elements":{raw}}}'.encode()
-    assert b'"pressures":[0.50,0.7000]' in body
 
 
 def test_images_are_not_gzipped(client):

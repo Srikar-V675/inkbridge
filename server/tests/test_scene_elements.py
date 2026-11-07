@@ -218,3 +218,61 @@ def test_op_payload_naming_a_tombstoned_id_is_refused(client):
     r = write(client, text="gone")
     assert r.status_code == 422 and r.json()["detail"]["code"] == "existing_element_id"
     assert client.get(OPS).json()["ops"] == []
+
+
+# --- routes (Task 3) --------------------------------------------------------------------------
+
+
+def test_load_excludes_deleted_elements(client):
+    put(client, [el("a"), el("b"), el("c")])
+    seq = put(client, [el("b", 2, isDeleted=True)], delta=True)
+    body = client.get(SCENE).json()
+    assert [e["id"] for e in body["elements"]] == ["a", "c"]
+    assert body["seq"] == body["version"] == seq
+    everything = client.get(SCENE, params={"deleted": "true"}).json()
+    assert [e["id"] for e in everything["elements"]] == ["a", "b", "c"]
+
+
+def test_since_returns_changed_rows_and_tombstone_stubs(client):
+    ELEMENTS = "/documents/default/elements"
+    first = put(client, [el("a"), el("b")])
+    second = put(client, [el("a", 2, x=4), el("b", 2, isDeleted=True)], delta=True)
+    body = client.get(ELEMENTS, params={"since": first}).json()
+    assert body["seq"] == second
+    assert [(e["id"], bool(e.get("isDeleted"))) for e in body["elements"]] == [("a", False), ("b", True)]
+    assert client.get(ELEMENTS, params={"since": second}).json() == {"seq": second, "elements": []}
+    assert shrink(15) == 1
+    again = client.get(ELEMENTS, params={"since": first}).json()["elements"]
+    assert again[1] == {"id": "b", "version": 2, "versionNonce": 2, "isDeleted": True}
+    assert "points" in again[0]
+    assert client.get(ELEMENTS, params={"since": -1}).status_code == 422
+    assert client.get("/documents/nope/elements", params={"since": 0}).status_code == 404
+
+
+def test_scene_body_is_the_stored_row_json_verbatim(client):
+    put(client, [el("seed")])
+    row1 = (
+        '{"id":"a0","type":"freedraw","points":[[0,0],[10.50,10.0]],'
+        '"pressures":[0.50,0.7000],"simulatePressure":false}'
+    )
+    row2 = '{"id":"a1","type":"freedraw","isDeleted":true}'
+    conn = db.connect()
+    conn.execute("DELETE FROM scene_elements")
+    for pos, (eid, text, gone) in enumerate([("a0", row1, 0), ("a1", row2, 1)]):
+        conn.execute(
+            "INSERT INTO scene_elements VALUES ('default', ?, ?, 1, 1, 1, ?, ?, 't')",
+            (eid, pos, gone, text),
+        )
+    conn.commit()
+    seq = conn.execute("SELECT version FROM scenes").fetchone()[0]
+    conn.close()
+    body = client.get(SCENE, headers={"Accept-Encoding": "identity"}).content
+    assert body == f'{{"seq":{seq},"version":{seq},"elements":[{row1}]}}'.encode()
+    assert b'"pressures":[0.50,0.7000]' in body
+
+
+def test_scene_get_is_logged(client, caplog):
+    put(client, [el("a")])
+    with caplog.at_level("INFO", logger="inkbridge.scene"):
+        client.get(SCENE)
+    assert any("scene GET doc=default seq=" in m and "bytes=" in m for m in caplog.messages)
