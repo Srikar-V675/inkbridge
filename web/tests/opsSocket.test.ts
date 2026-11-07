@@ -100,6 +100,28 @@ describe("OpsSocket", () => {
     assert.deepEqual(first.sent, [{ type: "op.measured", op_id: "b", elements: [{ id: "b:1" }], width: 5, height: 6 }]);
   });
 
+  it("hands offer pushes to their hooks and sends attention frames", () => {
+    const got: unknown[] = [];
+    const sockets: FakeSocket[] = [];
+    const s = new OpsSocket({
+      url: "x",
+      onOp: async () => measured("x"),
+      onOfferCreated: (o) => got.push(["c", o]),
+      onOfferUpdated: (o) => got.push(["u", o]),
+      createSocket: () => (sockets.push(new FakeSocket()), sockets[0]),
+    });
+    s.start();
+    sockets[0].push({ type: "offer.created", offer: { id: "o1" } });
+    sockets[0].push({ type: "offer.updated", offer: { id: "o2" } });
+    assert.deepEqual(got, [["c", { id: "o1" }], ["u", { id: "o2" }]]);
+    s.sendAttention({ pen: true, view: null });
+    assert.deepEqual(sockets[0].sent, [{ type: "attention", pen: true, view: null }]);
+    sockets[0].send = () => {
+      throw new Error("closed");
+    };
+    s.sendAttention({ pen: false, view: null }); // must not throw
+  });
+
   it("reconnects after a drop and stops after dispose", () => {
     const { s, sockets, timers } = setup(async () => measured("x"));
     sockets[0].close();
