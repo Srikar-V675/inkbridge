@@ -11,12 +11,13 @@ import { createRefresh, onVisible, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
 import { publishQuestion } from "../ask/ask";
 import { DraftBar } from "../drafts/DraftBar";
+import { createDraftStore, reconcile } from "../drafts/draftStore";
 import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "../drafts/draftView";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "../chunks/chunks";
 import { CropSync, serverRendersCrops } from "../sync/cropSync";
 import { type DraftElement } from "../drafts/drafts";
-import { draftOpId, dropDrafts } from "../drafts/resolve";
-import { drawOp } from "../drafts/drawOp";
+import { fetchDrafts } from "../drafts/resolve";
+import { measureOp } from "../drafts/drawOp";
 import { OpsSocket } from "../sync/opsSocket";
 import { LiveDelta } from "../sync/liveDelta";
 import type { Location } from "../lib/route";
@@ -84,12 +85,6 @@ function applyJump(api: Api, jump: JumpResult) {
   });
 }
 
-// How long an op waits for its drafts to be saved before it is reported as failed (about 30 s).
-const SAVE_ATTEMPTS = 15;
-const SAVE_RETRY_MS = 2000;
-// Op statuses whose drafts must not stay on the canvas.
-const DEAD = ["failed", "expired", "rejected"];
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => (resolve = r));
@@ -150,6 +145,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const lastPanAt = useRef<number | null>(null);
   // Drafts that were off-screen and not yet looked at (the DraftBar chip).
   const unseen = useMemo(() => createUnseen(), []);
+  // The placed drafts the server holds; the scene shows exactly these (INK-115).
+  const drafts = useMemo(() => createDraftStore(), []);
   const sceneReady = useRef(false);
   const clock = useMemo(() => createLoadClock(), []);
   // Once per canvas view: a switch remounts this component, so the gate is per canvas.
@@ -240,7 +237,10 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
           const byId = new Map(restored.map((e) => [e.id, e]));
           try {
             api.updateScene({
-              elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
+              elements: reconcile(
+                elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as DraftElement[],
+                drafts.list(),
+              ) as never,
               // Ink another device wrote is not this user's edit: Ctrl+Z must not undo it.
               captureUpdate: CaptureUpdateAction.NEVER,
             });
@@ -302,7 +302,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       void sync?.close();
       crops.dispose();
     };
-  }, [route.canvas, route.chunk, status, clock, sceneData]);
+  }, [route.canvas, route.chunk, status, clock, sceneData, drafts]);
 
   // Resolves once Excalidraw hands over its API, so an op that arrives first waits instead of failing.
   const apiReady = useMemo(() => deferred<ExcalidrawImperativeAPI>(), []);
@@ -322,13 +322,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const liveApi = open ? api : null;
   useEffect(() => {
     if (!open) return;
-    const sweep = (opId: string) => {
-      const api = apiRef.current;
-      if (!api) return;
-      const scene = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
-      if (!scene.some((e) => draftOpId(e) === opId)) return; // accepted elements are never touched
-      api.updateScene({ elements: dropDrafts(scene, opId) as never });
-    };
+    const refetch = () => void fetchDrafts(route.canvas).then((ops) => drafts.set(ops));
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
     const wire = wireRefresh(refresh, document);
     const tab = syncRef.current?.tabId ?? "";
@@ -349,31 +343,9 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     const offWake = onVisible(document, () => void live.catchUp());
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}&device=${encodeURIComponent(tab)}`,
-      onOp: async (op) => {
-        // Saving now also makes the server's next placement see the newest ink. flushNow does not
-        // throw when a save fails (offline, 409 merge, 4xx), so check that the server really holds
-        // the drafts: an acked op is never replayed, so an unsaved draft lost to a reload would be
-        // gone for good. Give up after a while; op.failed then sweeps the drafts.
-        const persist = async (elements: readonly unknown[]) => {
-          const sync = syncRef.current;
-          if (!sync) throw new Error("the canvas is not loaded");
-          const scene = elements as SceneElement[];
-          const ids = scene
-            .filter((e) => e.id.startsWith(op.payload.id_prefix) && !e.isDeleted)
-            .map((e) => e.id);
-          sync.notify(scene);
-          for (let attempt = 0; ; attempt++) {
-            await sync.flushNow();
-            if (sync.hasSaved(ids)) return;
-            if (attempt >= SAVE_ATTEMPTS) throw new Error("the drafts could not be saved");
-            await new Promise((r) => setTimeout(r, SAVE_RETRY_MS));
-          }
-        };
-        const api = apiRef.current ?? (await apiReady.promise);
-        const ids = await drawOp(api, op, persist);
-        lastPanAt.current = reveal(api, op.op_id, { penDown: penDown.current, lastPanAt: lastPanAt.current }, unseen);
-        return ids;
-      },
+      onOp: (op) => measureOp(op),
+      // op.placed carries no box, and /drafts is the one source for the card and the drag offset.
+      onOpPlaced: refetch,
       // A save left chunks with stale crops: export them once the canvas is idle (INK-057).
       onChunksUpdated: () => {
         cropRef.current?.request();
@@ -382,21 +354,15 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       // A push lost while the socket was down is gone, so the chunk list refetches on every connect.
       onConnection: (c) => {
         wire.onConnection(c);
+        if (c) refetch(); // placed ops are replayed too, but a verdict made while down is only seen here
         if (c) void live.catchUp(); // a delta lost while the socket was down is gone
         if (c) publishQuestion(null); // pushes sent while the socket was down are lost
       },
       onQuestionUpdate: publishQuestion,
       onSceneDelta: (d) => live.receive(d),
-      // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
-      onOpUpdated: (m) => {
-        if (DEAD.includes(m.status)) sweep(m.op_id);
-      },
-      onOpError: (m) => {
-        // The op ended while it was being drawn (op.updated came before the drafts existed), so
-        // the ack was refused: the drafts just drawn have no live op and must go too.
-        if (m.code === "invalid_transition" && DEAD.includes(String(m.detail))) sweep(m.op_id);
-        else console.warn("op refused by the server", m);
-      },
+      // Anything but placed leaves the canvas; an unaccept returns the op to placed with only this message.
+      onOpUpdated: (m) => (m.status === "placed" ? refetch() : drafts.remove(m.op_id)),
+      onOpError: (m) => console.warn("op refused by the server", m),
     });
     const cancel = gate.whenReady(() => socket.start());
     // A missing first change event must never leave the socket off.
@@ -410,7 +376,26 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       liveRef.current = null;
       catchUpRef.current = null;
     };
-  }, [open, route.canvas, apiReady, refresh, unseen, gate]);
+  }, [open, route.canvas, apiReady, refresh, unseen, gate, drafts]);
+
+  // The scene is a function of the placed-op list: add what is missing, drop what is gone, and
+  // reveal a draft the first time it appears (a reload or reconnect replay must not pan).
+  useEffect(() => {
+    if (!liveApi) return;
+    let known = new Set(drafts.ids());
+    const run = () => {
+      const scene = liveApi.getSceneElementsIncludingDeleted() as never as DraftElement[];
+      const next = reconcile(scene, drafts.list());
+      if (next !== scene) liveApi.updateScene({ elements: next as never, captureUpdate: CaptureUpdateAction.NEVER });
+      for (const id of drafts.ids()) {
+        if (known.has(id)) continue;
+        lastPanAt.current = reveal(liveApi, id, { penDown: penDown.current, lastPanAt: lastPanAt.current }, unseen);
+      }
+      known = new Set(drafts.ids());
+    };
+    run();
+    return drafts.subscribe(run);
+  }, [liveApi, drafts, unseen]);
 
   const onChange = useCallback(
     (
@@ -487,7 +472,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
             />
           )}
           {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} onExpire={expireNotice} />}
-          {liveApi && <DraftBar api={liveApi} sync={syncRef} documentId={route.canvas} unseen={unseen} />}
+          {liveApi && <DraftBar api={liveApi} documentId={route.canvas} unseen={unseen} drafts={drafts} onOpenThread={() => setAskOpen(true)} />}
         </>
       }
       onAsk={() => setAskOpen((o) => !o)}
