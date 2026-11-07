@@ -46,6 +46,7 @@ class AnswerIn(_Strict):
     answer_md: str = Field(min_length=1, max_length=20_000)  # untrusted markdown, stored as is
     sources: list[Source] = Field(default_factory=list, max_length=50)
     canvas_text: str | None = Field(default=None, min_length=1, max_length=600)
+    final: bool = True  # false: answer_md is a streamed piece appended to the partial (INK-176)
 
 
 class HistoryItem(Out):
@@ -69,6 +70,8 @@ class QuestionOut(Out):
     history: list[HistoryItem]
     runner_status: str
     runner_error: str | None
+    partial_answer: str | None
+    partial_seq: int
     created_at: str
 
 
@@ -130,6 +133,21 @@ def get_question(question_id: str, conn: Conn) -> dict:
 
 @router.post("/questions/{question_id}/answer", response_model=QuestionOut)
 def answer_question(question_id: str, body: AnswerIn, conn: Conn) -> dict:
+    if not body.final:
+        try:
+            seq = q_db.append_partial(conn, question_id, body.answer_md)
+        except q_db.QuestionNotFound:
+            raise HTTPException(404, "question not found") from None
+        except q_db.InvalidTransition as e:
+            raise HTTPException(409, {"code": "invalid_transition", "status": e.current}) from None
+        except q_db.PartialTooLong:
+            raise HTTPException(422, {"code": "partial_too_long"}) from None
+        q = q_db.get_question(conn, question_id)
+        hub.publish(
+            q["document_id"],
+            {"type": "question.delta", "id": question_id, "seq": seq, "text": body.answer_md},
+        )
+        return q
     sources = [s.model_dump(exclude_none=True) for s in body.sources]
     return _transition(
         q_db.answer_question, conn, question_id, body.answer_md, sources, body.canvas_text

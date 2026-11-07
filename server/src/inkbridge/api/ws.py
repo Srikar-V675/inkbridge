@@ -3,7 +3,7 @@
 server -> browser: `op.pending {op_id, type, payload}`, `op.updated {op_id, status, error}`,
 `op.error {op_id, code, detail}` (a refused ack), `chunks.updated {version, stale_crops}`,
 `op.placed {op_id, elements, placement, anchor}` (INK-114: the server placed the measured drafts),
-`question.update {question}` (INK-047),
+`question.update {question}` (INK-047), `question.delta {id, seq, text}` (INK-176),
 `scene.delta {seq, origin, elements}` (INK-112; not sent to the socket whose `device` is `origin`),
 `offer.created {offer}` and `offer.updated {offer}` (INK-130; only while the attention gate is open).
 browser -> server: `attention {pen, view}` (INK-130; any frame, pen down or up, counts as a stroke
