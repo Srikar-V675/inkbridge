@@ -8,9 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from inkbridge import db
 from inkbridge.agent import mermaid
+from inkbridge.agent.diagram_ir import parse_graph
 from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
+from inkbridge.db import diagrams as diagrams_db
 from inkbridge.db import ops as ops_db
 from inkbridge.db import questions as q_db
 from inkbridge.db import tasks as tasks_db
@@ -32,6 +34,8 @@ class OpOut(Out):
     box: dict | None = None
     resolved_at: str | None = None
     question_id: str | None = None
+    diagram_id: str | None = None
+    revises: str | None = None
 
 
 class OpList(Out):
@@ -70,8 +74,18 @@ class WriteTextPayload(_QuestionLink):
 
 
 class DrawDiagramPayload(_QuestionLink):
-    mermaid: str = Field(min_length=1, max_length=20_000)  # flowchart only
+    source: str = Field(min_length=1, max_length=20_000)  # Mermaid flowchart, or graph JSON
+    source_kind: Literal["mermaid", "graph"] = "mermaid"
     anchor: str | None = None
+    from_chunks: list[str] | None = Field(default=None, max_length=50)
+    diagram_id: str | None = Field(default=None, max_length=64)  # set = a revision of that diagram
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy(cls, data):
+        if isinstance(data, dict) and "mermaid" in data and "source" not in data:
+            data = {k: v for k, v in data.items() if k != "mermaid"} | {"source": data["mermaid"]}
+        return data
 
 
 _PAYLOADS: dict[str, type[_Strict]] = {
@@ -105,6 +119,29 @@ def _publish_expired(swept: list[dict]) -> None:
         hub.publish(op["document_id"], updated_message(op))
 
 
+def _check_diagram(conn, document_id: str, payload: "DrawDiagramPayload") -> None:
+    if payload.source_kind == "graph":
+        try:
+            parse_graph(payload.source)
+        except ValueError as e:
+            raise HTTPException(422, {"code": "bad_graph", "msg": str(e)}) from None
+    elif not mermaid.is_flowchart(payload.source):
+        kind = mermaid.diagram_type(payload.source)
+        raise HTTPException(
+            422,
+            {
+                "code": "not_flowchart",
+                "diagram_type": kind,
+                "msg": f"only Mermaid flowcharts are supported (got {kind or 'no diagram type'}); "
+                "start the source with `flowchart TD` or `graph LR`",
+            },
+        )
+    for cid in payload.from_chunks or []:
+        r = db.get_region(conn, cid)
+        if not (r and r["document_id"] == document_id):
+            raise HTTPException(422, {"code": "chunk_not_found", "chunk": cid})
+
+
 def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     task_id = body.payload.pop("task_id", None)  # INK-133: not part of the op's own payload
     try:
@@ -121,17 +158,8 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     except ValidationError as e:
         errors = [{"loc": ["payload", *e_["loc"]], "msg": e_["msg"]} for e_ in e.errors()]
         raise HTTPException(422, errors) from None
-    if isinstance(payload, DrawDiagramPayload) and not mermaid.is_flowchart(payload.mermaid):
-        kind = mermaid.diagram_type(payload.mermaid)
-        raise HTTPException(
-            422,
-            {
-                "code": "not_flowchart",
-                "diagram_type": kind,
-                "msg": f"only Mermaid flowcharts are supported (got {kind or 'no diagram type'}); "
-                "start the source with `flowchart TD` or `graph LR`",
-            },
-        )
+    if isinstance(payload, DrawDiagramPayload):
+        _check_diagram(conn, document_id, payload)
     if payload.question_id:
         if not q_db.question_in_document(conn, payload.question_id, document_id):
             raise HTTPException(
@@ -190,6 +218,19 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
         raise HTTPException(404, "task not found") from None
     except tasks_db.TaskRefused as e:
         raise HTTPException(409, {"code": e.code, "msg": e.msg}) from None
+    except diagrams_db.DiagramNotFound:
+        raise HTTPException(
+            422, {"code": "diagram_not_found", "diagram_id": payload.diagram_id}
+        ) from None
+    except diagrams_db.DiagramBusy:
+        raise HTTPException(
+            409,
+            {
+                "code": "diagram_not_accepted",
+                "diagram_id": payload.diagram_id,
+                "msg": "the diagram's current draft has not been accepted yet; wait for the user",
+            },
+        ) from None
     except ops_db.OpConflict:
         raise HTTPException(409, {"code": "op_id_conflict", "op_id": body.op_id}) from None
     _publish_expired(swept)

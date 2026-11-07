@@ -10,11 +10,13 @@ from dataclasses import dataclass
 
 from inkbridge import db
 from inkbridge.canvas.sketch import read_sketch
+from inkbridge.db import diagrams as diagrams_db
 from inkbridge.db import offers as offers_db
 
 SCORE = {
     "question": 0.9,
     "stale_note": 0.8,
+    "stale_diagram": 0.7,
     "sketch": 0.6,
     "dangling_arrow": 0.5,
     "open_equation": 0.5,
@@ -101,9 +103,25 @@ def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
         out += [x for x in (_question(c), _open_equation(c), _dangling(c)) if x]
     out += _stale_note(chunks, watches)
     out += _to_note(chunks, watches)
+    out += _stale_diagram(conn, document_id, chunks)
     out += _sketch(conn, document_id, chunks)
     out += _related(conn, document_id, chunks)
     return sorted(out, key=lambda c: -c.score)
+
+
+def _stale_diagram(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:
+    # shortcut: a chunk replaced by a new id is skipped (no successor follow), see decision 0100
+    by_id = {c["id"]: c for c in chunks}
+    out = []
+    for d in diagrams_db.list_accepted(conn, document_id):
+        for snap in d["from_chunks"]:
+            c = by_id.get(snap["chunk"])
+            if c is None or snap["text_hash"] is None or c["text_hash"] in (None, snap["text_hash"]):
+                continue
+            payload = {"action": "diagram", "diagram": d["id"], "key": f"{d['id']}:{c['text_hash']}"}
+            out.append(_cand("stale_diagram", c["id"], payload, "Diagram may be out of date"))
+            break  # one offer per diagram
+    return out
 
 
 def _sketch(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:
