@@ -6,7 +6,9 @@ import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { applyQuestionUpdate, askQuestion, focusIds, listQuestions, subscribeQuestions, type Question } from "./ask";
 import { AskList } from "./AskList";
 import { AskThread } from "./AskThread";
-import { groupThreads, replyTarget } from "./threads";
+import { AnchorGlow } from "./AnchorGlow";
+import { groupThreads, replyTarget, threadOfQuestion, threadsWithDraft } from "./threads";
+import type { PlacedOp } from "../drafts/draftStore";
 import { Panel } from "../ui/Panel";
 import "./ask.css";
 
@@ -25,7 +27,12 @@ function useSelection(api: ExcalidrawImperativeAPI): { ids: string[]; raw: numbe
   return sel;
 }
 
-export default function AskPanel({ api, canvas, open, onClose }: { api: ExcalidrawImperativeAPI; canvas: string; open: boolean; onClose: () => void }) {
+interface Props {
+  api: ExcalidrawImperativeAPI; canvas: string; open: boolean; onClose: () => void;
+  openThreadId: string | null; onThreadChange: (id: string | null) => void; draftOps: readonly PlacedOp[];
+}
+
+export default function AskPanel({ api, canvas, open, onClose, openThreadId, onThreadChange, draftOps }: Props) {
   const [qs, setQs] = useState<Question[]>([]);
   // Half-typed text is kept per view ("" is the list, otherwise the thread id), so Back does not discard it.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -35,13 +42,19 @@ export default function AskPanel({ api, canvas, open, onClose }: { api: Excalidr
   const [busy, setBusy] = useState(false);
   const sel = useSelection(api);
 
+  // loaded: the first fetch of this open has finished, so the list is not a stale one from an earlier open.
+  const [loaded, setLoaded] = useState(false);
   const refetch = useCallback(
-    () => listQuestions(canvas).then((l) => (setQs(l), setError("")), (e: Error) => setError(`Could not load questions (${e.message})`)),
+    () =>
+      listQuestions(canvas).then(
+        (l) => (setQs(l), setError(""), setLoaded(true)),
+        (e: Error) => (setError(`Could not load questions (${e.message})`), setLoaded(true)),
+      ),
     [canvas],
   );
   // Pushes arrive over the ops socket (INK-104); a null push means it reconnected, so refetch.
   useEffect(() => {
-    if (!open) return;
+    if (!open) return setLoaded(false);
     void refetch();
     return subscribeQuestions((q) => {
       if (!q) void refetch();
@@ -50,6 +63,14 @@ export default function AskPanel({ api, canvas, open, onClose }: { api: Excalidr
   }, [open, canvas, refetch]);
 
   const threads = useMemo(() => groupThreads(qs), [qs]);
+  // "Open thread" on a draft card names a question; once the questions are loaded open its thread.
+  useEffect(() => {
+    if (!openThreadId || !loaded) return; // wait for the fetch: the list may be stale from an earlier open
+    const id = threadOfQuestion(threads, openThreadId);
+    if (id) setOpenId(id);
+    onThreadChange(null); // consumed even without a match, so a later tap opens it again
+  }, [openThreadId, loaded, threads, onThreadChange]);
+  const waiting = useMemo(() => threadsWithDraft(threads, draftOps), [threads, draftOps]);
   const thread = openId ? threads.find((t) => t.id === openId) ?? null : null;
   const viewKey = thread ? thread.id : "";
   const text = drafts[viewKey] ?? "";
@@ -76,13 +97,16 @@ export default function AskPanel({ api, canvas, open, onClose }: { api: Excalidr
   const host = document.querySelector(".ink-shell");
   if (!host) return null;
   return createPortal(
+    <>
+    {thread && <AnchorGlow api={api} ids={thread.items[0].focus_element_ids} />}
     <Panel className="ink-ask">
       {thread ? (
         <AskThread api={api} canvas={canvas} thread={thread} text={text} setText={setText} busy={busy} error={error} onSend={() => void ask()} onBack={() => view(null)} onClose={onClose} refetch={() => void refetch()} kept={kept} onKept={(id) => setKept((k) => new Set(k).add(id))} />
       ) : (
-        <AskList threads={threads} text={text} setText={setText} selected={sel.ids.length} raw={sel.raw} busy={busy} error={error} onSend={() => void ask()} onOpen={view} onClose={onClose} />
+        <AskList threads={threads} text={text} setText={setText} selected={sel.ids.length} raw={sel.raw} waiting={waiting} busy={busy} error={error} onSend={() => void ask()} onOpen={view} onClose={onClose} />
       )}
-    </Panel>,
+    </Panel>
+    </>,
     host,
   );
 }

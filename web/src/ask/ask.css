@@ -288,3 +288,12 @@
 .ink-ask__actions .ink-button--quiet {
   margin-left: -14px;
 }
+.ink-ask__row-tag {
+  display: inline-block;
+  margin-left: calc(8px * var(--ui-scale, 1));
+  vertical-align: middle;
+}
+a.ink-ask__pill {
+  color: inherit;
+  text-decoration: none;
+}

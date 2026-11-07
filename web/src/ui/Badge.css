@@ -19,3 +19,14 @@
   border-radius: 50%;
   background: var(--component-draft-badge-background-color);
 }
+
+.ink-glow {
+  position: absolute;
+  z-index: 6;
+  box-sizing: content-box;
+  margin: -4px 0 0 -4px;
+  padding: 4px;
+  border-radius: 8px;
+  outline: 3px solid var(--component-draft-badge-background-color);
+  pointer-events: none;
+}

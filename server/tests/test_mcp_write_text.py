@@ -157,3 +157,10 @@ def test_dead_anchor_is_a_tool_error_naming_read_canvas(mcp_client):
     _link(a, status="orphaned", successor_of=None)
     with pytest.raises(ToolError, match="no longer exists.*read_canvas"):
         call("write_text", text="x", anchor=a)
+
+
+def test_write_text_question_id(mcp_client):
+    q = mcp_client.post("/documents/default/questions", json={"text": "why?"}).json()["id"]
+    out = call("write_text", text="x", question_id=q, relation="answer")
+    op = mcp_client.get(f"/ops/{out['op_id']}").json()
+    assert op["payload"]["question_id"] == q and op["payload"]["relation"] == "answer"

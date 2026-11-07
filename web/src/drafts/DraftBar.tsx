@@ -51,7 +51,7 @@ export function DraftBar({
   documentId: string;
   unseen: Unseen;
   drafts: DraftStore;
-  onOpenThread: () => void;
+  onOpenThread: (questionId: string | null) => void;
 }) {
   const ops = useSyncExternalStore(drafts.subscribe, drafts.list);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
@@ -186,7 +186,7 @@ export function DraftBar({
                   Reject
                 </Button>
                 <span className="ink-draft-card__spacer" />
-                <Button variant="quiet" onClick={onOpenThread}>
+                <Button variant="quiet" onClick={() => onOpenThread(o.payload.question_id ?? null)}>
                   Open thread
                 </Button>
               </div>

@@ -78,3 +78,10 @@ def test_answer_errors_are_tool_errors(mcp_client):
     with pytest.raises(ToolError):
         call("answer_question", question_id=live["id"], answer_md="x", sources=[{"type": "note"}])
     assert mcp_client.get(f"/questions/{live['id']}").json()["status"] == "pending"
+
+
+def test_answer_question_canvas_text(mcp_client):
+    q = ask(mcp_client, "why")
+    call("answer_question", question_id=q["id"], answer_md="a", canvas_text="c")
+    got = call("list_questions", status="answered")["questions"]
+    assert got[0]["canvas_text"] == "c"

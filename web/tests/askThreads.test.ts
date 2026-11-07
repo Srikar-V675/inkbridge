@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Question } from "../src/ask/ask.ts";
 import {
-  canSend, groupThreads, messageCount, relativeTime, replyTarget, scopeLine, threadLine, threadTitle,
+  canSend, groupThreads, messageCount, relativeTime, replyTarget, scopeLine, threadLine, threadOfQuestion,
+  threadTitle, threadsWithDraft,
 } from "../src/ask/threads.ts";
 
 const q = (over: Partial<Question> = {}): Question => ({
   id: "abc123", document_id: "c", parent_id: null, text: "t", focus_element_ids: [], focus_chunk_ids: [],
-  status: "answered", answer_md: "Hello **world**", sources: [], created_at: "",
+  status: "answered", answer_md: "Hello **world**", canvas_text: null, sources: [], created_at: "",
   runner_status: "pending", runner_error: null, ...over,
 });
 
@@ -97,5 +98,18 @@ describe("scopeLine", () => {
     assert.equal(scopeLine(1, 1), "About 1 selected element");
     assert.equal(scopeLine(3, 3), "About 3 selected elements");
     assert.equal(scopeLine(200, 250), "About 200 selected elements, capped at 200");
+  });
+});
+
+describe("draft links", () => {
+  const ts = groupThreads([q({ id: "a" }), q({ id: "b" }), q({ id: "a2", parent_id: "a" })]);
+  it("threadOfQuestion returns the root, also for a follow-up", () => {
+    assert.equal(threadOfQuestion(ts, "a2"), "a");
+    assert.equal(threadOfQuestion(ts, "b"), "b");
+    assert.equal(threadOfQuestion(ts, "zz"), null);
+  });
+  it("threadsWithDraft marks the thread holding the question", () => {
+    assert.deepEqual([...threadsWithDraft(ts, [{ payload: { question_id: "a2" } }])], ["a"]);
+    assert.equal(threadsWithDraft(ts, [{ payload: {} }, { payload: { question_id: null } }]).size, 0);
   });
 });

@@ -159,6 +159,11 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const expireNotice = useCallback(() => setNoticeOpen(false), []);
   const closeNotice = useCallback(() => (setNoticeOpen(false), setGhostOpen(false)), []);
   const [askOpen, setAskOpen] = useState(false);
+  const [askThread, setAskThread] = useState<string | null>(null);
+  const closeAsk = () => {
+    setAskOpen(false);
+    setAskThread(null);
+  };
   // The home passes the canvas title along: no id flash, and no request before the first paint.
   const hint = useMemo(() => titleHint(route.canvas), [route.canvas]);
   const [title, setTitle] = useState(hint ?? route.canvas);
@@ -473,10 +478,13 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
             />
           )}
           {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} onExpire={expireNotice} />}
-          {liveApi && <DraftBar api={liveApi} documentId={route.canvas} unseen={unseen} drafts={drafts} onOpenThread={() => setAskOpen(true)} />}
+          {liveApi && <DraftBar api={liveApi} documentId={route.canvas} unseen={unseen} drafts={drafts} onOpenThread={(id) => {
+            setAskThread(id);
+            setAskOpen(true);
+          }} />}
         </>
       }
-      onAsk={() => setAskOpen((o) => !o)}
+      onAsk={() => (askOpen ? closeAsk() : setAskOpen(true))}
       askOpen={askOpen}
     >
       {(initial === "missing" || initial === "failed") && (
@@ -485,7 +493,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       {initial === null && <div className="ink-shell__loading" aria-hidden />}
       {open || initial === null ? <Canvas initialData={sceneData.promise} onApi={onApi} onChange={onChange} /> : null}
       {api && open && (
-        <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={() => setAskOpen(false)} />
+        <AskPanel api={api} canvas={route.canvas} open={askOpen} onClose={closeAsk} openThreadId={askThread} onThreadChange={setAskThread} draftOps={drafts.list()} />
       )}
     </Shell>
   );

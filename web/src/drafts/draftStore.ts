@@ -5,7 +5,7 @@ import { draftOpId, isDraftTagged, markDraft, type DraftElement } from "./drafts
 
 export interface PlacedOp {
   id: string;
-  payload: { id_prefix: string; anchor_resolved?: string | null };
+  payload: { id_prefix: string; anchor_resolved?: string | null; question_id?: string | null };
   elements: DraftElement[];
   box: { x: number; y: number; width: number; height: number };
 }
