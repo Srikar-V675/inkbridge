@@ -3,6 +3,7 @@
 Pure rules over the stored chunks; the caller (`run`, below) turns candidates into offers.
 """
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
@@ -120,10 +121,11 @@ def _sketch(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> l
     ][:SKETCH_CHUNKS]
     claimed: set[str] = set()
     out = []
+    by_id = {e["id"]: e for e in json.loads(db.get_scene(conn, document_id)[1])} if pool else {}
     for c in pool:
         if c["id"] in claimed:
             continue
-        s = read_sketch(db.get_sketch_elements(conn, c["id"]) or [])
+        s = read_sketch(db.get_sketch_elements(conn, c["id"], by_id) or [])
         if len(s["nodes"]) >= 3 and len(s["arrows"]) >= 2:
             payload = {"action": "diagram", "key": c["content_hash"]}
             out.append(_cand("sketch", c["id"], payload, "Draw this cleanly"))
@@ -182,7 +184,8 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
     """Create offers for new candidates, best first. Returns the rows the budget expired."""
     seen = {
         (o["kind"], o["anchor_chunk"], o["payload"].get("key"))
-        for o in offers_db.list_offers(conn, document_id)  # any status: dismissed ones stay away
+        for o in offers_db.list_offers(conn, document_id)
+        if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
     }
     changed: list[dict] = []
     for c in scan(conn, document_id):

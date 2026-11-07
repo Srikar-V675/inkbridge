@@ -27,6 +27,8 @@ _timers: dict[str, threading.Timer] = {}
 _ARM_TIMERS = True
 DETECT_DEBOUNCE_S = 2.0  # hypothesis (decision 0091)
 _scans: dict[str, threading.Timer] = {}
+_scan_lock = threading.Lock()  # guards _scans
+_scan_locks: dict[str, threading.Lock] = {}  # one running scan per document
 
 
 class _Strict(BaseModel):
@@ -89,12 +91,17 @@ def publish_updates(rows: list[dict]) -> None:
 
 def scan_now(document_id: str) -> None:
     """Run the detectors on their own connection and push what they made. Never raises."""
+    with _scan_lock:
+        if _scans.get(document_id) is threading.current_thread():
+            del _scans[document_id]  # this timer is running now, not pending
+        lock = _scan_locks.setdefault(document_id, threading.Lock())
     try:
-        conn = db.connect()
-        try:
-            changed = detectors.run(conn, document_id, hub.session_start(document_id))
-        finally:
-            conn.close()
+        with lock:  # seen-check and create_offer are separate: two scans would duplicate
+            conn = db.connect()
+            try:
+                changed = detectors.run(conn, document_id, hub.session_start(document_id))
+            finally:
+                conn.close()
         publish_updates(changed)
         flush(document_id)
     except Exception:
@@ -105,13 +112,14 @@ def schedule_scan(document_id: str) -> None:
     """Debounce: each save or reading re-arms one timer, so a burst scans once, off the save path."""
     if not _ARM_TIMERS:
         return
-    t = _scans.pop(document_id, None)
-    if t:
-        t.cancel()
-    t = threading.Timer(DETECT_DEBOUNCE_S, scan_now, [document_id])
-    t.daemon = True
-    t.start()
-    _scans[document_id] = t
+    with _scan_lock:
+        old = _scans.pop(document_id, None)
+        if old:
+            old.cancel()
+        t = threading.Timer(DETECT_DEBOUNCE_S, scan_now, [document_id])
+        t.daemon = True
+        t.start()
+        _scans[document_id] = t
 
 
 def publish_chunks(document_id: str, msg: dict) -> None:

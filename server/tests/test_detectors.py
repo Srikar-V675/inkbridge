@@ -283,3 +283,24 @@ def test_no_model_in_detectors():
         assert not [x for x in names if x.startswith(banned)], names
         if isinstance(n, ast.ImportFrom):
             assert not [a for a in n.names if a.name == "genai"]
+
+
+def test_expired_offer_can_return(client):
+    chunks(client, "Why is it so?")
+    (o,) = run()
+    conn = db.connect()
+    conn.execute("UPDATE offers SET status='expired' WHERE id=?", (o["id"],))
+    conn.commit()
+    conn.close()
+    assert len(run()) == 2  # an expired offer is not a refusal
+
+
+def test_concurrent_scans_do_not_duplicate(client):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from inkbridge.api import offers as offers_api
+
+    chunks(client, "Why is it so?")
+    with ThreadPoolExecutor(4) as pool:
+        list(pool.map(lambda _: offers_api.scan_now("default"), range(4)))
+    assert len(run()) == 1
