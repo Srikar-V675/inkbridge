@@ -29,12 +29,8 @@ CONTAINER_LOOP = 1.8  # container: L >= this * diag (start value, tune on real p
 STRAIGHT = 0.55  # connector: net / L above this (start value, tune on real pages)
 FLAT = 0.15  # underline: h < FLAT * w (start value, tune on real pages)
 UNDERLINE_MIN = 1.0  # underline, scribble: extent >= this*T (start value, tune on real pages)
-UNDERLINE_REACH = (
-    0.75  # writing is at most this*T above the underline (start value, tune on real pages)
-)
+UNDERLINE_REACH = 0.75  # writing at most this*T above it (start value, tune on real pages)
 UNDERLINE_TOUCH = 0.5  # ... or overlapping it by at most this*T (start value, tune on real pages)
-    0.5  # ... and its centre x is within the underline's x range (start value, tune on real pages)
-)
 SCRIBBLE_REVERSALS = 6  # scribble: at least this many reversals (start value, tune on real pages)
 SCRIBBLE_LOOP = 4.0  # ... and path length >= this*diag (start value, tune on real pages)
 MIN_SCALE = 4.0  # floor for T in px (start value, tune on real pages)
