@@ -59,6 +59,7 @@ from inkbridge.db.elements import (
     write_changed,
 )
 from inkbridge.db.ink import get_region_ink, get_sketch_elements, list_links
+from inkbridge.db.memory import MAX_BRIEF_CHARS, get_memory, set_brief, what_changed
 from inkbridge.db.migrations import (
     MIGRATE_LOCK_TIMEOUT_MS,
     MIGRATIONS_DIR,
@@ -111,6 +112,7 @@ __all__ = [
     "APPLIED_CAP",
     "AUTO",
     "DEFAULT_DOCUMENT_ID",
+    "MAX_BRIEF_CHARS",
     "MIGRATE_LOCK_TIMEOUT_MS",
     "MIGRATIONS_DIR",
     "ORPHAN_KEEP",
@@ -162,6 +164,7 @@ __all__ = [
     "ensure_default_document",
     "get_chunker",
     "get_live_scene",
+    "get_memory",
     "get_region",
     "get_region_ink",
     "get_region_png_path",
@@ -193,12 +196,14 @@ __all__ = [
     "scene_version",
     "scene_version_of_region",
     "search",
+    "set_brief",
     "set_chunker",
     "shrink_tombstones",
     "split_chunk",
     "stale_crop_ids",
     "unaccept_op",
     "was_applied",
+    "what_changed",
     "wins",
     "write_changed",
 ]
