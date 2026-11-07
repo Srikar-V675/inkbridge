@@ -19,6 +19,10 @@ import { type DraftElement } from "../drafts/drafts";
 import { fetchDrafts } from "../drafts/resolve";
 import { measureOp } from "../drafts/drawOp";
 import { OpsSocket } from "../sync/opsSocket";
+import { FocusToggle, OfferLayer } from "../offers/OfferLayer";
+import { createOfferStore } from "../offers/offerStore";
+import { createAttention, toAttentionView } from "../offers/attention";
+import { listOffers } from "../offers/offers";
 import { LiveDelta } from "../sync/liveDelta";
 import type { Location } from "../lib/route";
 import { createLoadClock } from "../sync/loadClock";
@@ -147,6 +151,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const unseen = useMemo(() => createUnseen(), []);
   // The placed drafts the server holds; the scene shows exactly these (INK-115).
   const drafts = useMemo(() => createDraftStore(), []);
+  const offerStore = useMemo(() => createOfferStore(), []);
   const sceneReady = useRef(false);
   const clock = useMemo(() => createLoadClock(), []);
   // Once per canvas view: a switch remounts this component, so the gate is per canvas.
@@ -347,6 +352,15 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     catchUpRef.current = () => void live.catchUp().then(() => void (live.drained && syncRef.current?.snapshot(live.lastSeq))) // a seq with queued (pen-down) rows is not applied yet;
     if (sceneReady.current) catchUpRef.current();
     const offWake = onVisible(document, () => void live.catchUp());
+    // The server gates offer pushes on the pen and view (INK-130): scene units, view at most every 500 ms.
+    const att = createAttention((a) => socket.sendAttention(a), () => performance.now());
+    const viewNow = () => (apiRef.current ? toAttentionView(apiRef.current.getAppState()) : null);
+    const sendView = () => att.view(viewNow());
+    const offAtt = apiReady.promise.then((api) => [
+      api.onPointerDown((tool) => tool.type === "freedraw" && att.pen(true, viewNow())),
+      api.onPointerUp(() => att.pen(false, viewNow())),
+      api.onScrollChange(sendView),
+    ]);
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}&device=${encodeURIComponent(tab)}`,
       onOp: (op) => measureOp(op),
@@ -363,9 +377,13 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
         if (c) refetch(); // placed ops are replayed too, but a verdict made while down is only seen here
         if (c) void live.catchUp(); // a delta lost while the socket was down is gone
         if (c) publishQuestion(null); // pushes sent while the socket was down are lost
+        if (c) void listOffers(route.canvas).then((r) => offerStore.set(r.offers, r.waiting)).catch(() => {}); // same for offers
+        if (c) sendView(); // the server holds offers until it has seen the view
       },
       onQuestionUpdate: publishQuestion,
       onSceneDelta: (d) => live.receive(d),
+      onOfferCreated: offerStore.upsert,
+      onOfferUpdated: offerStore.upsert,
       // Anything but placed leaves the canvas; an unaccept returns the op to placed with only this message.
       onOpUpdated: (m) => (m.status === "placed" ? refetch() : drafts.remove(m.op_id)),
       onOpError: (m) => console.warn("op refused by the server", m),
@@ -377,12 +395,13 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       window.clearTimeout(fallback);
       cancel();
       socket.dispose();
+      void offAtt.then((offs) => offs.forEach((off) => off()));
       wire.off();
       offWake();
       liveRef.current = null;
       catchUpRef.current = null;
     };
-  }, [open, route.canvas, apiReady, refresh, unseen, gate, drafts]);
+  }, [open, route.canvas, apiReady, refresh, unseen, gate, drafts, offerStore]);
 
   // The scene is a function of the placed-op list: add what is missing, drop what is gone, and
   // reveal a draft the first time it appears (a reload or reconnect replay must not pan).
@@ -462,7 +481,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       api={liveApi}
       title={initial === "missing" ? "Canvas not found" : title}
       status={<StatusSlot store={status} />}
-      chunks={<><FingerToggle /><ChunkToggle view={chunkView} /></>}
+      chunks={<><FingerToggle /><FocusToggle store={offerStore} canvas={route.canvas} /><ChunkToggle view={chunkView} /></>}
       overlays={
         <>
           {api && open && <TouchRouting api={api} />}
@@ -477,6 +496,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
               refresh={refresh}
             />
           )}
+          {api && open && <OfferLayer api={api} canvas={route.canvas} store={offerStore} refresh={refresh} onOpenAsk={(id) => (setAskThread(id ?? null), setAskOpen(true))} />}
           {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} onExpire={expireNotice} />}
           {liveApi && <DraftBar api={liveApi} documentId={route.canvas} unseen={unseen} drafts={drafts} onOpenThread={(id) => {
             setAskThread(id);
