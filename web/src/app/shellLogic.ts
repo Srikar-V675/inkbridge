@@ -99,7 +99,7 @@ export function toolTap(tool: RailTool, currentType: string, lastShape: ShapeToo
   return { tool: { type: tool === "select" ? "selection" : tool }, patch: {} };
 }
 
-/** A pick from the shapes flyout: the shape, and the solid patch only when coming from a non-shape tool. */
+/** A pick from the shapes picker: the shape, and the solid patch only when coming from a non-shape tool. */
 export function pickShape(shape: ShapeTool, currentType: string): { tool: { type: string }; patch: Record<string, number> } {
   return { tool: { type: shape }, patch: isShape(currentType) ? {} : { currentItemOpacity: PEN.opacity, currentItemStrokeWidth: PEN.strokeWidth } };
 }
