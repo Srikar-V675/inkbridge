@@ -5,9 +5,10 @@ stays visible), one stroke colour per element, no hachure or roughness, and text
 bundled font. Pressure widens the freedraw stroke segment by segment. Drafts and deleted
 elements are never drawn (they are not content). Decision 0065.
 
-Thumbnails are a separate look (decision 0070): 960 x 640 on the panel colour, fitted to the body
-of the ink without far strays, with a stroke floor and tiny text drawn as bars. Crops keep the
-plain style above.
+Thumbnails are a separate look (decision 0070): 960 x 640 on the panel colour, with a stroke floor
+and tiny text drawn as bars. They show the centre chunk of the canvas when the caller passes the
+chunk boxes (INK-179, decision 0084); the 0070 fit to the body of the ink without far strays is
+the fallback. Crops keep the plain style above.
 """
 
 import functools
@@ -19,12 +20,16 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from inkbridge.canvas.sketch import usable
+from inkbridge.canvas.thumb_focus import Box, choose_focus
 
 MAX_CROP_SIDE = 2048  # px, long side of a crop
 MAX_PIXELS = 4_000_000
 CROP_PAD = 10  # canvas units around the ink
 THUMB_MARGIN = 16
-THUMB_REVISION = 2  # bump when the look changes: it is part of the cache key and the ETag
+THUMB_REVISION = 3  # bump when the look changes: it is part of the cache key and the ETag
+# 3: shows the centre chunk (decision 0084)
+FOCUS_MAX_SCALE = 3.0  # card px per canvas unit when a chunk is shown (the whole fit keeps 1.0)
+FOCUS_SLACK = 0.05  # primitives within this share (+4 units) outside the chunk box still belong
 THUMB_BG = (234, 228, 215)  # DESIGN.md `panel`, the home card colour
 CARD_W = 480  # logical card width; the PNG is rendered at width / CARD_W times that
 THUMB_MIN_STROKE = 2.0  # card px
@@ -378,21 +383,57 @@ def _touches(p: dict[str, Any], px, w: int, h: int) -> bool:
     )
 
 
-def render_thumbnail(elements: list[dict], *, width: int = 960, height: int = 640) -> bytes:
+def _chunk_box(c: Any) -> Box | None:
+    try:
+        x, y, w, h = (float(c[k]) for k in ("x", "y", "width", "height"))
+    except (TypeError, KeyError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x, y, w, h)) or w < 0 or h < 0:
+        return None
+    return x, y, x + w, y + h
+
+
+def _focus(prims: list[dict[str, Any]], chunks: list[Any]) -> list[dict[str, Any]]:
+    """The primitives of the centre chunk (decision 0084), or [] when nothing qualifies."""
+    boxes = [_bounds([p]) for p in prims]
+    chunk_boxes = [b for b in map(_chunk_box, chunks) if b is not None]
+    focus = choose_focus(boxes, chunk_boxes, _fit_box(prims))
+    if focus is None:
+        return []
+    slack = FOCUS_SLACK * max(focus[2] - focus[0], focus[3] - focus[1]) + 4.0
+    return [
+        p
+        for p, b in zip(prims, boxes, strict=True)
+        if focus[0] - slack <= (b[0] + b[2]) / 2 <= focus[2] + slack
+        and focus[1] - slack <= (b[1] + b[3]) / 2 <= focus[3] + slack
+    ]
+
+
+def render_thumbnail(
+    elements: list[dict], *, width: int = 960, height: int = 640, chunks: list[dict] | None = None
+) -> bytes:
     """PNG of the canvas on the panel colour (decision 0070): 960 x 640, shown at 480 x 320.
 
-    Fitted to the body of the ink (far strays clip), 1 canvas unit at most 1 card px, a 16 card px
-    margin, strokes at least 2 card px, tiny text as bars. An empty or draft-only canvas is the
-    blank panel colour. INK-118 calls this with the scene's element list and caches the result.
+    With `chunks` (bbox dicts {x, y, width, height} of the active chunks, possibly empty) it shows
+    the centre chunk, large (decision 0084): up to FOCUS_MAX_SCALE card px per unit. Without
+    `chunks`, or when no primitive falls in the chosen box, it falls back to the whole-canvas fit:
+    the body of the ink (far strays clip), 1 canvas unit at most 1 card px. A 16 card px margin,
+    strokes at least 2 card px, tiny text as bars. An empty or draft-only canvas is the blank
+    panel colour. INK-118 calls this with the scene's element list and caches the result.
     """
     k = width / CARD_W
     img = Image.new("RGB", (width, height), THUMB_BG)
     prims = _prims(elements)
+    cap, focused = k, False
+    if prims and chunks is not None:
+        inside = _focus(prims, chunks)
+        if inside:
+            prims, cap, focused = inside, FOCUS_MAX_SCALE * k, True
     if prims:
-        x0, y0, x1, y1 = _fit_box(prims)
+        x0, y0, x1, y1 = _bounds(prims) if focused else _fit_box(prims)
         bw, bh = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
         m = THUMB_MARGIN * k
-        scale = min(k, (width - 2 * m) / bw, (height - 2 * m) / bh)
+        scale = min(cap, (width - 2 * m) / bw, (height - 2 * m) / bh)
         ox, oy = (width - bw * scale) / 2, (height - bh * scale) / 2
 
         def px(x: float, y: float) -> Point:

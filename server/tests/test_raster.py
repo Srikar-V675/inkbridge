@@ -11,6 +11,7 @@ import pytest
 from PIL import Image, ImageChops
 
 from inkbridge.canvas import raster
+from inkbridge.canvas.hashes import bbox_of
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "eval" / "fixtures"))
@@ -264,6 +265,128 @@ def test_thumbnail_fixture_under_300_ms():
     for _ in range(3):
         t = time.perf_counter()
         png = raster.render_thumbnail(els)
+        best = min(best, time.perf_counter() - t)
+    assert best < 0.3
+    assert img(png).size == (960, 640) and inked_box(png) is not None
+
+
+def chunk_box(els):
+    return bbox_of(els)
+
+
+def group(prefix, x, y=0, w=200, h=100):
+    """One chunk: a rectangle and a word-like stroke inside it."""
+    return [
+        shape("rectangle", f"{prefix}-r", x=x, y=y, w=w, h=h),
+        stroke(f"{prefix}-s", x=x + 20, y=y + 50, n=30),
+    ]
+
+
+def three_groups():
+    left, mid, right = group("l", 0), group("m", 400), group("r", 800)
+    return left, mid, right
+
+
+def test_thumbnail_revision_is_three():
+    assert raster.THUMB_REVISION == 3
+
+
+def test_focus_draws_the_centre_chunk_large():
+    left, mid, right = three_groups()
+    els = left + mid + right
+    boxes = [chunk_box(g) for g in (left, mid, right)]
+    focused = inked_box(raster.render_thumbnail(els, chunks=boxes))
+    whole = inked_box(raster.render_thumbnail(els))
+    assert focused[2] - focused[0] > 0.6 * 960
+    # the whole fit draws all three groups, so each is a third of the width at most
+    assert (whole[2] - whole[0]) / 3 < 0.5 * (focused[2] - focused[0])
+
+
+def test_focus_draws_only_the_centre_chunk():
+    left, mid, right = three_groups()
+    boxes = [chunk_box(g) for g in (left, mid, right)]
+    both = raster.render_thumbnail(left + mid + right, chunks=boxes)
+    alone = raster.render_thumbnail(mid, chunks=[chunk_box(mid)])
+    a, b = inked_box(both), inked_box(alone)
+    assert all(abs(p - q) <= 3 for p, q in zip(a, b, strict=True))
+    assert ink_diff(both, alone) == 0
+
+
+def test_focus_on_a_tiny_centre_chunk_takes_its_near_neighbours_not_the_far_page():
+    square = [shape("rectangle", "sq", x=1000, y=1000, w=30, h=30)]
+    near1 = [shape("rectangle", "n1", x=1050, y=1000, w=30, h=30)]
+    near2 = [shape("rectangle", "n2", x=950, y=1000, w=30, h=30)]
+    page = [shape("rectangle", "pg", x=-4000, y=-4000, w=3000, h=3000)]
+    page += [shape("rectangle", f"pe{i}", x=4000 + i * 40, y=4000, w=30, h=30) for i in range(40)]
+    els = square + near1 + near2 + page
+    boxes = [chunk_box(g) for g in (square, near1, near2, page)]
+    lone = inked_box(raster.render_thumbnail(square, chunks=[chunk_box(square)]))
+    got = inked_box(raster.render_thumbnail(els, chunks=boxes))
+    assert got[2] - got[0] > 2 * (lone[2] - lone[0])  # neighbours are in
+    assert got[2] - got[0] < 0.9 * 960  # the far page is not
+
+
+def test_focus_without_chunks_floods_a_lone_sketch_and_drops_a_stray():
+    sketch = [stroke(f"k{i}", x=i * 6, y=i * 20, n=8) for i in range(5)]
+    stray = [stroke("far", x=9000, y=9000, n=8)]
+    alone = raster.render_thumbnail(sketch, chunks=[])
+    with_stray = raster.render_thumbnail(sketch + stray, chunks=[])
+    assert ink_diff(alone, with_stray) == 0
+    box = inked_box(alone)
+    assert box is not None
+    # every stroke has ink in its own band
+    im = img(alone)
+    ys = sorted({y for y in range(640) if any(im.getpixel((x, y)) != BG for x in range(0, 960, 2))})
+    assert len(ys) > 0 and ys[-1] - ys[0] > 0.3 * 640
+
+
+def test_focus_with_stale_chunks_falls_back_to_the_whole_fit():
+    els = cluster()
+    stale = [{"x": 90000, "y": 90000, "width": 10, "height": 10}]
+    assert raster.render_thumbnail(els, chunks=stale) == raster.render_thumbnail(els)
+
+
+def test_focus_keeps_empty_and_draft_only_flat():
+    draft = stroke("d", customData={"draft": True})
+    boxes = [{"x": 0, "y": 0, "width": 100, "height": 10}]
+    for els in ([], [draft]):
+        for chunks in ([], boxes):
+            im = img(raster.render_thumbnail(els, chunks=chunks))
+            assert im.getcolors() == [(960 * 640, BG)]
+
+
+def test_focus_ignores_a_draft_at_the_centre():
+    left, mid, right = three_groups()
+    draft = stroke("d", x=420, y=60, n=30, customData={"draft": True})
+    boxes = [chunk_box(g) for g in (left, mid, right)]
+    base = raster.render_thumbnail(left + mid + right, chunks=boxes)
+    assert raster.render_thumbnail(left + mid + right + [draft], chunks=boxes) == base
+    only = raster.render_thumbnail(left + [draft] + [draft] + right, chunks=boxes)
+    assert only != base
+
+
+def test_focus_two_equal_clusters_is_deterministic():
+    a, b = group("a", 0), group("b", 2000)
+    boxes = [chunk_box(a), chunk_box(b)]
+    one = raster.render_thumbnail(a + b, chunks=boxes)
+    two = raster.render_thumbnail((a + b)[::-1], chunks=boxes[::-1])
+    assert one == two
+
+
+def test_thumbnail_focus_on_the_real_scale_fixture():
+    import make_real_scale
+
+    els = make_real_scale.build()
+    by_id = {e["id"]: e for e in els}
+    boxes = [
+        chunk_box([by_id[i] for i in g["element_ids"] if i in by_id])
+        for g in make_real_scale.boxes()
+        if g["kind"] in ("paragraph", "diagram", "handwriting-1x")
+    ]
+    best = float("inf")
+    for _ in range(3):
+        t = time.perf_counter()
+        png = raster.render_thumbnail(els, chunks=boxes)
         best = min(best, time.perf_counter() - t)
     assert best < 0.3
     assert img(png).size == (960, 640) and inked_box(png) is not None
