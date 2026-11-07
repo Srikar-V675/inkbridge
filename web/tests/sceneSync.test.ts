@@ -306,6 +306,15 @@ describe("SceneSync", () => {
     assert.equal(h.puts()[1].body?.base_version, 2);
   });
 
+  it("never sends a draft element (live or erased), only the user's ink", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
+    await h.sync.load();
+    const draft = { customData: { draft: true, op_id: "o1" } };
+    await h.edit([el("o1:1", 1, draft), el("o1:2", 1, { ...draft, isDeleted: true }), el("s", 1, { type: "freedraw" })]);
+    await h.send();
+    assert.deepEqual(h.puts()[0].body?.elements.map((e) => e.id), ["s"]);
+  });
+
   it("keeps pressures and simulatePressure=false in the sent body", async () => {
     const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
     await h.sync.load();

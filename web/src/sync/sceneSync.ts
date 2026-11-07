@@ -3,6 +3,7 @@
 // then a sender ships the unacknowledged ones with overlapping requests. The server merges every save
 // element by element (decision 0080) and answers with the `newer` elements that beat ours (applyNewer).
 
+import { isDraftTagged } from "../drafts/drafts.ts";
 import type { LoadClock } from "./loadClock.ts";
 import { lastResource, netParts, record, serverParts } from "../lib/timing.ts";
 import { RISK_LABEL } from "../lib/status.ts";
@@ -255,6 +256,8 @@ export class SceneSync {
   notify(elements: readonly SceneElement[]): boolean {
     // Before the scene is loaded the canvas is not the saved scene: saving it would overwrite it.
     if (this.disposed || !this.loaded) return false;
+    // Drafts live only in the placed-op list, never in the saved scene (INK-115). Soft-deleted ones too.
+    if (elements.some((e) => isDraftTagged(e))) elements = elements.filter((e) => !isDraftTagged(e));
     this.latest = elements;
     if (sigMatches(this.lastSig, elements)) return false;
     this.lastSig = sigOf(elements);

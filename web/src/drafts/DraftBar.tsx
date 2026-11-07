@@ -1,14 +1,15 @@
-// Accept / Reject for agent drafts (INK-045, docs/decisions/0026). Plain DOM over the canvas; the
-// ordering rules (save before accept, PATCH before sweep on reject) live in resolve.ts.
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+// Draft card, tray and toasts (INK-045, INK-115, decision 0090). The server owns the verdicts
+// (resolve.ts); Reject waits out the toast so it can be undone, because the server has no unreject.
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { draftBox, inView, panTarget, type Unseen } from "./draftView";
-import type { DraftElement } from "./drafts";
+import { draftOpId, type DraftElement } from "./drafts";
+import { offsetOf, type DraftStore, type PlacedOp } from "./draftStore";
 import { draftCard, failureText, jumpTarget, trayLabel, verdictToast } from "./draftUi";
-import { applyVerdict, draftOpId, draftOps, fetchAppliedOps, patchOp, retryAccept, type Verdict } from "./resolve";
+import { accept, fetchDrafts, reject, unaccept } from "./resolve";
+import { Tether } from "./Tether";
 import { createGate } from "../lib/changeGate";
-import type { SceneSync } from "../sync/sceneSync";
 import { Badge, DraftDot } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
@@ -16,34 +17,7 @@ import { Chip } from "../ui/Chip";
 import { Toast } from "../ui/Toast";
 import "./DraftBar.css";
 
-type Sync = { current: SceneSync | null };
-
-/** Draft ops in the scene, recomputed only when their signature changes (not on every stroke point). */
-function useDraftOps(api: ExcalidrawImperativeAPI): { opId: string; count: number }[] {
-  const [ops, setOps] = useState<{ opId: string; count: number }[]>([]);
-  const sig = useRef("");
-  useEffect(() => {
-    const update = (els: readonly unknown[]) => {
-      const next = draftOps(els as DraftElement[]);
-      const s = next.map((o) => `${o.opId}:${o.count}`).join("|");
-      if (s === sig.current) return;
-      sig.current = s;
-      setOps(next);
-    };
-    update(api.getSceneElementsIncludingDeleted());
-    // Relies on an Excalidraw invariant: insert, erase and every updateScene({ elements }) hand out a
-    // NEW array, while a pen point or pan frame returns the same one, so identical means nothing to
-    // rescan (INK-174). An in-place `isDeleted` mutation of a draft would leave the bar stale.
-    const same = createGate();
-    return api.onChange((els) => {
-      if (same(els)) return;
-      update(els);
-    });
-  }, [api]);
-  return ops;
-}
-
-function useSelectedOps(api: ExcalidrawImperativeAPI, drafts: { opId: string }[]): string[] {
+function useSelectedOps(api: ExcalidrawImperativeAPI, liveIds: string[]): string[] {
   const [selected, setSelected] = useState<string[]>([]);
   useEffect(() => {
     // A selection change replaces selectedElementIds and an element change replaces the array, so
@@ -61,31 +35,34 @@ function useSelectedOps(api: ExcalidrawImperativeAPI, drafts: { opId: string }[]
       setSelected((prev) => (prev.length === next.length && prev.every((x, i) => x === next[i]) ? prev : next));
     });
   }, [api]);
-  const live = new Set(drafts.map((d) => d.opId));
-  return selected.filter((id) => live.has(id));
+  return selected.filter((id) => liveIds.includes(id));
 }
+
+type ToastState = { id: number; text: string; undo?: () => void };
 
 export function DraftBar({
   api,
-  sync,
   documentId,
   unseen,
+  drafts,
+  onOpenThread,
 }: {
   api: ExcalidrawImperativeAPI;
-  sync: Sync;
   documentId: string;
   unseen: Unseen;
+  drafts: DraftStore;
+  onOpenThread: () => void;
 }) {
-  const drafts = useDraftOps(api);
-  const selected = useSelectedOps(api, drafts);
+  const ops = useSyncExternalStore(drafts.subscribe, drafts.list);
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
+  const visible = ops.filter((o) => !hidden.has(o.id));
+  const selected = useSelectedOps(api, visible.map((o) => o.id));
   const unseenIds = useSyncExternalStore(unseen.subscribe, unseen.ids);
   const unseenCount = unseenIds.length;
-  // Accepted or rejected drafts leave the chip. Read from the scene, not the drafts state, which can
-  // lag behind a draft that was just added and marked unseen.
+  // Accepted or rejected drafts leave the chip.
   useEffect(() => {
-    const live = new Set(draftOps(api.getSceneElements() as never).map((d) => d.opId));
-    unseen.prune(live);
-  }, [drafts, api, unseen]);
+    unseen.prune(new Set(ops.map((o) => o.id)));
+  }, [ops, unseen]);
   // A draft the user brings into view by hand stops being unseen. Only listens while there is one.
   useEffect(() => {
     if (unseenCount === 0) return;
@@ -99,11 +76,10 @@ export function DraftBar({
       }
     });
   }, [api, unseen, unseenCount]);
-  // Pans to the oldest unseen draft, else the first draft, at the current zoom (never changes it),
-  // then clears it from the unseen list.
+  // Pans to the oldest unseen draft, else the first draft, at the current zoom (never changes it).
   const jump = () => {
     const els = api.getSceneElements() as never;
-    const id = jumpTarget(unseen.ids(), drafts, (opId) => draftBox(els, opId) !== null);
+    const id = jumpTarget(unseen.ids(), visible.map((o) => ({ opId: o.id })), (opId) => draftBox(els, opId) !== null);
     if (id === null) return;
     const box = draftBox(els, id);
     if (box) {
@@ -113,115 +89,131 @@ export function DraftBar({
     }
     unseen.remove(id);
   };
+
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  // Ops whose accept failed to save or to PATCH: the scene is already accepted locally, so no draft UI can retry them.
-  const [retryIds, setRetryIds] = useState<string[]>([]);
+  const [toast, setToast] = useState<ToastState | null>(null);
+  const refetch = useCallback(() => void fetchDrafts(documentId).then((o) => drafts.set(o)), [documentId, drafts]);
 
-  // Success feedback after a verdict; the key makes a new toast restart its timer.
-  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
-  const dismissToast = useCallback(() => setToast(null), []);
-
-  // Flush the autosave; true only if the scene settled on the server (the accept must not PATCH before this).
-  const save = async () => {
-    const s = sync.current;
-    if (!s) return false;
-    await s.flushNow();
-    return s.settledVersion() !== null;
+  // Rejects waiting out their toast: nothing is sent until it expires, is replaced or the bar goes away.
+  const pending = useRef<string[]>([]);
+  const flushRejects = useCallback(async () => {
+    const ids = pending.current;
+    pending.current = [];
+    if (ids.length === 0) return;
+    const results = await Promise.all(ids.map((id) => reject(id)));
+    setMessage(failureText(results));
+    const failed = ids.filter((_, i) => !results[i].ok);
+    ids.filter((_, i) => results[i].ok).forEach((id) => drafts.remove(id));
+    if (failed.length) setHidden((h) => new Set([...h].filter((id) => !failed.includes(id))));
+  }, [drafts]);
+  useEffect(() => () => void flushRejects(), [flushRejects]);
+  const dismissToast = useCallback(() => {
+    void flushRejects();
+    setToast(null);
+  }, [flushRejects]);
+  const show = (text: string, undo?: () => void) => {
+    void flushRejects();
+    setToast({ id: Date.now(), text, undo });
   };
 
-  const retry = async () => {
-    if (busy) return;
+  const acceptOps = async (list: PlacedOp[]) => {
+    if (busy || list.length === 0) return;
     setBusy(true);
     setMessage("");
     try {
-      const summary = await retryAccept(retryIds, patchOp, save);
-      setRetryIds(summary.retry);
-      setMessage(failureText(summary));
-      const t = verdictToast("accepted", summary);
-      if (t) setToast({ id: Date.now(), text: t });
+      const scene = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
+      const results = await Promise.all(
+        list.map((o) => {
+          const { dx, dy } = offsetOf(scene, o);
+          return accept(o.id, dx, dy);
+        }),
+      );
+      setMessage(failureText(results));
+      const done = list.filter((_, i) => results[i].ok);
+      done.forEach((o) => drafts.remove(o.id));
+      const text = verdictToast("accepted", { done });
+      if (text) show(text, () => void undoAccept(done.map((o) => o.id)));
     } finally {
       setBusy(false);
     }
   };
-
-  const run = async (opIds: string[], verdict: Verdict) => {
-    const s = sync.current;
-    if (!s || busy) return;
-    setBusy(true);
-    setMessage("");
-    try {
-      const summary = await applyVerdict(opIds, verdict, {
-        scene: () => api.getSceneElementsIncludingDeleted() as unknown as DraftElement[],
-        setScene: (els) => {
-          api.updateScene({ elements: els as never, captureUpdate: CaptureUpdateAction.NEVER });
-          s.notify(els as never);
-        },
-        save,
-        patch: patchOp,
-        appliedOps: () => fetchAppliedOps(documentId),
-      });
-      if (verdict === "accepted") setRetryIds((prev) => [...new Set([...prev.filter((id) => !summary.done.includes(id)), ...summary.retry])]);
-      setMessage(failureText(summary));
-      const t = verdictToast(verdict, summary);
-      if (t) setToast({ id: Date.now(), text: t });
-    } finally {
-      setBusy(false);
-    }
+  const undoAccept = async (ids: string[]) => {
+    setToast(null);
+    const results = await Promise.all(ids.map((id) => unaccept(id)));
+    setMessage(failureText(results));
+    refetch(); // the op is placed again; the reconcile effect redraws the dashed draft
+  };
+  const rejectOps = (list: PlacedOp[]) => {
+    if (list.length === 0) return;
+    void flushRejects();
+    const ids = list.map((o) => o.id);
+    setHidden((h) => new Set([...h, ...ids]));
+    show(verdictToast("rejected", { done: ids })!, () => {
+      pending.current = [];
+      setHidden((h) => new Set([...h].filter((id) => !ids.includes(id))));
+      setToast(null);
+    });
+    pending.current = ids; // show() flushed the previous batch; this one waits for its own toast
   };
 
-  // The card for each selected draft: kind and a text preview, read from the scene when the selection changes.
-  const cards = useMemo(() => {
-    void drafts; // a changed draft signature re-reads the text
-    const els = api.getSceneElementsIncludingDeleted() as never as DraftElement[];
-    return selected.map((opId) => ({ opId, ...draftCard(els, opId) }));
-  }, [api, selected, drafts]);
-
-  if (drafts.length === 0 && !message && retryIds.length === 0 && !toast) return null;
-  const all = drafts.map((d) => d.opId);
+  const cardIds = new Set([...selected, ...(visible.length === 1 ? [visible[0].id] : [])]);
+  const cards = visible.filter((o) => cardIds.has(o.id));
+  if (visible.length === 0 && !message && !toast) return null;
   return (
     <div className="ink-drafts">
+      {cards.map((o) => o.payload.anchor_resolved && <Tether key={o.id} api={api} documentId={documentId} op={o} />)}
       <div className="ink-drafts__stack">
         {message && (
           <div role="status" className="ink-drafts__message">
             {message}
           </div>
         )}
-        {retryIds.length > 0 && (
-          <Button variant="secondary" disabled={busy} onClick={() => void retry()}>
-            Retry accept ({retryIds.length})
-          </Button>
-        )}
-        {cards.map(({ opId, kind, preview }) => (
-          <Card key={opId} className="ink-draft-card">
-            <div className="ink-draft-card__head">
-              <Badge />
-              <span>{kind === "text" ? "Text from the agent" : "Diagram from the agent"}</span>
-            </div>
-            {preview && <p className="ink-draft-card__text">{preview}</p>}
-            <div className="ink-draft-card__actions">
-              <Button disabled={busy} onClick={() => void run([opId], "accepted")}>
-                Accept
-              </Button>
-              <Button variant="secondary" disabled={busy} onClick={() => void run([opId], "rejected")}>
-                Reject
-              </Button>
-            </div>
-          </Card>
-        ))}
+        {cards.map((o) => {
+          const { kind, preview } = draftCard(o);
+          return (
+            <Card key={o.id} className="ink-draft-card">
+              <div className="ink-draft-card__head">
+                <Badge />
+                <span>{kind === "text" ? "Text from the agent" : "Diagram from the agent"}</span>
+              </div>
+              {preview && <p className="ink-draft-card__text">{preview}</p>}
+              <div className="ink-draft-card__actions">
+                <Button disabled={busy} onClick={() => void acceptOps([o])}>
+                  Accept
+                </Button>
+                <Button variant="secondary" disabled={busy} onClick={() => rejectOps([o])}>
+                  Reject
+                </Button>
+                <span className="ink-draft-card__spacer" />
+                <Button variant="quiet" onClick={onOpenThread}>
+                  Open thread
+                </Button>
+              </div>
+            </Card>
+          );
+        })}
         {unseenCount > 0 && <Chip onClick={jump}>New draft{unseenCount > 1 ? ` (${unseenCount})` : ""}</Chip>}
-        {toast && <Toast key={toast.id} message={toast.text} onDismiss={dismissToast} />}
-        {drafts.length > 0 && (
+        {toast && (
+          <Toast
+            key={toast.id}
+            message={toast.text}
+            actionLabel={toast.undo ? "Undo" : undefined}
+            onAction={toast.undo}
+            onDismiss={dismissToast}
+          />
+        )}
+        {visible.length > 0 && (
           <div role="region" aria-label="Drafts" className="ink-draft-tray">
             <DraftDot />
-            <span className="ink-draft-tray__count">{trayLabel(drafts.length)}</span>
+            <span className="ink-draft-tray__count">{trayLabel(visible.length)}</span>
             <Button variant="quiet" onClick={jump}>
               Jump
             </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => void run(all, "accepted")}>
+            <Button variant="secondary" disabled={busy} onClick={() => void acceptOps(visible)}>
               Accept all
             </Button>
-            <Button variant="quiet" disabled={busy} onClick={() => void run(all, "rejected")}>
+            <Button variant="quiet" disabled={busy} onClick={() => rejectOps(visible)}>
               Reject all
             </Button>
           </div>
