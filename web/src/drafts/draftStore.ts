@@ -68,3 +68,8 @@ export function offsetOf(scene: readonly DraftElement[], op: PlacedOp): { dx: nu
   const r = (n: number) => Math.round(n * 100) / 100 || 0;
   return { dx: r(box.x - op.box.x), dy: r(box.y - op.box.y) };
 }
+
+/** A reload's elements (saved scene, no drafts) keep the draft elements already on the canvas, so a dragged or erased draft stays as it is. */
+export function reloadWithDrafts<T extends DraftElement>(next: readonly T[], current: readonly T[], ops: readonly PlacedOp[]): T[] {
+  return reconcile([...next, ...current.filter(isDraftTagged)], ops);
+}

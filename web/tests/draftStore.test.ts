@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createDraftStore, offsetOf, reconcile, type PlacedOp } from "../src/drafts/draftStore.ts";
+import { createDraftStore, offsetOf, reconcile, reloadWithDrafts, type PlacedOp } from "../src/drafts/draftStore.ts";
 import type { DraftElement } from "../src/drafts/drafts.ts";
 
 const el = (o: Record<string, unknown>) => o as unknown as DraftElement;
@@ -69,5 +69,16 @@ describe("store", () => {
     s.remove("nope");
     assert.equal(n, 4);
     assert.deepEqual(s.ids(), ["a"]);
+  });
+});
+
+describe("reloadWithDrafts", () => {
+  it("keeps a dragged draft where it is and an erased one gone", () => {
+    const current = reconcile([user], [op("a"), op("b")]);
+    const edited = current.map((e) => (e.id === "a:1" ? { ...e, x: 400 } : e.id === "b:1" ? { ...e, isDeleted: true } : e));
+    const out = reloadWithDrafts([user], edited, [op("a"), op("b")]);
+    assert.equal(out.find((e) => e.id === "a:1")?.x, 400);
+    assert.equal(out.find((e) => e.id === "b:1")?.isDeleted, true);
+    assert.equal(out.filter((e) => e.id === "a:1").length, 1);
   });
 });

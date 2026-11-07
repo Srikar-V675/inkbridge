@@ -11,7 +11,7 @@ import { createRefresh, onVisible, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
 import { publishQuestion } from "../ask/ask";
 import { DraftBar } from "../drafts/DraftBar";
-import { createDraftStore, reconcile } from "../drafts/draftStore";
+import { createDraftStore, reconcile, reloadWithDrafts } from "../drafts/draftStore";
 import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "../drafts/draftView";
 import { jumpNotice, jumpPlan, resolveChunk, viewForBounds, type JumpResult } from "../chunks/chunks";
 import { CropSync, serverRendersCrops } from "../sync/cropSync";
@@ -237,8 +237,9 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
           const byId = new Map(restored.map((e) => [e.id, e]));
           try {
             api.updateScene({
-              elements: reconcile(
+              elements: reloadWithDrafts(
                 elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as DraftElement[],
+                api.getSceneElementsIncludingDeleted() as never as DraftElement[],
                 drafts.list(),
               ) as never,
               // Ink another device wrote is not this user's edit: Ctrl+Z must not undo it.
