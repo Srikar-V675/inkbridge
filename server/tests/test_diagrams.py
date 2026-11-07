@@ -87,3 +87,69 @@ def test_edit_needs_accepted_diagram(client):
     assert draw(client, diagram_id=op["diagram_id"]).status_code == 409  # placed is not accepted
     r = draw(client, diagram_id="nope")
     assert r.status_code == 422 and r.json()["detail"]["code"] == "diagram_not_found"
+
+
+# --- revisions: Accept replaces only what the user has not touched --------------------------------
+
+
+def accepted_diagram(client, n=3):
+    seed(client)
+    a = draw(client).json()
+    measure(client, a, n=n)
+    assert accept(client, a["id"]).status_code == 200
+    return a
+
+
+def revise(client, did, n=2):
+    b = draw(client, GRAPH, "graph", diagram_id=did).json()
+    measure(client, b, n=n)
+    return b
+
+
+def test_revision_accept_replaces_unchanged_keeps_user_changed(client):
+    a = accepted_diagram(client)
+    mine = {e["id"]: e for e in scene_rows(a["id"])}
+    mid = f"{a['id']}:2"
+    edited = {**mine[mid], "version": mine[mid]["version"] + 1, "x": 999}
+    r = client.post("/documents/default/elements", json={"device": "d1", "batch": 1, "elements": [edited]})
+    assert r.status_code == 200
+    b = draw(client, GRAPH, "graph", diagram_id=a["diagram_id"]).json()
+    assert b["revises"] == a["id"]
+    measure(client, b, n=2)
+    assert accept(client, b["id"]).status_code == 200
+    old = {e["id"]: e for e in scene_rows(a["id"])}
+    assert old[f"{a['id']}:1"]["isDeleted"] and old[f"{a['id']}:3"]["isDeleted"]
+    assert old[f"{a['id']}:1"]["version"] == mine[f"{a['id']}:1"]["version"] + 1
+    assert not old[mid].get("isDeleted") and old[mid]["x"] == 999
+    assert not any(e.get("isDeleted") for e in scene_rows(b["id"]))
+    live = {e["id"] for e in client.get(SCENE).json()["elements"] if not e.get("isDeleted")}
+    assert {"user-a", "user-b"} <= live
+
+
+def test_revision_accept_commits_diagram_row(client):
+    a = accepted_diagram(client)
+    d = diagram(a["diagram_id"])
+    assert (d["version"], d["current_op"]) == (1, a["id"])
+    b = revise(client, a["diagram_id"])
+    assert accept(client, b["id"]).status_code == 200
+    d = diagram(a["diagram_id"])
+    assert (d["version"], d["current_op"], d["source_kind"]) == (2, b["id"], "graph")
+    assert accept(client, b["id"]).status_code == 200
+    assert diagram(a["diagram_id"])["version"] == 2
+
+
+def test_rejected_revision_leaves_diagram(client):
+    a = accepted_diagram(client)
+    b = revise(client, a["diagram_id"])
+    assert client.post(f"/ops/{b['id']}/reject").status_code == 200
+    d = diagram(a["diagram_id"])
+    assert (d["version"], d["current_op"]) == (1, a["id"])
+    assert draw(client, GRAPH, "graph", diagram_id=a["diagram_id"]).status_code == 201
+
+
+def test_unaccept_of_revision_refused(client):
+    a = accepted_diagram(client)
+    b = revise(client, a["diagram_id"])
+    accept(client, b["id"])
+    r = client.post(f"/ops/{b['id']}/unaccept")
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "window_closed"
