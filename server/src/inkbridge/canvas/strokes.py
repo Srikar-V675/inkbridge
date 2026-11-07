@@ -10,6 +10,7 @@ median already calls long. Every size test is a multiple of T, so the rules hold
 Thresholds are start values; E5 on real pages tunes them.
 """
 
+import itertools
 import math
 from dataclasses import dataclass
 from typing import Any
@@ -122,13 +123,69 @@ def _dead(e: dict[str, Any]) -> bool:
     return bool(e.get("isDeleted")) or (isinstance(cd, dict) and bool(cd.get("draft")))
 
 
+def _inside_polygon(p: Point, pts: list[Point]) -> bool:
+    x, y = p
+    inside = False
+    for (x1, y1), (x2, y2) in itertools.pairwise(pts + pts[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
+
+
+def _reversals(pts: list[Point], diag: float) -> int:
+    """Direction changes along the path: the larger count of dx and dy sign changes."""
+    floor = MIN_STEP * diag
+    best = 0
+    for axis in (0, 1):
+        last = 0
+        count = 0
+        for a, b in itertools.pairwise(pts):
+            d = b[axis] - a[axis]
+            if abs(d) < floor:
+                continue
+            sign = 1 if d > 0 else -1
+            if last and sign != last:
+                count += 1
+            last = sign
+        best = max(best, count)
+    return best
+
+
+def _holds_ink(f: _F, feats: list[_F]) -> bool:
+    """True if a smaller stroke's centre lies inside the polygon of the closed stroke f."""
+    b = f.box
+    for o in feats:
+        if o.id == f.id or o.extent >= f.extent:
+            continue
+        if not (b["x"] <= o.cx <= b["x"] + f.w and b["y"] <= o.cy <= b["y"] + f.h):
+            continue
+        if _inside_polygon((o.cx, o.cy), f.pts):
+            return True
+    return False
+
+
 def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
     feats, natives = _features(elements)
     kinds: dict[str, str] = {e["id"]: "connector" for e in natives}
     head_of: dict[str, str] = {}
     scale = _scale([f.extent for f in feats])
     for f in feats:
-        kinds[f.id] = "writing"
+        long = f.extent > LONG * scale
+        if (
+            long
+            and f.net < CONTAINER_CLOSE * f.diag
+            and f.L >= CONTAINER_LOOP * f.diag
+            and _holds_ink(f, feats)
+        ):
+            kinds[f.id] = "container"
+        elif (
+            f.extent >= UNDERLINE_MIN * scale
+            and f.L >= SCRIBBLE_LOOP * f.diag
+            and _reversals(f.pts, f.diag) >= SCRIBBLE_REVERSALS
+        ):
+            kinds[f.id] = "scribble"
+        else:
+            kinds[f.id] = "writing"
     return StrokeKinds(kinds=kinds, head_of=head_of, scale=scale)
 
 

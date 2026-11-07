@@ -3,7 +3,7 @@
 import math
 from typing import Any
 
-from inkbridge.canvas.strokes import _order, analyse, classify
+from inkbridge.canvas.strokes import _order, _reversals, analyse, classify
 
 
 def pen(i: str, pts: list[tuple[float, float]], index: str | None = None) -> dict[str, Any]:
@@ -98,3 +98,65 @@ def test_empty_and_single():
     assert classify([]) == {}
     assert analyse([]).scale == 0.0
     assert classify([word("one", 0, 0)]) == {"one": "writing"}
+
+
+# --- Task 2 ---
+
+
+def circle(i: str, cx: float, cy: float, r: float, n: int = 36, index=None):
+    """A hand-drawn closed loop: the ends stop 5 units apart."""
+    sweep = 2 * math.pi - 5 / r
+    pts = [
+        (cx + r * math.cos(sweep * k / (n - 1)), cy + r * math.sin(sweep * k / (n - 1)))
+        for k in range(n)
+    ]
+    return pen(i, pts, index)
+
+
+def test_container_contains_ink():
+    els = [circle("c", 0, 0, 60), word("inner", -10, 0), *field()]
+    kinds = classify(els)
+    assert kinds["c"] == "container"
+    assert kinds["inner"] == "writing"
+
+
+def test_closed_loop_with_nothing_inside_is_writing():
+    # a looping cursive word read as a container
+    kinds = classify([circle("c", 0, 0, 60), *field(20)])
+    assert kinds["c"] == "writing"
+
+
+def test_centre_in_bbox_but_outside_polygon_is_not_contained():
+    # A crescent open to the right: the hollow is inside its bbox but outside the curve.
+    def at(r, deg):
+        a = math.radians(deg)
+        return (r * math.cos(a), r * math.sin(a))
+
+    outer = [at(60, 45 + 270 * k / 20) for k in range(21)]
+    inner = [at(40, 315 - 270 * k / 20) for k in range(21)]
+    crescent = pen("moon", [*outer, *inner, outer[0]])
+    kinds = classify([crescent, word("hollow", -10, 0), *field()])
+    assert kinds["moon"] == "writing"
+
+
+def test_smaller_only():
+    # Each loop's centre lies inside the other loop; only the outer holds smaller ink.
+    kinds = classify([circle("outer", 0, 0, 60), circle("inner", 0, 0, 30), *field()])
+    assert kinds["outer"] == "container"
+    assert kinds["inner"] == "writing"
+
+
+def test_scribble():
+    zig = [(40 * (k % 2), 30 * k / 12) for k in range(13)]
+    kinds = classify([pen("z", zig), *field()])
+    assert kinds["z"] == "scribble"
+
+
+def test_cursive_word_is_not_scribble():
+    a, b = 4.0, 8.0
+    pts = [(a * t - b * math.sin(t), -b * math.cos(t)) for t in (k * 0.25 for k in range(56))]
+    pts = [(x + 100, y + 100) for x, y in pts]
+    stroke = pen("cursive", pts)
+    d = math.hypot(*[max(c) - min(c) for c in zip(*pts, strict=True)])
+    assert _reversals(pts, d) < 6
+    assert classify([stroke, *field()])["cursive"] == "writing"
