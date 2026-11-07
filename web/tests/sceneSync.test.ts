@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { SceneSync, deltaFor, mergeScenes, type SaveState, type SceneElement } from "../src/sync/sceneSync.ts";
+import { SceneSync, applyNewer, deltaFor, mergeScenes, type SaveState, type SceneElement } from "../src/sync/sceneSync.ts";
 import { setTimingSink, type TimingRecord } from "../src/lib/timing.ts";
 
 const el = (id: string, version = 1, extra: Record<string, unknown> = {}): SceneElement => ({
@@ -834,5 +834,75 @@ describe("SceneSync.notify cost and exactness (INK-174)", () => {
     }
     times.sort((a, b) => a - b);
     assert.ok(times[2] < NOTIFY_BUDGET_MS_PER_2000, `median ${times[2].toFixed(2)} ms`);
+  });
+});
+
+describe("save answers carry newer elements (INK-111, decision 0080)", () => {
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
+  afterEach(() => mock.timers.reset());
+
+  it("applyNewer replaces older local copies in place, appends unknown ids and applies a stub as a delete", () => {
+    const local = [el("a", 1, { x: 1 }), el("b", 1)];
+    const stub = { id: "a", version: 3, versionNonce: 7, isDeleted: true };
+    const out = applyNewer(local, [el("b", 4, { type: "rect", x: 9 }), el("c", 1, { type: "rect" }), stub]);
+    assert.deepEqual(out, [
+      { id: "a", version: 3, versionNonce: 7, isDeleted: true, x: 1 },
+      el("b", 4, { type: "rect", x: 9 }),
+      el("c", 1, { type: "rect" }),
+    ]);
+  });
+
+  it("applyNewer ignores a newer element that does not beat the local one and a stub for an unknown id", () => {
+    const local = [el("a", 5, { versionNonce: 2 })];
+    const out = applyNewer(local, [el("a", 4, { type: "rect" }), el("a", 5, { type: "rect", versionNonce: 9 }), { id: "z", version: 9, isDeleted: true }]);
+    assert.deepEqual(out, local);
+  });
+
+  it("a save answer with newer elements reloads the canvas with them", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [el("x", 1)] }),
+      json(200, { version: 3, newer: [el("x", 5, { type: "rect" })] }),
+    ]);
+    await h.sync.load();
+    h.sync.notify([el("x", 2)]);
+    await h.sync.flushNow();
+    assert.equal(h.reloads.length, 1);
+    assert.equal(h.reloads.at(-1)?.find((e) => e.id === "x")?.version, 5);
+    assert.equal(h.states.at(-1), "saved");
+    assert.notEqual(h.states.at(-1), "conflict");
+    assert.equal(h.sync.notify(h.reloads.at(-1)!), false); // the merged list is the saved baseline
+    mock.timers.tick(5000);
+    await settle();
+    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 1);
+  });
+
+  it("a save answer without newer does not call onReload", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1, newer: [] }), json(200, { version: 2 })]);
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    await h.sync.flushNow();
+    h.sync.notify([el("a", 2)]);
+    await h.sync.flushNow();
+    assert.equal(h.reloads.length, 0);
+  });
+
+  it("edits made during the request survive the reload", async () => {
+    const d = deferred();
+    const h = harness([json(200, { version: 1, elements: [el("x", 1)] }), d.next, json(200, { version: 4 })]);
+    await h.sync.load();
+    h.sync.notify([el("x", 2)]);
+    mock.timers.tick(1500);
+    await settle();
+    h.sync.notify([el("x", 3), el("y", 1)]); // drawn while the PUT is in flight
+    d.release(json(200, { version: 3, newer: [el("x", 5, { type: "rect" })] }));
+    await settle();
+    const shown = h.reloads.at(-1)!;
+    assert.deepEqual(shown.map((e) => [e.id, e.version]), [["x", 5], ["y", 1]]);
+    assert.equal(h.states.at(-1), "dirty"); // y is still unsaved
+    mock.timers.tick(1500);
+    await settle();
+    const puts = h.calls.filter((c) => c.method === "PUT");
+    assert.equal(puts.length, 2);
+    assert.deepEqual(puts[1].body?.elements, [el("y", 1)]); // x v5 is the baseline now: not resent
   });
 });
