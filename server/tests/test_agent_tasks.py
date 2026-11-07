@@ -218,3 +218,33 @@ def test_agent_daily_tasks_env(monkeypatch, raw, want):
     if raw is not None:
         monkeypatch.setenv("INKBRIDGE_AGENT_DAILY_TASKS", raw)
     assert config.agent_daily_tasks() == want
+
+
+def test_stale_claim_expires(client):
+    ask(client)
+    tid = tasks_of(client)[0]["id"]
+    claim(client, tid)
+    assert tasks_of(client, status="pending") == []
+    conn = db.connect()
+    try:
+        conn.execute("UPDATE agent_tasks SET claimed_at='2000-01-01T00:00:00+00:00'")
+        conn.commit()
+    finally:
+        conn.close()
+    assert [t["id"] for t in tasks_of(client, status="pending")] == [tid]
+    assert claim(client, tid, "other")["claimed_by"] == "other"
+
+
+def test_parallel_ops_cannot_overshoot_the_limit(client):
+    from concurrent.futures import ThreadPoolExecutor
+
+    t = new_task("question")
+    claim(client, t)
+    with ThreadPoolExecutor(8) as pool:
+        codes = list(pool.map(lambda _: op(client, t).status_code, range(8)))
+    assert sorted(codes) == [201] * 3 + [409] * 5
+    conn = db.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM agent_ops WHERE task_id=?", (t,)).fetchone()[0] == 3
+    finally:
+        conn.close()

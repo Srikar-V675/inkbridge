@@ -19,6 +19,7 @@ from typing import Any
 from inkbridge.agent import placement
 from inkbridge.agent.attention import attention
 from inkbridge.canvas.hashes import bbox_of
+from inkbridge.db import tasks as tasks_db
 from inkbridge.db.common import DocumentNotFound, _now
 from inkbridge.db.documents import document_exists, get_scene
 
@@ -138,6 +139,7 @@ def create_op(
     payload: dict[str, Any],
     op_id: str | None = None,
     expired: list[dict] | None = None,
+    task_id: str | None = None,
 ) -> tuple[dict, bool]:
     """Enqueue an op with a server-computed placement; return (op, created).
 
@@ -150,7 +152,7 @@ def create_op(
         raise ValueError(f"unknown op type {op_type!r}")
     conn.execute("BEGIN IMMEDIATE")
     try:
-        return _create_op(conn, document_id, op_type, payload, op_id, expired)
+        return _create_op(conn, document_id, op_type, payload, op_id, expired, task_id)
     except BaseException:
         conn.rollback()
         raise
@@ -251,7 +253,7 @@ def reserved_boxes(
     return occupied, recent
 
 
-def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
+def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id=None):
     payload = {k: v for k, v in payload.items() if k != "anchor_resolved"}  # server-set only
     if not document_exists(conn, document_id):
         raise DocumentNotFound(document_id)
@@ -272,6 +274,8 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
                 raise OpConflict(op_id)
             conn.rollback()
             return existing, False
+    if task_id:  # INK-133: check and insert share this write lock, so parallel calls cannot overshoot
+        tasks_db.op_budget(conn, task_id, document_id, op_type)
     swept = _expire_stale(conn, document_id)  # an expired op must not hold a slot
     open_ops, oldest = conn.execute(
         "SELECT COUNT(*), MIN(created_at) FROM agent_ops WHERE document_id = ?"
@@ -319,7 +323,7 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
 
     conn.execute(
         "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at,"
-        " question_id) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+        " question_id, task_id) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
         (
             oid,
             document_id,
@@ -327,6 +331,7 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
             json.dumps({**payload, "placement": spot, "id_prefix": id_prefix(oid)}),
             _now(),
             payload.get("question_id"),
+            task_id,
         ),
     )
     conn.commit()

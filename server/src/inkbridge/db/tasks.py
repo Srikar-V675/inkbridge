@@ -11,6 +11,8 @@ from datetime import UTC, datetime, timedelta
 
 from inkbridge.db.common import _now
 
+CLAIM_TTL_S = 15 * 60  # a client that claimed and went silent loses the task (hypothesis)
+
 MODES = {
     "question": {"types": ("write_text", "draw_diagram"), "limit": 3},
     "diagram": {"types": ("draw_diagram",), "limit": 2},
@@ -77,10 +79,22 @@ def task_for_question(conn: sqlite3.Connection, question_id: str) -> dict | None
     return _dict(row) if row else None
 
 
+def expire_claims(conn: sqlite3.Connection) -> None:
+    """Running tasks claimed longer ago than CLAIM_TTL_S go back to pending."""
+    cutoff = (datetime.now(UTC) - timedelta(seconds=CLAIM_TTL_S)).isoformat()
+    conn.execute(
+        "UPDATE agent_tasks SET status='pending', last_error='claim expired'"
+        " WHERE status='running' AND claimed_at < ?",
+        (cutoff,),
+    )
+    conn.commit()
+
+
 def list_tasks(
     conn: sqlite3.Connection, document_id: str, status: str | None, limit: int
 ) -> list[dict]:
     """Oldest first, question tasks before the rest."""
+    expire_claims(conn)
     sql, args = "SELECT * FROM agent_tasks WHERE document_id = ?", [document_id]
     if status:
         sql += " AND status = ?"
@@ -100,6 +114,7 @@ def _guard(conn: sqlite3.Connection, cur: sqlite3.Cursor, task_id: str) -> None:
 
 
 def claim(conn: sqlite3.Connection, task_id: str, claimed_by: str) -> dict:
+    expire_claims(conn)
     cur = conn.execute(
         "UPDATE agent_tasks SET status='running', claimed_by=?, claimed_at=?, attempts=attempts+1"
         " WHERE id=? AND status='pending'",
@@ -195,8 +210,3 @@ def op_budget(conn: sqlite3.Connection, task_id: str, document_id: str, op_type:
         raise TaskRefused(
             "task_op_limit", f"this task already made {used} of {t['op_limit']} drafts"
         )
-
-
-def attach_op(conn: sqlite3.Connection, op_id: str, task_id: str) -> None:
-    conn.execute("UPDATE agent_ops SET task_id=? WHERE id=?", (task_id, op_id))
-    conn.commit()

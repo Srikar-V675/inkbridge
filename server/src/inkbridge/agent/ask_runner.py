@@ -368,6 +368,7 @@ class AskWorker:
         """Handle the oldest eligible pending question, else the oldest task; return the runs (0 or 1)."""
         conn = db.connect()  # own connection
         try:
+            tasks_db.expire_claims(conn)
             nxt = self._next(conn)
             if nxt is not None:
                 return self._run_question(conn, *nxt)
