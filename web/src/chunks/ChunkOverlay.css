@@ -1,10 +1,10 @@
 /* Chunk notice dock (INK-162); the overlay rules arrive with the overlay port. Below the 64 px top bar. */
 .ink-notice-dock {
   position: absolute;
-  top: 72px;
+  top: calc(72px * var(--ui-scale, 1));
   left: 50%;
   transform: translateX(-50%);
-  max-width: calc(100% - 32px);
+  max-width: calc(100% - 32px * var(--ui-scale, 1));
   pointer-events: auto;
 }
 
@@ -49,7 +49,7 @@
   cursor: pointer;
 }
 .ink-chunk-tab__label {
-  padding: 4px 8px;
+  padding: calc(4px * var(--ui-scale, 1)) calc(8px * var(--ui-scale, 1));
   border-radius: 6px 6px 0 0;
   background: var(--color-charcoal);
   color: var(--color-paper);
@@ -63,8 +63,8 @@
 .ink-chunk-actions {
   position: absolute;
   right: var(--space-lg);
-  bottom: 84px;
-  max-width: 360px;
+  bottom: calc(84px * var(--ui-scale, 1));
+  max-width: calc(360px * var(--ui-scale, 1));
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);

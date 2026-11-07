@@ -1,0 +1,27 @@
+/* UI size (INK-177, docs/decisions/0083-ui-scale.md): inside the shell every size token is the design value
+   times --ui-scale (Small 0.8, Medium 0.9, Large 1; set inline on .ink-shell by Shell.tsx). Outside the shell,
+   Home and the Kit read the plain tokens.css values. tests/uiScale.test.ts checks each line against tokens.css,
+   so change the design token first, then this block. Never scaled: --space-touch (hit area), --radius-*, the chip. */
+.ink-shell {
+  --space-xs: calc(4px * var(--ui-scale, 1));
+  --space-sm: calc(8px * var(--ui-scale, 1));
+  --space-md: calc(16px * var(--ui-scale, 1));
+  --space-lg: calc(24px * var(--ui-scale, 1));
+  --space-xl: calc(40px * var(--ui-scale, 1));
+  --type-title-size: max(12px, calc(20px * var(--ui-scale, 1)));
+  --type-reading-size: max(12px, calc(17px * var(--ui-scale, 1)));
+  --type-control-size: max(12px, calc(15px * var(--ui-scale, 1)));
+  --type-button-size: max(12px, calc(16px * var(--ui-scale, 1)));
+  --type-note-size: max(12px, calc(14px * var(--ui-scale, 1)));
+  --component-tool-rail-width: calc(60px * var(--ui-scale, 1));
+  --component-tool-rail-padding: calc(8px * var(--ui-scale, 1));
+  --component-top-bar-height: calc(64px * var(--ui-scale, 1));
+  --component-top-bar-padding: 0 calc(20px * var(--ui-scale, 1)) 0 calc(16px * var(--ui-scale, 1));
+  --component-side-panel-width: calc(440px * var(--ui-scale, 1));
+  --component-side-panel-padding: calc(18px * var(--ui-scale, 1)) calc(24px * var(--ui-scale, 1)) calc(20px * var(--ui-scale, 1));
+  --component-canvas-card-padding: calc(16px * var(--ui-scale, 1));
+  --component-button-primary-padding: 0 calc(18px * var(--ui-scale, 1));
+  --component-button-secondary-padding: 0 calc(16px * var(--ui-scale, 1));
+  --component-button-quiet-padding: 0 calc(14px * var(--ui-scale, 1));
+  --component-draft-badge-padding: calc(3px * var(--ui-scale, 1)) calc(9px * var(--ui-scale, 1));
+}

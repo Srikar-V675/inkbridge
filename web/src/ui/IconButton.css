@@ -1,8 +1,9 @@
 .ink-icon-button {
+  position: relative;
   box-sizing: border-box;
-  width: var(--space-touch);
-  min-width: var(--space-touch);
-  min-height: var(--space-touch);
+  width: calc(var(--space-touch) * var(--ui-scale, 1));
+  min-width: calc(var(--space-touch) * var(--ui-scale, 1));
+  min-height: calc(var(--space-touch) * var(--ui-scale, 1));
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
@@ -22,4 +23,13 @@
 .ink-icon-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* 44 px hit area around the scaled face (INK-177); inset 0 at scale 1 and above. */
+.ink-icon-button::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((var(--ui-scale, 1) - 1) * var(--space-touch) / 2));
+}
+.ink-icon-button > svg {
+  scale: var(--ui-scale, 1); /* icons shrink with the face; the layout box is unchanged */
 }

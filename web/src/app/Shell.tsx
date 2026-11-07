@@ -1,6 +1,6 @@
 // The app shell (INK-117, docs/decisions/0066): dotted paper, top bar, tool rail and zoom control
 // around the Excalidraw canvas, whose own chrome is hidden by shell.css.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { readRoute } from "../lib/route";
@@ -10,8 +10,10 @@ import { createRailStore } from "./railStore";
 import { penColours } from "./shellLogic";
 import { ToolRail, type RailStore } from "./ToolRail";
 import { TopBar } from "./TopBar";
+import { uiScale } from "./uiScaleStore";
 import { ZoomControl } from "./ZoomControl";
 import "./shell.css";
+import "./uiScale.css";
 
 export interface ShellProps {
   api: ExcalidrawImperativeAPI | null;
@@ -25,6 +27,7 @@ export interface ShellProps {
 }
 
 export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, children }: ShellProps) {
+  const scale = useSyncExternalStore(uiScale.subscribe, uiScale.get); // UI size, INK-177
   // Built in an effect: creating it calls the API, which must not happen while React renders.
   const [store, setStore] = useState<RailStore | null>(null);
   useEffect(() => {
@@ -49,7 +52,7 @@ export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, ch
   }, [api]);
 
   return (
-    <div className="ink-shell">
+    <div className="ink-shell" style={{ "--ui-scale": scale } as CSSProperties}>
       {api && <PaperDots api={api} />}
       <div className="ink-shell__canvas">{children}</div>
       <TopBar title={title} status={status} chunks={chunks} onAsk={onAsk} askOpen={askOpen} />
