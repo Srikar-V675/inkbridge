@@ -182,6 +182,38 @@ def test_nonzero_exit_raises(tmp_path):
         ClaudeCodeRunner(cfg(tmp_path, INKBRIDGE_CLAUDE_BIN=str(f))).run(Q)
 
 
+STREAM_BODY = """
+import json
+sys.stdin.read()
+def out(e): print(json.dumps({"type": "stream_event", "event": e}), flush=True)
+out({"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "name": "mcp__inkbridge__answer_question"}})
+for p in ['{"answer_md":"he', 'llo ', 'world"}']:
+    out({"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": p}})
+    time.sleep(0.2)
+"""
+
+
+def test_runner_streams_answer_deltas(tmp_path):
+    f = fake_claude(tmp_path, STREAM_BODY)
+    got = []
+    ClaudeCodeRunner(cfg(tmp_path, INKBRIDGE_CLAUDE_BIN=str(f))).run({**Q, "stream": got.append})
+    assert "".join(got) == "hello world"
+
+
+def test_large_prompt_does_not_block(tmp_path):
+    f = fake_claude(
+        tmp_path, "time.sleep(0.3)\nn = len(sys.stdin.read())\nsys.exit(0 if n > 100000 else 4)"
+    )
+    big = {**Q, "text": "x" * 100_000}
+    ClaudeCodeRunner(cfg(tmp_path, INKBRIDGE_CLAUDE_BIN=str(f))).run(big)
+
+
+def test_stream_flags_in_command(tmp_path):
+    cmd = build_command(cfg(tmp_path))
+    assert flag(cmd, "--output-format") == "stream-json"
+    assert "--verbose" in cmd and "--include-partial-messages" in cmd
+
+
 # -- worker ----------------------------------------------------------------------------------
 
 
@@ -464,3 +496,37 @@ def test_stuck_runner_task_reset_on_start(client):
         assert tasks_db.get_task(conn, tid)["status"] == "pending"
     finally:
         conn.close()
+
+
+# -- streaming (INK-176) ---------------------------------------------------------------------
+
+
+class Streamer(Fake):
+    def run(self, q):
+        q["stream"]("he")
+        q["stream"]("llo")
+        if self.exc:
+            raise self.exc
+        r = self.client.post(f"/questions/{q['id']}/answer", json={"answer_md": "hello!"})
+        assert r.status_code == 200
+
+
+def test_worker_publishes_deltas_then_final(client):
+    q = ask(client)
+    seen = []
+    AskWorker(Streamer(client), publish=lambda d, m: seen.append(m)).run_once()
+    kinds = [(m["type"], m.get("seq")) for m in seen if m["type"].startswith("question")]
+    assert kinds[0] == ("question.update", None)
+    assert ("question.delta", 1) in kinds and ("question.delta", 2) in kinds
+    row = client.get(f"/questions/{q['id']}").json()
+    assert row["status"] == "answered" and row["partial_answer"] is None
+
+
+def test_failure_clears_partial(client):
+    q = ask(client)
+    seen = []
+    w = AskWorker(Streamer(client, exc=RunnerError("exit 2")), publish=lambda d, m: seen.append(m))
+    w.run_once()
+    row = client.get(f"/questions/{q['id']}").json()
+    assert (row["partial_answer"], row["partial_seq"]) == (None, 0)
+    assert seen[-1]["type"] == "question.update" and seen[-1]["question"]["partial_answer"] is None

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Protocol
 
 from inkbridge import config, db
+from inkbridge.agent.answer_stream import AnswerStream
 from inkbridge.db import questions as q_db
 from inkbridge.db import tasks as tasks_db
 
@@ -85,7 +86,8 @@ class AgentRunner(Protocol):
     def run(self, question: dict) -> None:
         """Return once the agent has been asked to answer; may raise RunnerError.
         `question` is a db.questions.get_question() dict (history and read-time focus_chunk_ids).
-        Success is judged by the row, not by the return value."""
+        Success is judged by the row, not by the return value.
+        A runner may call `question.get("stream")(text)` with growing pieces of the answer (INK-176)."""
 
     def terminate(self) -> None: ...
 
@@ -141,7 +143,7 @@ def build_command(cfg: ClaudeConfig, mode: str = "question") -> list[str]:
     no = [t for t in ALL_INKBRIDGE_WRITE if t not in MODE_TOOLS[mode]]
     denied = list(DENIED_NATIVE) + [f"mcp__{cfg.mcp_name}__{t}" for t in no]
     return [
-        cfg.bin, "-p", "--output-format", "text",
+        cfg.bin, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
         "--mcp-config", str(cfg.mcp_config), "--strict-mcp-config",
         "--allowedTools", ",".join(allowed_tools(cfg, mode)),
         "--disallowedTools", ",".join(denied),
@@ -208,6 +210,24 @@ def _kill(proc: subprocess.Popen) -> None:
         log.warning("child %s did not exit after SIGKILL", proc.pid)
 
 
+def _feed_stdin(proc: subprocess.Popen, data: bytes) -> None:
+    try:
+        proc.stdin.write(data)
+        proc.stdin.close()
+    except (OSError, ValueError):
+        pass  # the child exited or was killed first
+
+
+def _safe(sink: Callable[[str], None]) -> Callable[[str], None]:
+    def call(text: str) -> None:
+        try:
+            sink(text)
+        except Exception as e:  # noqa: BLE001 - a bad sink must not stop the child being read
+            log.warning("answer stream sink failed: %s", type(e).__name__)
+
+    return call
+
+
 class ClaudeCodeRunner:
     def __init__(self, cfg: ClaudeConfig):
         self.cfg, self._proc = cfg, None
@@ -226,25 +246,38 @@ class ClaudeCodeRunner:
                     raise RunnerError("runner is stopping")
                 try:
                     proc = subprocess.Popen(
-                        build_command(self.cfg, mode), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                        stderr=subprocess.PIPE, env=env, cwd=cwd, start_new_session=True,
+                        build_command(self.cfg, mode), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, env=env, cwd=cwd, start_new_session=True,
                     )  # fmt: skip
                 except OSError as e:
                     raise RunnerError(
                         f"cannot start {Path(self.cfg.bin).name}: {type(e).__name__}"
                     ) from None
                 self._proc = proc
+            timed_out = threading.Event()
+            timer = threading.Timer(self.cfg.timeout_s, lambda: (timed_out.set(), _kill(proc)))
+            timer.daemon = True
+            sink = q.get("stream")
+            stream = AnswerStream(_safe(sink)) if sink else None
             try:
-                _, err = proc.communicate(prompt.encode(), timeout=self.cfg.timeout_s)
-            except subprocess.TimeoutExpired:
-                raise RunnerError(f"timeout after {self.cfg.timeout_s}s") from None
+                timer.start()
+                # Written in a thread: a prompt over the 64 KB pipe must not block the read loop.
+                threading.Thread(
+                    target=_feed_stdin, args=(proc, prompt.encode()), daemon=True
+                ).start()
+                for line in proc.stdout:
+                    if stream:
+                        stream.feed(line)
+                proc.wait()
             finally:
+                timer.cancel()
                 _kill(proc)  # no-op if exited; also reaps stray grandchildren
                 self._proc = None
+        if timed_out.is_set():
+            raise RunnerError(f"timeout after {self.cfg.timeout_s}s")
         if proc.returncode != 0:
             # Neither stderr text nor the prompt is logged: they may hold note paths or content.
-            log.warning("%s exited %s for %s (stderr %d bytes)",
-                        Path(self.cfg.bin).name, proc.returncode, q["id"], len(err or b""))  # fmt: skip
+            log.warning("%s exited %s for %s", Path(self.cfg.bin).name, proc.returncode, q["id"])
             raise RunnerError(f"exit {proc.returncode}")
 
     def terminate(self) -> None:
@@ -319,10 +352,25 @@ class AskWorker:
         if self._publish is not None and q["status"] == "pending":
             self._publish(q["document_id"], {"type": "question.update", "question": q})
 
+    def _sink(self, conn: sqlite3.Connection, qid: str) -> Callable[[str], None]:
+        def sink(text: str) -> None:
+            try:
+                seq = q_db.append_partial(conn, qid, text)
+            except (q_db.InvalidTransition, q_db.PartialTooLong, q_db.QuestionNotFound):
+                return  # answered or cancelled meanwhile: the final answer wins
+            if self._publish is not None:
+                doc = conn.execute(
+                    "SELECT document_id FROM questions WHERE id = ?", (qid,)
+                ).fetchone()[0]
+                self._publish(doc, {"type": "question.delta", "id": qid, "seq": seq, "text": text})
+
+        return sink
+
     def _fail(self, conn: sqlite3.Connection, qid: str, why: str) -> None:
         n = self._failures.get(qid, (0, 0.0))[0] + 1
         self._failures[qid] = (n, self._clock() + self._backoff_s * n)
         log.warning("ask runner failed for question %s (attempt %d): %s", qid, n, why)
+        q_db.reset_partial(conn, qid)
         self._mark(conn, qid, "failed" if n >= self.MAX_ATTEMPTS else "pending", why)
 
     def _next(self, conn: sqlite3.Connection) -> tuple[str, str] | None:
@@ -382,7 +430,11 @@ class AskWorker:
             self._announce(tasks_db.claim(conn, tid, "runner"))
         except tasks_db.InvalidTransition:
             return 0  # a pull client got there first
-        question = {**q_db.get_question(conn, qid), "task_id": tid, "mode": "question"}  # focus now (0035)
+        q_db.reset_partial(conn, qid)
+        question = {
+            **q_db.get_question(conn, qid), "task_id": tid, "mode": "question",
+            "stream": self._sink(conn, qid),
+        }  # fmt: skip  # focus now (0035)
         self._mark(conn, qid, "running")
         try:
             self.runner.run(question)

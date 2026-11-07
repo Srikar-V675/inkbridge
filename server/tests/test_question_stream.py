@@ -2,7 +2,7 @@
 
 from inkbridge import db
 from inkbridge.db import questions as q_db
-from tests.test_questions_api import Q, answer, ask
+from tests.test_questions_api import answer, ask
 from tests.test_ws import WS, recv
 
 
