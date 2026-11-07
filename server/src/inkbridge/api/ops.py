@@ -13,6 +13,7 @@ from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
 from inkbridge.db import questions as q_db
+from inkbridge.db import tasks as tasks_db
 from inkbridge.timing import timed
 
 router = APIRouter()
@@ -105,6 +106,7 @@ def _publish_expired(swept: list[dict]) -> None:
 
 
 def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
+    task_id = body.payload.pop("task_id", None)  # INK-133: not part of the op's own payload
     try:
         # Before the schema: an existing id must be refused whichever field carries it. A retry of
         # an op that already exists skips this; create_op returns the stored op or a conflict.
@@ -145,7 +147,7 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     try:
         with timed("ops.create", fields=len(body.payload)):  # includes server-side placement
             op, created = ops_db.create_op(
-                conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id, swept
+                conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id, swept, task_id
             )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
@@ -184,6 +186,10 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
                 "Open the canvas, or wait for the user to accept or reject them",
             },
         ) from None
+    except tasks_db.TaskNotFound:
+        raise HTTPException(404, "task not found") from None
+    except tasks_db.TaskRefused as e:
+        raise HTTPException(409, {"code": e.code, "msg": e.msg}) from None
     except ops_db.OpConflict:
         raise HTTPException(409, {"code": "op_id_conflict", "op_id": body.op_id}) from None
     _publish_expired(swept)

@@ -99,3 +99,21 @@ def chunker() -> str:
         return "v2"
     print(f"inkbridge: ignoring INKBRIDGE_CHUNKER={raw!r} (want v1 or v2)", file=sys.stderr)
     return "v1"
+
+
+def agent_daily_tasks() -> int:
+    """INKBRIDGE_AGENT_DAILY_TASKS: runner tasks per 24 h, questions exempt (INK-133). Default 30; 0 = none."""
+    raw = (os.environ.get("INKBRIDGE_AGENT_DAILY_TASKS") or "").strip()
+    if not raw:
+        return 30
+    try:
+        n = int(raw)
+    except ValueError:
+        n = -1
+    if n < 0:
+        print(
+            f"inkbridge: ignoring INKBRIDGE_AGENT_DAILY_TASKS={raw!r} (want a number, 0 or more)",
+            file=sys.stderr,
+        )
+        return 30
+    return n

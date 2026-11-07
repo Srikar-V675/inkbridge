@@ -2,6 +2,7 @@
 
 The package re-exports every name so `from inkbridge import db` and `db.<name>` keep working."""
 
+from inkbridge.db import tasks  # noqa: F401
 from inkbridge.db.chunks import (
     ORPHAN_KEEP,
     ORPHAN_MAX_AGE_DAYS,

@@ -11,6 +11,7 @@ import json
 import sqlite3
 import uuid
 
+from inkbridge.db import tasks as tasks_db
 from inkbridge.db.common import AUTO, DocumentNotFound, _now
 from inkbridge.db.documents import document_exists
 
@@ -66,6 +67,7 @@ def create_question(
             _now(),
         ),
     )
+    tasks_db.create_task(conn, document_id, "question", question_id=qid, input={"mode": "question"})
     conn.commit()
     return get_question(conn, qid)
 
@@ -123,6 +125,7 @@ def answer_question(
             " SELECT id, document_id, text, answer_md FROM questions WHERE id = ?",
             (question_id,),
         )
+        tasks_db.finish_for_question(conn, question_id, "done")
     return _finish(conn, question_id, cur.rowcount)
 
 
@@ -131,6 +134,8 @@ def cancel_question(conn: sqlite3.Connection, question_id: str) -> dict:
         "UPDATE questions SET status = 'cancelled' WHERE id = ? AND status = 'pending'",
         (question_id,),
     )
+    if cur.rowcount:
+        tasks_db.finish_for_question(conn, question_id, "cancelled")
     return _finish(conn, question_id, cur.rowcount)
 
 
