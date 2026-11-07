@@ -70,6 +70,15 @@ def create_question(
     return get_question(conn, qid)
 
 
+def question_in_document(conn: sqlite3.Connection, question_id: str, document_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM questions WHERE id = ? AND document_id = ?", (question_id, document_id)
+        ).fetchone()
+        is not None
+    )
+
+
 def get_question(conn: sqlite3.Connection, question_id: str) -> dict:
     row = conn.execute("SELECT * FROM questions WHERE id = ?", (question_id,)).fetchone()
     if row is None:

@@ -114,6 +114,7 @@ def _row_dict(row: sqlite3.Row) -> dict:
         "elements": json.loads(row["elements_json"]) if row["elements_json"] else None,
         "box": json.loads(row["box_json"]) if row["box_json"] else None,
         "resolved_at": row["resolved_at"],
+        "question_id": row["question_id"],
     }
 
 
@@ -310,14 +311,15 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
     )
 
     conn.execute(
-        "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at)"
-        " VALUES (?, ?, ?, ?, 'pending', ?)",
+        "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at,"
+        " question_id) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
         (
             oid,
             document_id,
             op_type,
             json.dumps({**payload, "placement": spot, "id_prefix": id_prefix(oid)}),
             _now(),
+            payload.get("question_id"),
         ),
     )
     conn.commit()

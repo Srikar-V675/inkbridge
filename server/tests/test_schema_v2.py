@@ -44,6 +44,7 @@ def test_v2_tables_and_columns(tmp_path):
         "focus_element_ids",
         "answer_md",
         "sources_json",
+        "canvas_text",
         "status",
         "runner_ref",
         "runner_status",

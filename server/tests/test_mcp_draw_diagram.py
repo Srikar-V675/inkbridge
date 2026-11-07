@@ -142,3 +142,10 @@ def test_dead_anchor_is_refused_and_a_followed_one_is_reported(tool, client):
     _link(a, successor_of=None)
     with pytest.raises(ToolError, match="no longer exists.*read_canvas"):
         tool(anchor=a)
+
+
+def test_draw_diagram_question_id(tool, client):
+    q = client.post("/documents/default/questions", json={"text": "why?"}).json()["id"]
+    tool(apply, after=2, question_id=q, relation="diagram")
+    (op,) = client.get("/documents/default/ops").json()["ops"]
+    assert op["payload"]["question_id"] == q and op["payload"]["relation"] == "diagram"
