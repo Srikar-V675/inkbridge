@@ -1,8 +1,7 @@
-// Browser-only: turn a pending op into draft elements on the live canvas (tech ref 9.9).
+// Browser-only: convert a pending op and measure it (tech ref 9.9, INK-115).
 import { convertToExcalidrawElements } from "@excalidraw/excalidraw";
-import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { timed } from "../lib/timing";
-import { opElements, opFontSize, toDrafts, wrapText, type DraftElement, type PendingOp } from "./drafts";
+import { measureDrafts, opFontSize, wrapText, type DraftElement, type PendingOp } from "./drafts";
 
 type Skeleton = Parameters<typeof convertToExcalidrawElements>[0];
 
@@ -28,45 +27,21 @@ async function skeletonFor(op: PendingOp, fontSize: number): Promise<Skeleton> {
 }
 
 /**
- * Draw the op as dashed drafts (once) and return the ids of its elements on the canvas.
- * `persist` saves the scene with the drafts in it: the caller acks only after that, because an
- * applied op is never replayed, so an unsaved draft lost to a reload would never come back.
+ * Convert the op and measure it (INK-115). Touches neither the scene nor the save path: the
+ * server places the measured elements and the draft store puts them on the canvas.
  */
-export function drawOp(
-  api: ExcalidrawImperativeAPI,
-  op: PendingOp,
-  persist: (elements: readonly unknown[]) => Promise<void>,
-): Promise<string[]> {
-  return timed(
-    "ops.apply",
-    () => applyOp(api, op, persist),
-    (ids) => ({ elements: ids?.length ?? 0 }),
-  );
+export function measureOp(op: PendingOp): Promise<{ elements: DraftElement[]; width: number; height: number }> {
+  return timed("ops.measure", () => measure(op), (m) => ({ elements: m?.elements.length ?? 0 }));
 }
 
-async function applyOp(
-  api: ExcalidrawImperativeAPI,
-  op: PendingOp,
-  persist: (elements: readonly unknown[]) => Promise<void>,
-): Promise<string[]> {
-  const prefix = op.payload.id_prefix;
-  const scene = api.getSceneElementsIncludingDeleted();
-  const already = opElements(scene as never as DraftElement[], prefix);
-  if (already.length) {
-    // Replay of an op drawn before a reload or reconnect: its ack may have been lost before the
-    // drafts were saved, so make sure they are saved before acking again.
-    await persist(scene);
-    return already.map((e) => e.id);
-  }
+async function measure(op: PendingOp) {
   const fontSize = opFontSize(op.payload);
   const skeleton = await skeletonFor(op, fontSize);
   // Text boxes are measured at conversion; measuring before the hand-drawn font has loaded makes
   // them too narrow and clips the text.
   await document.fonts?.load(`${fontSize}px Excalifont`).catch(() => undefined);
   const converted = convertToExcalidrawElements(skeleton, { regenerateIds: true });
-  const drafts = toDrafts(converted as never as DraftElement[], op);
-  if (!drafts.length) throw new Error("the op produced no elements");
-  api.updateScene({ elements: [...api.getSceneElementsIncludingDeleted(), ...drafts] as never });
-  await persist(api.getSceneElementsIncludingDeleted());
-  return drafts.map((e) => e.id);
+  const m = measureDrafts(converted as never as DraftElement[], op);
+  if (!m.elements.length) throw new Error("the op produced no elements");
+  return m;
 }

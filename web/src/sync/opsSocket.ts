@@ -1,6 +1,8 @@
 // Framework-free client for `WS /ws?document=<id>` (tech ref 7.3, server/src/inkbridge/api/ws.py).
-// Reconnects with backoff; the server replays pending and delivered ops on every connect. Ops are
-// handled one at a time, and an op already being handled is not started twice. question.update
+// Reconnects with backoff; the server replays pending ops on every connect (a replay re-measures)
+// and placed ops as `op.placed`. The browser only measures: it answers `op.measured` and the server
+// places the draft (INK-114, INK-115). Ops are measured one at a time, and an op already being
+// measured is not started twice. question.update
 // (INK-104) is handed to onQuestionUpdate so the Ask panel needs no polling. scene.delta (INK-112)
 // goes to onSceneDelta.
 
@@ -29,8 +31,9 @@ export interface SocketLike {
 
 export interface OpsSocketOptions {
   url: string;
-  /** Draw the op; resolve with the ids of its elements on the canvas, or throw to report failure. */
-  onOp: (op: PendingOp) => Promise<string[]>;
+  /** Measure the op (no scene change); resolve with its elements and size, or throw to report failure. */
+  onOp: (op: PendingOp) => Promise<{ elements: unknown[]; width: number; height: number }>;
+  onOpPlaced?: (msg: { op_id: string; elements: unknown[]; placement: { x: number; y: number }; anchor?: unknown }) => void;
   onChunksUpdated?: (msg: ChunksUpdated) => void; // crop sync hooks in here (INK-057)
   onOpUpdated?: (msg: OpUpdated) => void;
   onQuestionUpdate?: (question: Question) => void;
@@ -86,10 +89,9 @@ export class OpsSocket {
     return this.queue;
   }
 
-  // A socket that is closed or still connecting (a reconnect started while an op was being drawn)
-  // throws on send. Drop the message instead: the server replays an unacked op on the next
-  // connect, and the drawn drafts are found and acked then. Throwing here would report a drawn op
-  // as failed, and a rejected queue would never run another op.
+  // A socket that is closed or still connecting throws on send. Drop the message instead: the
+  // server replays a pending op on the next connect and it is measured again. Throwing here would
+  // report a measured op as failed, and a rejected queue would never run another op.
   private send(msg: unknown) {
     try {
       this.ws?.send(JSON.stringify(msg));
@@ -110,6 +112,8 @@ export class OpsSocket {
         return this.enqueue(msg as unknown as PendingOp);
       case "chunks.updated":
         return this.o.onChunksUpdated?.(msg as unknown as ChunksUpdated);
+      case "op.placed":
+        return this.o.onOpPlaced?.(msg as never);
       case "op.updated":
         return this.o.onOpUpdated?.(msg as unknown as OpUpdated);
       case "op.error":
@@ -122,12 +126,12 @@ export class OpsSocket {
   }
 
   private enqueue(op: PendingOp) {
-    if (this.busy.has(op.op_id)) return; // a replay of an op still being drawn
+    if (this.busy.has(op.op_id)) return; // a replay of an op still being measured
     this.busy.add(op.op_id);
     this.queue = this.queue.then(async () => {
       try {
-        const ids = await this.o.onOp(op);
-        this.send({ type: "op.applied", op_id: op.op_id, element_ids: ids });
+        const m = await this.o.onOp(op);
+        this.send({ type: "op.measured", op_id: op.op_id, elements: m.elements, width: m.width, height: m.height });
       } catch (e) {
         this.send({ type: "op.failed", op_id: op.op_id, error: e instanceof Error ? e.message : String(e) });
       } finally {
