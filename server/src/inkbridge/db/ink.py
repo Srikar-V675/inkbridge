@@ -44,7 +44,9 @@ def get_region_ink(conn: sqlite3.Connection, region_id: str) -> dict | None:
     return {"strokes": strokes, "point_count": sum(len(s["points"]) for s in strokes)}
 
 
-def get_sketch_elements(conn: sqlite3.Connection, region_id: str) -> list[dict] | None:
+def get_sketch_elements(
+    conn: sqlite3.Connection, region_id: str, by_id: dict[str, dict] | None = None
+) -> list[dict] | None:
     """Live, non-draft elements of a region plus those of regions an arrow links it to (one hop).
 
     A sketched flowchart with long arrows splits into one chunk per node joined by `links`, so
@@ -63,8 +65,9 @@ def get_sketch_elements(conn: sqlite3.Connection, region_id: str) -> list[dict] 
         linked = get_region(conn, other)
         if linked is not None and linked["status"] == "active":
             ids += linked["element_ids"]
-    _, elements_json = get_scene(conn, region["document_id"])
-    by_id = {e["id"]: e for e in json.loads(elements_json)}
+    if by_id is None:  # a caller reading many regions passes the scene map once
+        _, elements_json = get_scene(conn, region["document_id"])
+        by_id = {e["id"]: e for e in json.loads(elements_json)}
     out, seen = [], set()
     for i in ids:
         e = by_id.get(i)
