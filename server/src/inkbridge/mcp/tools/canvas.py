@@ -47,6 +47,8 @@ def search(
 READ_CANVAS_MAX_CHARS = 60_000
 MAX_READING_CHARS = 4_000  # per chunk; a longer reading is cut and flagged
 MAX_LINKS = 20  # per chunk; the rest are counted in links_omitted
+MAX_GROUPS = 20  # top-level groups shown; the rest are counted in groups_omitted
+MAX_GROUP_IDS = 20  # chunk ids per group; the rest are counted in omitted_ids
 _OUTLINE_FIELDS = (
     "id",
     "order",
@@ -59,10 +61,26 @@ _OUTLINE_FIELDS = (
     "content_hash",
     "text_hash",
     "links",
+    "group_id",
     "deep_link",
     "read_status",
     "read_note",
 )
+
+
+def _groups(data: dict) -> dict:
+    gs = data.get("groups") or []
+    shown = []
+    for g in gs[:MAX_GROUPS]:
+        ids = g["chunk_ids"]
+        item = {"id": g["id"], "chunk_ids": ids[:MAX_GROUP_IDS]}
+        if len(ids) > MAX_GROUP_IDS:
+            item["omitted_ids"] = len(ids) - MAX_GROUP_IDS
+        shown.append(item)
+    out = {"groups": shown}
+    if len(gs) > MAX_GROUPS:
+        out["groups_omitted"] = len(gs) - MAX_GROUPS
+    return out
 
 
 def _outline_chunk(c: dict) -> dict:
@@ -131,7 +149,11 @@ def read_canvas(
 
     Each chunk has order, kind, bounds, its reading (text, latex), status, png_stale, content_hash,
     text_hash (the reading's hash, what a vault note stores as `reading`),
-    arrow links to other chunks (at most 20 each, the rest counted in links_omitted) and a deep_link that opens it in the web app. text is null when the
+    arrow links to other chunks as {to, kind, label, confidence} (at most 20 each, the rest counted
+    in links_omitted), group_id, and a deep_link that opens it in the web app.
+    groups lists the connected components of 2 or more chunks joined by arrows (largest first,
+    at most 20 groups of 20 chunk ids; groups_omitted and omitted_ids count the rest). A chunk
+    with group_id null stands on its own. groups repeats on every page, so a continued read keeps it. text is null when the
     chunk has not been read yet: call get_region with its id to look at its image instead. A very
     large canvas is cut at a size cap; the reply then says how many chunks were omitted and which
     offset continues it.
@@ -147,7 +169,7 @@ def read_canvas(
         data = client.get_chunks(document_id)
     except ApiError as e:
         raise ToolError(str(e)) from e
-    head = {k: data[k] for k in ("document", "version", "chunk_count")}
+    head = {**{k: data[k] for k in ("document", "version", "chunk_count")}, **_groups(data)}
     try:
         head["brief"] = client.get_brief(document_id)["brief"]
     except ApiError as e:
