@@ -77,6 +77,20 @@ def test_components_sorted_and_capped():
     assert len(r["components"][0]["chunk_ids"]) == 2 and r["components"][0]["omitted_ids"] == 1
 
 
+def test_groups_two_hubs():
+    g = graph.build(
+        [
+            ch("h1", ["s1", "s2", "o"], order=1), ch("s1", order=2), ch("s2", order=3),
+            ch("h2", ["s3"], order=4), ch("s3", order=5), ch("x", order=6),
+            ch("o", status="orphaned", order=7),
+        ]
+    )  # fmt: skip
+    assert graph.groups(g) == [
+        {"id": "h1", "chunk_ids": ["h1", "s1", "s2"]},
+        {"id": "h2", "chunk_ids": ["h2", "s3"]},
+    ]  # x stands alone; the orphan o does not join h1
+
+
 def test_mermaid_is_a_flowchart_and_sanitised():
     nodes = [
         {"id": "aaa", "kind": "handwriting", "text": 'say "hi"] <script>\nx' + "y" * 100},
