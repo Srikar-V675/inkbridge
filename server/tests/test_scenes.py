@@ -19,13 +19,13 @@ FREEDRAW = {
 def test_new_document_has_empty_scene_at_version_zero(client):
     r = client.get(SCENE)
     assert r.status_code == 200
-    assert r.json() == {"version": 0, "elements": []}
+    assert r.json() == {"seq": 0, "version": 0, "elements": []}
 
 
 def test_put_then_get_round_trips_and_bumps_version(client):
     r = client.put(SCENE, json={"base_version": 0, "elements": [FREEDRAW]})
     assert r.status_code == 200 and r.json()["version"] == 1
-    assert client.get(SCENE).json() == {"version": 1, "elements": [FREEDRAW]}
+    assert client.get(SCENE).json() == {"seq": 1, "version": 1, "elements": [FREEDRAW]}
 
 
 def test_pressures_and_custom_data_survive_exactly(client):
@@ -75,7 +75,7 @@ def test_invalid_body_is_422(client):
 def test_malformed_geometry_is_422_and_leaves_scene_alone(client, bad):
     r = client.put(SCENE, json={"base_version": 0, "elements": [bad]})
     assert r.status_code == 422
-    assert client.get(SCENE).json() == {"version": 0, "elements": []}
+    assert client.get(SCENE).json() == {"seq": 0, "version": 0, "elements": []}
 
 
 def test_nan_and_infinity_are_rejected(client):
@@ -114,7 +114,8 @@ def test_delta_keeps_deleted_flag_and_never_drops_untouched_ink(client):
     client.put(SCENE, json={"base_version": 0, "elements": [ink, _el("b")]})
     gone = _el("b", version=2, isDeleted=True)
     client.put(SCENE, json={"base_version": 1, "elements": [gone], "delta": True})
-    assert client.get(SCENE).json()["elements"] == [ink, gone]
+    assert client.get(SCENE).json()["elements"] == [ink]  # the load leaves deleted ones out
+    assert client.get(SCENE, params={"deleted": "true"}).json()["elements"] == [ink, gone]
 
 
 def test_delta_on_stale_base_version_is_a_conflict_and_changes_nothing(client):

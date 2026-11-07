@@ -54,7 +54,7 @@ def test_create_canvas_then_write_into_it_from_the_origin_down(mcp_client):
     out = call("create_canvas", title="Backpropagation")
     doc = out["document_id"]
     assert out["url"].endswith(f"/?canvas={doc}")
-    assert mcp_client.get(f"/documents/{doc}/scene").json() == {"version": 0, "elements": []}
+    assert mcp_client.get(f"/documents/{doc}/scene").json() == {"seq": 0, "version": 0, "elements": []}
     first = call("write_text", text="Chain rule", document_id=doc)
     second = call("write_text", text="Gradients flow backwards", document_id=doc)
     assert first["placement"] == {"x": 0, "y": 0}

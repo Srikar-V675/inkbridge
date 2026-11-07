@@ -22,7 +22,7 @@ def test_oversized_scene_is_413_and_not_stored(client, small_caps):
     r = client.put(SCENE, json=big_scene())
     assert r.status_code == 413
     assert "too large" in r.json()["detail"]
-    assert client.get(SCENE).json() == {"version": 0, "elements": []}
+    assert client.get(SCENE).json() == {"seq": 0, "version": 0, "elements": []}
 
 
 def test_oversized_chunked_scene_without_content_length_is_413(client, small_caps):

@@ -7,7 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
@@ -159,19 +159,40 @@ def health() -> dict[str, str]:
 
 
 @app.get("/documents/{document_id}/scene")
-def get_scene(document_id: str, conn: Conn) -> Response:
+def get_scene(document_id: str, conn: Conn, deleted: bool = False) -> Response:
+    """The live elements (INK-110); `?deleted=true` adds deleted ones, for the 409 reload."""
+    t0 = time.perf_counter()
     try:
-        version, elements_json = db.get_scene(conn, document_id)
+        seq, array, count = db.get_live_scene(conn, document_id, include_deleted=deleted)
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
-    # The stored text goes out as is: no decode/encode round trip (INK-080).
-    return Response(
-        f'{{"version":{version},"elements":{elements_json}}}', media_type="application/json"
+    # The stored row text goes out as is: no decode/encode round trip (INK-080).
+    # `version` is an alias of `seq` until the web client moves to `seq` (INK-111).
+    body = f'{{"seq":{seq},"version":{seq},"elements":{array}}}'
+    _scene_log.info(
+        "scene GET doc=%s seq=%d elements=%d bytes=%d ms=%.1f",
+        document_id,
+        seq,
+        count,
+        len(body.encode()),
+        (time.perf_counter() - t0) * 1000,
     )
+    return Response(body, media_type="application/json")
+
+
+@app.get("/documents/{document_id}/elements")
+def get_elements(document_id: str, conn: Conn, since: Annotated[int, Query(ge=0)]) -> Response:
+    """Every element row written after `since`, deleted rows and tombstone stubs included."""
+    try:
+        seq, array, _ = db.scene_changes(conn, document_id, since)
+    except db.DocumentNotFound:
+        raise HTTPException(404, "document not found") from None
+    return Response(f'{{"seq":{seq},"elements":{array}}}', media_type="application/json")
 
 
 _last_writer: dict[str, tuple[str, str]] = {}  # document -> (tab, ip) of the last save (INK-083)
 _log = logging.getLogger("inkbridge.request")
+_scene_log = logging.getLogger("inkbridge.scene")
 
 
 @app.put("/documents/{document_id}/scene")

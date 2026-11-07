@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from inkbridge import db
+
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "eval" / "fixtures"))
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -22,6 +24,8 @@ import load_fixture
 import make_real_scale
 import replay_fixture
 import snapshot_canvas
+
+ALL = {"deleted": "true"}  # the scene GET leaves deleted elements out unless asked (INK-110)
 
 
 def live(els):
@@ -166,7 +170,7 @@ def test_load_fixture_seeds_document(client):
     make_canvas("fixture-real")
     els = make_real_scale.build()
     version = load_fixture.load(client, "fixture-real")
-    scene = client.get("/documents/fixture-real/scene").json()
+    scene = client.get("/documents/fixture-real/scene", params=ALL).json()
     assert version == scene["version"] == 1
     assert sorted(e["id"] for e in scene["elements"]) == sorted(e["id"] for e in els)
     assert len(scene["elements"]) == len(els)
@@ -176,7 +180,7 @@ def test_load_fixture_is_idempotent(client):
     make_canvas("fixture-real")
     first = load_fixture.load(client, "fixture-real")
     second = load_fixture.load(client, "fixture-real")
-    scene = client.get("/documents/fixture-real/scene").json()
+    scene = client.get("/documents/fixture-real/scene", params=ALL).json()
     assert second == first + 1 == scene["version"]
     assert len(scene["elements"]) == len(make_real_scale.build())
 
@@ -199,7 +203,7 @@ def test_load_fixture_cli_loads_existing_canvas(client, capsys):
         == 0
     )
     assert "?canvas=fixture-real" in capsys.readouterr().out
-    assert len(client.get("/documents/fixture-real/scene").json()["elements"]) == len(
+    assert len(client.get("/documents/fixture-real/scene", params=ALL).json()["elements"]) == len(
         make_real_scale.build()
     )
 
@@ -212,7 +216,7 @@ def test_load_fixture_cli_creates_missing_canvas(client, capsys):
     out = capsys.readouterr().out
     assert "created" in out and "?canvas=" in out
     (doc,) = [d for d in client.get("/documents").json() if d["title"] == "fixture-real"]
-    assert len(client.get(f"/documents/{doc['id']}/scene").json()["elements"]) == len(
+    assert len(client.get(f"/documents/{doc['id']}/scene", params=ALL).json()["elements"]) == len(
         make_real_scale.build()
     )
 
@@ -275,6 +279,27 @@ def test_snapshot_writes_private_copy_read_only(tmp_path):
     assert json.loads(written.read_text()) == {"version": 3, "elements": scene["elements"]}
     assert oct(out.stat().st_mode & 0o777) == "0o700"
     assert oct(written.stat().st_mode & 0o777) == "0o600"
+
+
+def test_snapshot_reads_element_rows_after_migration_0008(tmp_path):
+    from tests.scene_rows import set_scene
+
+    conn = db.connect(tmp_path / "src.db")
+    db.migrate(conn)
+    db.ensure_default_document(conn)
+    els = make_real_scale.build()[:5]
+    set_scene(conn, "default", els, version=4)
+    conn.execute("UPDATE scenes SET elements_json = '[]'")  # the retired blob must not be read
+    stub = json.dumps({"id": els[0]["id"], "isDeleted": True})
+    conn.execute("UPDATE scene_elements SET json = ? WHERE id = ?", (stub, els[0]["id"]))
+    conn.commit()
+    conn.close()
+    out = tmp_path / "private"
+    assert (
+        snapshot_canvas.main(["default", "--db", str(tmp_path / "src.db"), "--out", str(out)]) == 0
+    )
+    (written,) = list(out.glob("default-*.scene.json"))
+    assert json.loads(written.read_text()) == {"version": 4, "elements": els[1:]}
 
 
 def test_snapshot_stats_flag_prints_numbers_only(tmp_path, capsys):

@@ -16,6 +16,7 @@ log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never M
 
 from inkbridge.db.common import connect
 from inkbridge.db.documents import ensure_default_document
+from inkbridge.db.elements import _int, row_json
 from inkbridge.db.recognitions import _reindex_region
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
@@ -61,16 +62,59 @@ def _migrate_locked(conn: sqlite3.Connection) -> list[int]:
             continue
         _apply_migration(conn, version, f.read_text())
         applied.append(version)
+    if 8 in applied:
+        _backfill_scene_rows(conn)  # before the version-4 heals, which read the rows
     # Version 4 needs a data backfill. Checking for unfilled rows (rather than "4 was just
     # applied") also heals a database whose backfill was interrupted before this lock existed.
     if (
         4 in done | set(applied)
         and conn.execute("SELECT 1 FROM regions WHERE content_hash IS NULL LIMIT 1").fetchone()
     ):
-        _backfill_v2(conn)
+        _backfill_v2(conn, rows=8 in done | set(applied))
     if 4 in done | set(applied):
-        _rekey_integral_hashes(conn)  # under the migration lock, committed with it
+        _rekey_integral_hashes(conn, rows=8 in done | set(applied))  # under the migration lock, committed with it
     return applied
+
+
+def _backfill_scene_rows(conn: sqlite3.Connection) -> None:
+    """Migration 0008: one row per element of every stored scene, array order kept as `pos`."""
+    for scene in conn.execute(
+        "SELECT document_id, version, elements_json, updated_at FROM scenes"
+    ).fetchall():
+        slots: dict[str, tuple[int, dict]] = {}  # a duplicate id keeps the last element, first slot
+        for pos, element in enumerate(json.loads(scene["elements_json"])):
+            slots[element["id"]] = (slots[element["id"]][0] if element["id"] in slots else pos, element)
+        for element_id, (pos, element) in slots.items():
+            conn.execute(
+                "INSERT INTO scene_elements"
+                " (document_id, id, pos, seq, version, nonce, is_deleted, json, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    scene["document_id"],
+                    element_id,
+                    pos,
+                    scene["version"],
+                    _int(element.get("version")),
+                    _int(element.get("versionNonce")),
+                    int(bool(element.get("isDeleted"))),
+                    row_json(element),
+                    scene["updated_at"],
+                ),
+            )
+
+
+def _scene_by_id(conn: sqlite3.Connection, document_id: str, rows: bool) -> dict[str, dict]:
+    """A canvas's elements by id: from the rows once migration 0008 exists, else from the blob."""
+    if rows:
+        found = conn.execute(
+            "SELECT json FROM scene_elements WHERE document_id = ? ORDER BY pos", (document_id,)
+        ).fetchall()
+        elements = (json.loads(r["json"]) for r in found)
+        return {e["id"]: e for e in elements if "type" in e or not e.get("isDeleted")}  # not stubs
+    row = conn.execute(
+        "SELECT elements_json FROM scenes WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    return {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
 
 
 def _apply_migration(conn: sqlite3.Connection, version: int, sql: str) -> None:
@@ -94,7 +138,7 @@ def _statements(sql: str) -> list[str]:
     return out
 
 
-def _backfill_v2(conn: sqlite3.Connection) -> None:
+def _backfill_v2(conn: sqlite3.Connection, rows: bool = False) -> None:
     """After migration 0004: fill content_hash, re-key current readings, add text_hash.
 
     Old readings were keyed by stroke_hash. A reading whose key equals its region's current
@@ -105,10 +149,7 @@ def _backfill_v2(conn: sqlite3.Connection) -> None:
     for region in conn.execute("SELECT * FROM regions").fetchall():
         doc = region["document_id"]
         if doc not in scenes:
-            row = conn.execute(
-                "SELECT elements_json FROM scenes WHERE document_id = ?", (doc,)
-            ).fetchone()
-            scenes[doc] = {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
+            scenes[doc] = _scene_by_id(conn, doc, rows)
         by_id = scenes[doc]
         present = [by_id[i] for i in json.loads(region["element_ids_json"]) if i in by_id]
         new_hash = content_hash(present)
@@ -126,7 +167,7 @@ def _backfill_v2(conn: sqlite3.Connection) -> None:
         _reindex_region(conn, region["id"])
 
 
-def _rekey_integral_hashes(conn: sqlite3.Connection) -> None:
+def _rekey_integral_hashes(conn: sqlite3.Connection, rows: bool = False) -> None:
     """Move rows hashed before content_hash wrote integral floats as ints to the new key.
 
     Runs inside migrate()'s transaction on every start. Idempotent: a region is only touched when
@@ -140,10 +181,7 @@ def _rekey_integral_hashes(conn: sqlite3.Connection) -> None:
     ):
         doc = region["document_id"]
         if doc not in scenes:
-            row = conn.execute(
-                "SELECT elements_json FROM scenes WHERE document_id = ?", (doc,)
-            ).fetchone()
-            scenes[doc] = {e["id"]: e for e in json.loads(row["elements_json"])} if row else {}
+            scenes[doc] = _scene_by_id(conn, doc, rows)
         present = [
             scenes[doc][i] for i in json.loads(region["element_ids_json"]) if i in scenes[doc]
         ]
