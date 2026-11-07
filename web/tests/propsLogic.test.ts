@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   applyFlag, applyStyle, applyText, LINE_HEIGHT, controlsFor, elementPatch, FONTS, fitText, layerKey, ORDER, palette, PALETTE_TOKENS,
-  PATCH_KEYS, restyle, SIZES, sourceFor, stateValue, statePatch, title, typeOf, unlockAll, valueOf,
+  PATCH_KEYS, restyle, SIZES, sourceFor, cardTool, OPEN_DEFAULT, stateValue, statePatch, title, typeOf, unlockAll, valueOf,
   type ControlId, type StyleEl,
 } from "../src/app/props/propsLogic.ts";
 import { parseTokenCss, resolveVar } from "../src/ui/tokenTable.ts";
@@ -157,12 +157,23 @@ describe("fitText", () => {
 describe("sourceFor", () => {
   const tool = (type: string) => ({ activeTool: { type } });
   it("decides when the card shows", () => {
-    assert.equal(sourceFor(tool("freedraw"), []).source, null);
+    assert.deepEqual(sourceFor(tool("freedraw"), []), { source: "tool", types: ["freedraw"] });
+    for (const t of ["freedraw", "rectangle", "text"]) assert.equal(sourceFor(tool(t), [], false).source, null);
+    assert.equal(sourceFor(tool("freedraw"), [el("b", "ellipse")], false).source, "selection");
     assert.deepEqual(sourceFor(tool("rectangle"), []), { source: "tool", types: ["rectangle"] });
     assert.equal(sourceFor(tool("rectangle"), [el("a", "text", { customData: { draft: true } }), el("b", "rectangle")]).source, null);
     assert.equal(sourceFor(tool("rectangle"), [el("b", "ellipse")]).source, "selection");
     for (const t of ["eraser", "hand", "laser", "selection"]) assert.equal(sourceFor(tool(t), []).source, null);
     assert.deepEqual(sourceFor(tool("selection"), [el("a", "text"), el("b", "text")]).types, ["text"]);
+  });
+  it("cardTool and open defaults", () => {
+    const t = (type: string, k: "pen" | "highlighter" = "pen") => cardTool(tool(type), k);
+    assert.equal(t("freedraw", "highlighter"), "highlighter");
+    assert.equal(t("freedraw"), "pen");
+    for (const s of ["rectangle", "diamond", "ellipse", "arrow", "line"]) assert.equal(t(s), "shapes");
+    assert.equal(t("text"), "text");
+    for (const s of ["eraser", "selection", "hand"]) assert.equal(t(s), null);
+    assert.deepEqual(OPEN_DEFAULT, { pen: false, highlighter: false, shapes: true, text: true });
   });
   it("titles", () => {
     assert.equal(title("tool", ["rectangle"], 0), "Rectangle tool");

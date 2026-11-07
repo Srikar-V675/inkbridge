@@ -104,6 +104,7 @@ describe("rail tools", () => {
   it("reads pen and highlighter from the opacity", () => {
     assert.equal(railTool({ activeTool: { type: "freedraw" }, currentItemOpacity: 100 }), "pen");
     assert.equal(railTool({ activeTool: { type: "freedraw" }, currentItemOpacity: 35 }), "highlighter");
+    assert.equal(railTool({ activeTool: { type: "freedraw" }, currentItemOpacity: 50 }, "pen"), "pen");
     assert.equal(railTool({ activeTool: { type: "selection" }, currentItemOpacity: 100 }), "select");
     assert.equal(railTool({ activeTool: { type: "eraser" }, currentItemOpacity: 100 }), "eraser");
     assert.equal(railTool({ activeTool: { type: "text" }, currentItemOpacity: 100 }), "text");
@@ -113,7 +114,7 @@ describe("rail tools", () => {
   it("select is the selection tool (no lasso in Excalidraw 0.18)", () => {
     assert.deepEqual(toolTap("select", "freedraw").tool, { type: "selection" });
   });
-  it("shapes are the flyout order", () => {
+  it("shapes are the picker order", () => {
     assert.deepEqual([...SHAPES], ["rectangle", "diamond", "ellipse", "arrow", "line"]);
   });
   it("the shapes button picks the last chosen shape, solid, and keeps a shape already active", () => {
