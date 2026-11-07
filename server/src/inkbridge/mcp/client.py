@@ -143,6 +143,10 @@ class ApiClient:
         params = {"q": query, "limit": limit, "document_id": document_id or self.default_document}
         return self._json(self._get("/search", params))
 
+    def retrieve(self, query: str, scope: str, k: int, document_id: str | None = None) -> dict:
+        params = {"q": query, "scope": scope, "k": k, "document_id": document_id or self.default_document}
+        return self._json(self._get("/retrieve", params, not_found=NO_CANVAS))
+
     def get_chunks(self, document_id: str | None) -> dict:
         path = f"/documents/{self._document(document_id)}/chunks"
         return self._json(self._get(path, not_found=NO_CANVAS))
