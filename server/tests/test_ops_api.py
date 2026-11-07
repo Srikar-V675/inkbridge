@@ -6,9 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from inkbridge import db
-from inkbridge.agent.placement import estimate_size, gap_for, overlaps
+from inkbridge.agent.placement import estimate_size, gap_for, margin_for, overlaps
 from inkbridge.api import app
-from inkbridge.canvas.chunker import proximity_threshold
 from inkbridge.canvas.hashes import bbox_of
 from inkbridge.db import ops as ops_db
 
@@ -263,9 +262,7 @@ def test_anchored_op_goes_right_of_the_chunk(client):
     op = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": rid}})
     assert op.status_code == 201
     box = bbox_of([USER_A])
-    gap = max(
-        gap_for(op.json()["payload"]["font_size"]), 1.05 * proximity_threshold([USER_A, USER_B])
-    )
+    gap = gap_for(op.json()["payload"]["font_size"])
     assert op.json()["payload"]["placement"] == {"x": box["x"] + box["width"] + gap, "y": box["y"]}
 
 
@@ -320,7 +317,7 @@ def test_anchored_diagram_is_placed_beside_the_chunk_when_there_is_room(client):
     payload = {"mermaid": "flowchart TD\nA-->B", "anchor": rid}
     op = client.post(OPS, json={"type": "draw_diagram", "payload": payload}).json()
     box = bbox_of([USER_A])
-    gap = max(gap_for(op["payload"]["font_size"]), 1.05 * proximity_threshold([USER_A]))
+    gap = gap_for(op["payload"]["font_size"])
     assert op["payload"]["placement"] == {"x": box["x"] + box["width"] + gap, "y": box["y"]}
 
 
@@ -557,9 +554,7 @@ def test_orphaned_anchor_resolves_to_successor(client):
     assert op.status_code == 201
     box = bbox_of([USER_B])
     assert op.json()["payload"]["anchor_resolved"] == b
-    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + _clear_gap(
-        op.json(), [USER_A, USER_B]
-    )
+    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(op.json()["payload"]["font_size"])
 
 
 @pytest.mark.fts_unchecked
@@ -599,9 +594,7 @@ def test_chain_of_two_orphans_reaches_live(client, kind):
     assert r.status_code == 201, r.text
     assert r.json()["payload"]["anchor_resolved"] == c
     box = bbox_of([USER_B])
-    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + _clear_gap(
-        r.json(), [USER_A, USER_B]
-    )
+    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(r.json()["payload"]["font_size"])
 
 
 @pytest.mark.parametrize("kind", ["write_text", "draw_diagram"])
@@ -642,10 +635,6 @@ def _write_at(client, text, anchor):
     return r.json()
 
 
-def _clear_gap(op, scene):
-    return max(gap_for(op["payload"]["font_size"]), 1.05 * proximity_threshold(scene))
-
-
 def _page(scale):
     return [stroke(f"u{i}", 0, 1000 * scale * i, w=30 * scale, h=40 * scale) for i in range(3)]
 
@@ -655,18 +644,13 @@ def _dist(a, b):
 
 
 @pytest.mark.parametrize("scale", [1, 10])
-def test_draft_is_farther_than_chunker_threshold_from_every_chunk(client, scale):
+def test_draft_keeps_only_the_plain_margin(client, scale):
     page = _page(scale)
     seed(client, page)
-    threshold = proximity_threshold(page)
-    assert threshold == 1.5 * 40 * scale
     op = _write_at(client, "x", _anchor_region(["u0"]))
     box = _op_box(op, estimate_size("write_text", op["payload"]))
-    for e in page:
-        b = bbox_of([e])
-        dx = max(b["x"] - (box["x"] + box["width"]), box["x"] - (b["x"] + b["width"]), 0)
-        dy = max(b["y"] - (box["y"] + box["height"]), box["y"] - (b["y"] + b["height"]), 0)
-        assert (dx**2 + dy**2) ** 0.5 > threshold
+    margin = margin_for(op["payload"]["font_size"])
+    assert not any(overlaps(box, bbox_of([e]), margin) for e in page)
 
 
 @pytest.mark.parametrize("anchored", [False, True])
@@ -680,7 +664,7 @@ def test_five_ops_form_a_tight_column(client, scale, anchored):
         op = _write_at(client, f"note {i}", anchor)
         spots.append(op["payload"]["placement"])
         est_h = estimate_size("write_text", op["payload"])[1]
-        gap = max(gap_for(op["payload"]["font_size"]), 1.05 * proximity_threshold(page))
+        gap = gap_for(op["payload"]["font_size"])
     bound = 5 * (est_h + 2 * gap)
     assert max(_dist(a, b) for a in spots for b in spots) <= bound
 
@@ -784,3 +768,65 @@ def test_too_many_open_is_informative(client, monkeypatch):
     assert detail["since"] == first["created_at"]
     assert "since" in detail["msg"] and first["created_at"] in detail["msg"]
     assert "24 h" in detail["msg"]
+
+
+# --- INK-116: font from line pitch, wrap from the view, placement search ---------------------
+
+
+@pytest.fixture
+def seen():
+    from inkbridge.agent.attention import attention
+
+    yield attention
+    attention.forget("default")
+
+
+def _lines(n_lines, per_line, h, pitch):
+    return [
+        stroke(f"l{i}-{j}", 30 * j, pitch * i, w=20, h=h)
+        for i in range(n_lines)
+        for j in range(per_line)
+    ]
+
+
+def test_font_is_about_line_height_of_the_anchor(client):
+    from inkbridge.agent.placement import LINE_FACTOR
+
+    page = _lines(3, 3, 50, 100)
+    seed(client, page)
+    op = _write_at(client, "x", _anchor_region([e["id"] for e in page]))
+    assert op["payload"]["font_size"] == round(100 * LINE_FACTOR)
+
+
+def test_wrap_chars_follows_the_view(client, seen):
+    from inkbridge.agent.placement import WRAP_MAX, wrap_for
+
+    seed(client)
+    assert write(client).json()["payload"]["wrap_chars"] == WRAP_MAX
+    view = {"x": 0, "y": 0, "width": 400, "height": 300, "zoom": 1}
+    seen.update("default", False, view)
+    p = write(client).json()["payload"]
+    assert p["wrap_chars"] == wrap_for(p["font_size"], view) < WRAP_MAX
+
+
+def test_view_hint_only_ranks_free_spots(client, seen):
+    seed(client)
+    seen.update("default", False, {"x": 0, "y": 0, "width": 500, "height": 500, "zoom": 1})
+    op = write(client).json()
+    box = _op_box(op, estimate_size("write_text", op["payload"]))
+    assert not any(overlaps(box, bbox_of([e])) for e in (USER_A, USER_B))
+
+
+def test_agent_font_within_band_on_real_scale_page(client):
+    # INK-095 numbers: stroke height 250, line pitch 420, 10 strokes per line
+    page = _lines(3, 10, 250, 420)
+    seed(client, page)
+    anchor = _anchor_region([e["id"] for e in page])
+    first = _write_at(client, "x", anchor)
+    fs = first["payload"]["font_size"]
+    assert 0.7 <= fs / 250 <= 1.3
+    box = bbox_of(page)
+    gap = gap_for(fs)
+    spot = first["payload"]["placement"]
+    assert spot["x"] <= box["x"] + box["width"] + 6 * gap and spot["y"] <= box["y"] + box["height"] + 6 * gap
+

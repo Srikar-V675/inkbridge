@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from inkbridge.agent import placement
-from inkbridge.canvas.chunker import proximity_threshold
+from inkbridge.agent.attention import attention
 from inkbridge.canvas.hashes import bbox_of
 from inkbridge.db.common import DocumentNotFound, _now
 from inkbridge.db.documents import document_exists, get_scene
@@ -171,8 +171,8 @@ def _expire_stale(conn: sqlite3.Connection, document_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[float]:
-    """Heights of the user's live freedraw strokes (drafts and agent ink never count)."""
+def _stroke_rows(elements: list[dict], anchor_ids: set[str] | None) -> list[tuple[float, float]]:
+    """(centre y, height) of the user's live freedraw strokes (drafts and agent ink never count)."""
     out = []
     for e in elements:
         if e.get("type") != "freedraw" or e.get("isDeleted") or not e.get("points"):
@@ -183,18 +183,18 @@ def _stroke_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[f
         if anchor_ids is not None and e["id"] not in anchor_ids:
             continue
         ys = [p[1] for p in e["points"]]
-        out.append(max(ys) - min(ys))
+        out.append((e.get("y", 0) + (max(ys) + min(ys)) / 2, max(ys) - min(ys)))
     return out
 
 
 LATEST_STROKES = 50  # scale sample when the anchor has too few strokes
 
 
-def _sample_heights(elements: list[dict], anchor_ids: set[str] | None) -> list[float]:
-    heights = _stroke_heights(elements, anchor_ids) if anchor_ids else []
-    if len(heights) < placement.MIN_SAMPLES:
-        heights = _stroke_heights(elements, None)[-LATEST_STROKES:]  # scene order = write order
-    return heights
+def _sample_rows(elements: list[dict], anchor_ids: set[str] | None) -> list[tuple[float, float]]:
+    rows = _stroke_rows(elements, anchor_ids) if anchor_ids else []
+    if len(rows) < placement.MIN_SAMPLES:
+        rows = _stroke_rows(elements, None)[-LATEST_STROKES:]  # scene order = write order
+    return rows
 
 
 def _resolve_anchor(conn, document_id, region_id):
@@ -294,8 +294,10 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
         anchor = json.loads(region["bbox"])
         anchor_ids = set(json.loads(region["element_ids_json"] or "[]"))
 
-    fs = placement.font_size_for(_sample_heights(elements, anchor_ids), payload.get("size"))
-    payload = {**payload, "font_size": fs, "wrap_chars": placement.WRAP_CHARS}
+    rows = _sample_rows(elements, anchor_ids)
+    fs = placement.font_size_for([h for _, h in rows], payload.get("size"), placement.line_pitch(rows))
+    live_view = attention.view(document_id)
+    payload = {**payload, "font_size": fs, "wrap_chars": placement.wrap_for(fs, live_view)}
 
     occupied = [
         placement.rotated_box(bbox_of([e]), e.get("angle") or 0)
@@ -304,9 +306,14 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
     ]
     extra, recent = reserved_boxes(conn, document_id)
     occupied += extra
-    clear = proximity_threshold(elements)
     spot = placement.place(
-        occupied, placement.estimate_size(op_type, payload), anchor, fs, clear, recent
+        occupied,
+        placement.estimate_size(op_type, payload),
+        anchor,
+        fs,
+        recent,
+        placement.view_rect(live_view),
+        placement.connectors_of(elements),
     )
 
     conn.execute(

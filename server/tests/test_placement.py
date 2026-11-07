@@ -5,15 +5,21 @@ import pytest
 from inkbridge.agent.placement import (
     DEFAULT_FONT,
     GAP,
+    INK_TO_FONT,
+    LINE_FACTOR,
     MAX_FONT,
     MIN_FONT,
     Box,
+    connectors_of,
     estimate_size,
     font_size_for,
     gap_for,
+    line_pitch,
     margin_for,
     overlaps,
     place,
+    view_rect,
+    wrap_for,
 )
 from inkbridge.canvas.chunker import proximity_threshold
 
@@ -46,10 +52,77 @@ def test_with_anchor_goes_below_it_when_the_right_is_taken():
     assert place([anchor, right], (200, 50), anchor) == {"x": 0, "y": 40 + GAP}
 
 
-def test_with_anchor_falls_back_below_everything_when_both_sides_are_taken():
+def test_ring_order_east_first():
     anchor = _box(0, 0, 100, 40)
-    occupied = [anchor, _box(150, 0, 100, 100), _box(0, 60, 100, 100)]
-    assert place(occupied, (200, 50), anchor) == {"x": 0, "y": 160 + GAP}
+    assert place([anchor], (200, 50), anchor, 20) == {"x": 100 + gap_for(20), "y": 0}
+
+
+def test_no_below_everything_fallback_when_space_exists():
+    anchor = _box(0, 0, 100, 40)
+    occupied = [anchor, _box(150, 0, 100, 100), _box(0, 60, 100, 100), _box(0, 5000, 10, 10)]
+    p = place(occupied, (200, 50), anchor)
+    assert p["y"] < 1000 and abs(p["x"]) < 6 * GAP + 200 and p["y"] < 6 * GAP + 200
+    assert not _hits(_box(p["x"], p["y"], 200, 50), occupied)
+
+
+def test_falls_back_below_everything_only_when_no_candidate():
+    anchor = _box(0, 0, 100, 40)
+    occupied = [anchor, _box(-5000, -5000, 10000, 10000)]
+    assert place(occupied, (200, 50), anchor) == {"x": -5000, "y": 5000 + GAP}
+
+
+def test_view_prefers_candidates_inside_view():
+    anchor = _box(0, 0, 100, 40)
+    occupied = [anchor, _box(140, -20, 300, 200), _box(-20, 60, 100, 100)]  # E and S blocked
+    n_view = _box(-400, -400, 800, 400)  # only the north side
+    assert place(occupied, (100, 40), anchor, 20, view=n_view)["y"] < 0
+    free = place(occupied, (100, 40), anchor, 20)
+    assert free["x"] < 0  # W wins on direction penalty alone (0.6 vs N 0.8)
+
+
+def test_connector_crossing_is_penalised():
+    anchor = _box(0, 0, 100, 40)
+    seg = ((100, 20), (500, 20))  # runs through the east slot
+    p = place([anchor], (100, 40), anchor, 20, connectors=[seg])
+    assert p == {"x": 0, "y": 40 + gap_for(20)}
+
+
+def test_ties_break_by_x_then_y_and_place_is_deterministic():
+    rng = random.Random(7)
+    for _ in range(50):
+        occ = [_box(rng.uniform(-300, 300), rng.uniform(-300, 300), rng.uniform(5, 150), rng.uniform(5, 90)) for _ in range(12)]
+        anchor = occ[0]
+        want = place(occ, (80, 30), anchor, 20)
+        for _ in range(2):
+            rng.shuffle(occ)
+            assert place(occ, (80, 30), anchor, 20) == want
+
+
+def test_line_pitch_and_font():
+    rows = [(0, 250), (0, 250), (400, 250), (800, 250)]
+    assert line_pitch(rows) == 400
+    assert line_pitch([(0, 250), (3, 250)]) is None
+    assert font_size_for([250] * 5, pitch=420) == round(LINE_FACTOR * 420)
+    assert font_size_for([250] * 5, pitch=None) == round(250 * INK_TO_FONT)
+    assert font_size_for([], pitch=-1) == DEFAULT_FONT
+
+
+def test_fixture_font_within_band():  # INK-095 numbers: stroke height 250, pitch 420
+    assert 0.7 <= font_size_for([250] * 10, pitch=420) / 250 <= 1.3
+
+
+def test_wrap_chars():
+    assert wrap_for(20, None) == 34
+    assert wrap_for(20, {"width": 400, "zoom": 1}) == 20
+    assert wrap_for(20, {"width": 4000, "zoom": 1}) == 34
+    assert wrap_for(200, {"width": 400, "zoom": 1}) == 8
+
+
+def test_view_rect_and_connectors():
+    assert view_rect(None) is None
+    assert view_rect({"x": 5, "y": 6, "width": 400, "height": 200, "zoom": 2}) == _box(5, 6, 200, 100)
+    arrow = {"type": "arrow", "x": 10, "y": 10, "points": [[0, 0], [5, 5], [9, 0]]}
+    assert connectors_of([arrow, {**arrow, "isDeleted": True}]) == [((10, 10), (15, 15)), ((15, 15), (19, 10))]
 
 
 def test_estimate_grows_with_text_lines_and_length():
@@ -75,7 +148,7 @@ def test_placement_never_overlaps_occupied_boxes():
         size = (rng.uniform(10, 600), rng.uniform(10, 400))
         anchor = rng.choice(occupied) if rng.random() < 0.7 else None
         recent = rng.choice(occupied) if rng.random() < 0.5 else None
-        p = place(occupied, size, anchor, clear=rng.choice([0, 0, 80]), recent=recent)
+        p = place(occupied, size, anchor, recent=recent)
         assert not _hits(_box(p["x"], p["y"], *size), occupied)
 
 
@@ -128,7 +201,7 @@ def test_estimate_uses_payload_font_size():
 
 
 def test_font_size_has_no_64_cap():
-    assert font_size_for([300.0] * 5) == 450 and font_size_for([300.0] * 5) > 64
+    assert font_size_for([300.0] * 5) == 300 and font_size_for([300.0] * 5) > 64
 
 
 def test_font_size_scales_linearly():
@@ -162,12 +235,6 @@ def test_proximity_threshold_is_k_times_median_of_live_non_draft_ink():
     assert proximity_threshold([]) == 0.0
 
 
-def test_clear_widens_gap_and_margin():
-    anchor = _box(0, 0, 100, 40)
-    assert place([anchor], (50, 20), anchor, fs=20, clear=300)["x"] >= 100 + 300
-    assert place([anchor], (50, 20), anchor, fs=20, clear=0)["x"] == 100 + gap_for(20)
-
-
 def test_second_op_stacks_below_recent_draft():
     anchor = _box(0, 0, 100, 40)
     d = _box(140, 0, 200, 50)
@@ -193,7 +260,7 @@ def test_consecutive_placements_stay_close(scale, anchored):
     recent, spots = None, []
     for _ in range(5):
         p = place(
-            occupied, size, anchor if anchored else None, fs, clear=1.5 * 40 * scale, recent=recent
+            occupied, size, anchor if anchored else None, fs, recent=recent
         )
         recent = _box(p["x"], p["y"], *size)
         occupied.append(recent)
