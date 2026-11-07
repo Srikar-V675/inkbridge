@@ -48,12 +48,16 @@ def test_read_canvas_returns_the_outline_then_the_overview_image(api):
     assert body["chunk_count"] == 2 and "omitted" not in body
     first, second = body["chunks"]
     assert first["id"] == a["id"] and first["order"] == 1 and first["text"] == "gradient descent"
-    assert first["links"] == [{"to": second["id"], "kind": "arrow"}]
+    assert first["links"] == [
+        {"to": second["id"], "kind": "arrow", "label": None, "confidence": None}
+    ]
+    assert first["group_id"] == second["group_id"] == first["id"]
+    assert body["groups"] == [{"id": first["id"], "chunk_ids": [first["id"], second["id"]]}]
     assert first["deep_link"].endswith(f"/?canvas=default&chunk={a['id']}")
     assert second["text"] is None  # not read yet: the description says to open it with get_region
     assert set(first) == {
         "id", "order", "kind", "bounds", "text", "latex", "status", "png_stale",
-        "content_hash", "text_hash", "links", "deep_link", "read_status", "read_note",
+        "content_hash", "text_hash", "links", "group_id", "deep_link", "read_status", "read_note",
     }  # fmt: skip
     image = result.content[1]
     assert image.type == "image" and image.mime_type == "image/png"
@@ -295,3 +299,28 @@ def test_a_too_large_chunk_says_so_and_no_image_is_fetched(api, monkeypatch):
     assert "split" in result.content[1].text
     ok = call("get_region", region_id=canvas.chunk_of("a0")["id"], include_image=False)
     assert json.loads(ok.content[0].text)["read_status"] == "ok"
+
+
+def test_read_canvas_groups_are_capped(client):
+    groups = [
+        {"id": f"g{i:02d}", "chunk_ids": [f"g{i:02d}_{j:02d}" for j in range(30)]}
+        for i in range(50)
+    ]
+
+    class WithGroups(FakeCanvas):
+        def get_chunks(self, document_id):
+            return {**super().get_chunks(document_id), "groups": groups}
+
+    server.set_client(WithGroups(client, [_chunk(0)]))
+    try:
+        result = call("read_canvas", include_overview=False)
+        text = result.content[0].text
+        assert len(text) <= canvas_tools.READ_CANVAS_MAX_CHARS
+        body = json.loads(text)
+        assert len(body["groups"]) == canvas_tools.MAX_GROUPS
+        assert body["groups_omitted"] == 50 - canvas_tools.MAX_GROUPS
+        for g in body["groups"]:
+            assert len(g["chunk_ids"]) == canvas_tools.MAX_GROUP_IDS
+            assert g["omitted_ids"] == 30 - canvas_tools.MAX_GROUP_IDS
+    finally:
+        server.set_client(None)
