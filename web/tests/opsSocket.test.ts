@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 import type { PendingOp } from "../src/drafts/drafts.ts";
 import { OpsSocket, type SocketLike } from "../src/sync/opsSocket.ts";
 
+type Measured = { elements: unknown[]; width: number; height: number };
+const measured = (id: string): Measured => ({ elements: [{ id: `${id}:1` }], width: 5, height: 6 });
+
 class FakeSocket implements SocketLike {
   sent: unknown[] = [];
   closed = false;
@@ -25,10 +28,10 @@ const pending = (id: string): PendingOp & { type: string } => ({
   type: "op.pending",
   op_id: id,
   op_type: "write_text",
-  payload: { text: "hi", placement: { x: 0, y: 0 }, id_prefix: `${id}:` },
+  payload: { text: "hi", id_prefix: `${id}:` },
 });
 
-function setup(onOp: (op: PendingOp) => Promise<string[]>) {
+function setup(onOp: (op: PendingOp) => Promise<Measured>) {
   const sockets: FakeSocket[] = [];
   const timers: Array<() => void> = [];
   const s = new OpsSocket({
@@ -46,11 +49,11 @@ function setup(onOp: (op: PendingOp) => Promise<string[]>) {
 }
 
 describe("OpsSocket", () => {
-  it("draws an op and acks the ids it drew", async () => {
-    const { s, sockets } = setup(async (op) => [`${op.op_id}:1`]);
+  it("measures an op and sends op.measured, never op.applied", async () => {
+    const { s, sockets } = setup(async (op) => measured(op.op_id));
     sockets[0].push(pending("a"));
     await s.idle();
-    assert.deepEqual(sockets[0].sent, [{ type: "op.applied", op_id: "a", element_ids: ["a:1"] }]);
+    assert.deepEqual(sockets[0].sent, [{ type: "op.measured", op_id: "a", elements: [{ id: "a:1" }], width: 5, height: 6 }]);
   });
 
   it("reports a drawing failure as op.failed", async () => {
@@ -70,7 +73,7 @@ describe("OpsSocket", () => {
       order.push(`start ${op.op_id}`);
       if (op.op_id === "a") await gate;
       order.push(`end ${op.op_id}`);
-      return [`${op.op_id}:1`];
+      return measured(op.op_id);
     });
     sockets[0].push(pending("a"));
     sockets[0].push(pending("a"));
@@ -83,7 +86,7 @@ describe("OpsSocket", () => {
   });
 
   it("keeps handling ops when an ack cannot be sent (socket still connecting)", async () => {
-    const { s, sockets } = setup(async (op) => [`${op.op_id}:1`]);
+    const { s, sockets } = setup(async (op) => measured(op.op_id));
     const first = sockets[0];
     first.send = () => {
       throw new Error("InvalidStateError: still in CONNECTING state");
@@ -94,11 +97,11 @@ describe("OpsSocket", () => {
     first.send = FakeSocket.prototype.send;
     first.push(pending("b"));
     await s.idle();
-    assert.deepEqual(first.sent, [{ type: "op.applied", op_id: "b", element_ids: ["b:1"] }]);
+    assert.deepEqual(first.sent, [{ type: "op.measured", op_id: "b", elements: [{ id: "b:1" }], width: 5, height: 6 }]);
   });
 
   it("reconnects after a drop and stops after dispose", () => {
-    const { s, sockets, timers } = setup(async () => []);
+    const { s, sockets, timers } = setup(async () => measured("x"));
     sockets[0].close();
     assert.equal(timers.length, 1);
     timers[0]();
@@ -112,7 +115,7 @@ describe("OpsSocket", () => {
     const got: unknown[] = [];
     const s = new OpsSocket({
       url: "x",
-      onOp: async () => [],
+      onOp: async () => measured("x"),
       onChunksUpdated: (m) => got.push(m),
       onOpUpdated: (m) => got.push(m),
       createSocket: () => (sock = new FakeSocket()),
@@ -125,12 +128,25 @@ describe("OpsSocket", () => {
     assert.equal(got.length, 2);
   });
 
+  it("passes op.placed to its hook", () => {
+    let sock!: FakeSocket;
+    const got: unknown[] = [];
+    new OpsSocket({
+      url: "x",
+      onOp: async () => measured("x"),
+      onOpPlaced: (m) => got.push(m.op_id),
+      createSocket: () => (sock = new FakeSocket()),
+    }).start();
+    sock.push({ type: "op.placed", op_id: "a", elements: [], placement: { x: 1, y: 2 }, anchor: null });
+    assert.deepEqual(got, ["a"]);
+  });
+
   it("passes question.update to its hook", () => {
     let sock!: FakeSocket;
     const got: unknown[] = [];
     new OpsSocket({
       url: "x",
-      onOp: async () => [],
+      onOp: async () => measured("x"),
       onQuestionUpdate: (m) => got.push(m),
       createSocket: () => (sock = new FakeSocket()),
     }).start();
@@ -143,7 +159,7 @@ describe("OpsSocket", () => {
     const got: unknown[] = [];
     new OpsSocket({
       url: "x",
-      onOp: async () => [],
+      onOp: async () => measured("x"),
       onSceneDelta: (m) => got.push(m),
       createSocket: () => (sock = new FakeSocket()),
     }).start();
@@ -156,7 +172,7 @@ describe("OpsSocket", () => {
     let sock!: FakeSocket;
     const s = new OpsSocket({
       url: "x",
-      onOp: async () => [],
+      onOp: async () => measured("x"),
       onConnection: (c) => got.push(c),
       createSocket: () => (sock = new FakeSocket()),
       setTimer: () => {},

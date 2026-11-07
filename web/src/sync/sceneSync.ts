@@ -3,6 +3,7 @@
 // then a sender ships the unacknowledged ones with overlapping requests. The server merges every save
 // element by element (decision 0080) and answers with the `newer` elements that beat ours (applyNewer).
 
+import { isDraftTagged } from "../drafts/drafts.ts";
 import type { LoadClock } from "./loadClock.ts";
 import { lastResource, netParts, record, serverParts } from "../lib/timing.ts";
 import { RISK_LABEL } from "../lib/status.ts";
@@ -112,6 +113,7 @@ export class SceneSync {
   private version = 0;
   private loadSeq = 0;
   private lastSig: Sig = EMPTY_SIG;
+  private rawSig: Sig = EMPTY_SIG; // the last unfiltered input, so an unchanged notify skips the draft scan
   private disposed = false;
   private loaded = false;
   /** The last load got a 404: no canvas has this id (a network error or a 5xx leaves it false). */
@@ -230,6 +232,7 @@ export class SceneSync {
 
   private adopt(elements: readonly SceneElement[]) {
     this.lastSig = sigOf(elements);
+    this.rawSig = EMPTY_SIG;
     this.journaled = versions(elements);
     this.latest ??= elements; // a remote delta before the first onChange still needs the whole scene
   }
@@ -255,6 +258,11 @@ export class SceneSync {
   notify(elements: readonly SceneElement[]): boolean {
     // Before the scene is loaded the canvas is not the saved scene: saving it would overwrite it.
     if (this.disposed || !this.loaded) return false;
+    // Unchanged input (the common case) skips the draft scan: its answer cannot differ.
+    if (sigMatches(this.rawSig, elements)) return false;
+    this.rawSig = sigOf(elements);
+    // Drafts live only in the placed-op list, never in the saved scene (INK-115). Soft-deleted ones too.
+    if (elements.some((e) => isDraftTagged(e))) elements = elements.filter((e) => !isDraftTagged(e));
     this.latest = elements;
     if (sigMatches(this.lastSig, elements)) return false;
     this.lastSig = sigOf(elements);
@@ -429,6 +437,7 @@ export class SceneSync {
     if (!shown || this.disposed) return;
     this.latest = merged;
     this.lastSig = sigOf(merged);
+    this.rawSig = EMPTY_SIG;
     this.o.onReload(merged);
   }
 }
