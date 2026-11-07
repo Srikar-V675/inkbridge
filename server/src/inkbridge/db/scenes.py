@@ -5,6 +5,7 @@ import logging
 import sqlite3
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -83,6 +84,8 @@ def merge_elements(
     chunker_config: ChunkerConfig | None = None,
     max_elements: int | None = None,
     timings: dict[str, float] | None = None,
+    guard: Callable[[sqlite3.Connection], None] | None = None,
+    finish: Callable[[sqlite3.Connection, int], None] | None = None,
 ) -> MergeResult:
     """Merge a batch of elements into the scene, one element at a time (INK-111, decision 0080).
 
@@ -96,6 +99,9 @@ def merge_elements(
     BEGIN IMMEDIATE takes the write lock first, so the compare and the write are one step; any
     error rolls the whole batch back. `timings` is filled with lock, work, commit and total in ms;
     the timer starts before the lock wait (INK-102).
+
+    `guard(conn)` runs right after the lock and head read and may fill `elements` in place (it is
+    iterated after); `finish(conn, head)` runs just before COMMIT (INK-114, drafts.py).
     """
     now = _now()
     recorded = False
@@ -114,6 +120,8 @@ def merge_elements(
         if head_row is None:
             raise DocumentNotFound(document_id)
         head = head_row["version"]
+        if guard is not None:
+            guard(conn)
         if key is not None and (document_id, key) in _applied:
             conn.rollback()  # a retry of a batch that already landed: replay its seq
             return MergeResult(_applied[(document_id, key)], [], 0, replay=True)
@@ -174,6 +182,8 @@ def merge_elements(
             recorded = True
             while len(_applied) > APPLIED_CAP:
                 _applied.popitem(last=False)
+        if finish is not None:
+            finish(conn, head)
         t_c0 = time.perf_counter()
         conn.commit()
         t_end = time.perf_counter()

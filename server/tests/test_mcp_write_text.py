@@ -10,6 +10,7 @@ from inkbridge.agent.placement import estimate_size, overlaps
 from inkbridge.canvas.hashes import bbox_of
 from inkbridge.mcp import server
 from inkbridge.mcp.client import ApiClient
+from tests.test_drafts import measure
 from tests.test_ops_api import USER_A, USER_B, seed
 
 
@@ -104,12 +105,9 @@ def test_open_drafts_per_canvas_are_capped(mcp_client, monkeypatch):
         call("write_text", text=f"t{i}")
     with pytest.raises(ToolError, match="already has 3 drafts waiting"):
         call("write_text", text="one too many")
-    # Once a browser drew one (applied), there is room again.
+    # Once a browser drew one (measured), there is room again.
     op = mcp_client.get("/documents/default/ops").json()["ops"][0]
-    mcp_client.patch(
-        f"/ops/{op['id']}",
-        json={"status": "applied", "element_ids": [op["payload"]["id_prefix"] + "1"]},
-    )
+    measure(mcp_client, op)
     call("write_text", text="fits now")
 
 

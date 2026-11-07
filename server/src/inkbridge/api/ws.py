@@ -2,12 +2,14 @@
 
 server -> browser: `op.pending {op_id, type, payload}`, `op.updated {op_id, status, error}`,
 `op.error {op_id, code, detail}` (a refused ack), `chunks.updated {version, stale_crops}`,
+`op.placed {op_id, elements, placement, anchor}` (INK-114: the server placed the measured drafts),
 `question.update {question}` (INK-047),
-`scene.delta {seq, origin, elements}` (INK-112; not sent to the socket whose `device` is `origin`). browser -> server: `op.applied {op_id, element_ids}`,
-`op.failed {op_id, error}`.
+`scene.delta {seq, origin, elements}` (INK-112; not sent to the socket whose `device` is `origin`).
+browser -> server: `op.measured {op_id, elements, width, height}` (the drafts as drawn, to be
+placed), `op.failed {op_id, error}`.
 
 On every connect the server replays all pending and delivered ops for the document; an op is
-marked delivered once one browser got it. Ops are idempotent by op_id: the browser checks for
+marked delivered once one browser got it, and every placed op follows as `op.placed`. Ops are idempotent by op_id: the browser checks for
 elements it already drew for that op before drawing again.
 
 HTTP routes run in the threadpool, so they publish through `hub.publish`, which hands the send
@@ -26,15 +28,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 
 from inkbridge import db
+from inkbridge.db import drafts
 from inkbridge.db import ops as ops_db
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 
 REPLAY_STATUSES = ["pending", "delivered"]
-# Same limits as PATCH /ops/{id} (api/ops.py OpPatch), which this ack path mirrors.
-MAX_ACK_IDS = 10_000
-MAX_ELEMENT_ID = 256
 
 
 def _same_origin(ws: WebSocket) -> bool:
@@ -58,6 +58,16 @@ def _pending_message(op: dict) -> dict:
 
 def updated_message(op: dict) -> dict:
     return {"type": "op.updated", "op_id": op["id"], "status": op["status"], "error": op["error"]}
+
+
+def _placed_message(op: dict) -> dict:
+    return {
+        "type": "op.placed",
+        "op_id": op["id"],
+        "elements": op["elements"],
+        "placement": {"x": op["box"]["x"], "y": op["box"]["y"]},
+        "anchor": op["payload"].get("anchor_resolved"),
+    }
 
 
 def _with_conn(fn, *args):
@@ -145,20 +155,33 @@ async def _handle(ws: WebSocket, document_id: str, msg: Any) -> None:
     if op is None or op["document_id"] != document_id:
         await ws.send_json({"type": "op.error", "op_id": op_id, "code": "not_found"})
         return
-    if kind == "op.applied":
-        ids = msg.get("element_ids")
-        if not (
-            isinstance(ids, list)
-            and 0 < len(ids) <= MAX_ACK_IDS
-            and all(isinstance(i, str) and 0 < len(i) <= MAX_ELEMENT_ID for i in ids)
-        ):
+    if kind == "op.measured":
+        try:
+            op = await run_in_threadpool(
+                _with_conn,
+                drafts.measure_op,
+                op_id,
+                msg.get("elements"),
+                msg.get("width"),
+                msg.get("height"),
+            )
+        except ValueError:
+            await ws.send_json({"type": "op.error", "op_id": op_id, "code": "bad_measure"})
+            return
+        except ops_db.ExistingElementIds as e:
             await ws.send_json(
-                {"type": "op.error", "op_id": op_id, "code": "bad_ack", "detail": "element_ids"}
+                {"type": "op.error", "op_id": op_id, "code": "existing_element_id", "detail": e.ids}
             )
             return
-        args = (op_id, "applied", list(dict.fromkeys(ids)), None)
+        except ops_db.InvalidTransition as e:
+            await ws.send_json(
+                {"type": "op.error", "op_id": op_id, "code": "invalid_transition", "detail": e.current}
+            )
+            return
+        await hub.send(document_id, _placed_message(op))
+        return
     elif kind == "op.failed":
-        args = (op_id, "failed", None, str(msg.get("error") or "unknown error")[:2000])
+        args = (op_id, "failed", str(msg.get("error") or "unknown error")[:2000])
     else:
         await ws.send_json({"type": "error", "detail": f"unknown message type {kind!r}"})
         return
@@ -166,11 +189,6 @@ async def _handle(ws: WebSocket, document_id: str, msg: Any) -> None:
         op = await run_in_threadpool(_with_conn, ops_db.update_status, *args)
     except ops_db.OpNotFound:
         await ws.send_json({"type": "op.error", "op_id": op_id, "code": "not_found"})
-        return
-    except ops_db.ExistingElementIds as e:
-        await ws.send_json(
-            {"type": "op.error", "op_id": op_id, "code": "existing_element_id", "detail": e.ids}
-        )
         return
     except ops_db.InvalidTransition as e:
         await ws.send_json(
@@ -205,6 +223,8 @@ async def ws_endpoint(
         for op in replay:
             await ws.send_json(_pending_message(op))
             await run_in_threadpool(_with_conn, ops_db.mark_delivered, op["id"])
+        for op in await run_in_threadpool(_with_conn, drafts.list_drafts, document):
+            await ws.send_json(_placed_message(op))  # a late tab gets the drafts without a GET
         while True:
             frame = await ws.receive()
             if frame["type"] == "websocket.disconnect":
