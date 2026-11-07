@@ -8,7 +8,6 @@ import pytest
 from inkbridge import db
 from inkbridge.db import diagrams, drafts
 from inkbridge.db import ops as ops_db
-from tests.test_chunk_persistence import Canvas, row
 from tests.test_detectors import chunks, of_kind
 from tests.test_drafts import accept, els, measure, scene_rows
 from tests.test_ops_api import OPS, SCENE, seed
@@ -16,8 +15,10 @@ from tests.test_search import recognise
 
 FLOW = "flowchart TD\n A-->B"
 GRAPH = json.dumps(
-    {"nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B", "shape": "diamond"}],
-     "edges": [{"from": "a", "to": "b"}]}
+    {
+        "nodes": [{"id": "a", "label": "A"}, {"id": "b", "label": "B", "shape": "diamond"}],
+        "edges": [{"from": "a", "to": "b"}],
+    }
 )
 
 
@@ -111,7 +112,9 @@ def test_revision_accept_replaces_unchanged_keeps_user_changed(client):
     mine = {e["id"]: e for e in scene_rows(a["id"])}
     mid = f"{a['id']}:2"
     edited = {**mine[mid], "version": mine[mid]["version"] + 1, "x": 999}
-    r = client.post("/documents/default/elements", json={"device": "d1", "batch": 1, "elements": [edited]})
+    r = client.post(
+        "/documents/default/elements", json={"device": "d1", "batch": 1, "elements": [edited]}
+    )
     assert r.status_code == 200
     b = draw(client, GRAPH, "graph", diagram_id=a["diagram_id"]).json()
     assert b["revises"] == a["id"]
@@ -200,3 +203,10 @@ def test_no_baseline_no_offer(client):
     accepted_from(client, c)
     recognise(c, "plan B")
     assert of_kind("stale_diagram") == []
+
+
+def test_runner_denies_edit_diagram_by_default():
+    from inkbridge.agent import ask_runner
+
+    assert "edit_diagram" in ask_runner.ALL_INKBRIDGE_WRITE
+    assert all("edit_diagram" not in t for t in ask_runner.MODE_TOOLS.values())

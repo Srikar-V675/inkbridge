@@ -2,6 +2,7 @@
 
 from inkbridge.mcp.tools import (
     canvas,
+    diagrams,
     memory,
     prompts,
     questions,
@@ -12,4 +13,4 @@ from inkbridge.mcp.tools import (
     write,
 )
 
-__all__ = ["canvas", "memory", "prompts", "questions", "regions", "retrieve", "sync", "tasks", "write"]
+__all__ = ["canvas", "diagrams", "memory", "prompts", "questions", "regions", "retrieve", "sync", "tasks", "write"]

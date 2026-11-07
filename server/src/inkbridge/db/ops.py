@@ -19,7 +19,8 @@ from typing import Any
 from inkbridge.agent import placement
 from inkbridge.agent.attention import attention
 from inkbridge.canvas.hashes import bbox_of
-from inkbridge.db import diagrams, tasks as tasks_db
+from inkbridge.db import diagrams
+from inkbridge.db import tasks as tasks_db
 from inkbridge.db.common import DocumentNotFound, _now
 from inkbridge.db.documents import document_exists, get_scene
 
