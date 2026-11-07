@@ -84,7 +84,7 @@ SELECT d.id, d.title, d.updated_at, d.pinned, d.archived_at, d.last_opened_at, d
        (SELECT COUNT(*) FROM regions r WHERE r.document_id = d.id
           AND r.created_by = 'auto' AND r.status = 'active') AS chunk_count,
        (SELECT COUNT(*) FROM agent_ops o WHERE o.document_id = d.id
-          AND o.status IN ('pending', 'delivered', 'applied')) AS open_offers
+          AND o.status IN ('pending', 'delivered', 'placed')) AS open_offers
 FROM documents d LEFT JOIN scenes s ON s.document_id = d.id"""
 
 _ARCHIVE_FILTER = {

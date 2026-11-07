@@ -16,7 +16,8 @@ REGION_KEYS = {
     "stroke_hash", "content_hash", "status", "successor_of", "png_stale", "pinned", "updated_at",
     "text", "latex", "source", "text_hash", "live_successor",
 }  # fmt: skip
-OP_KEYS = {"id", "document_id", "type", "status", "payload", "result", "error", "created_at"}
+OP_KEYS = {"id", "document_id", "type", "status", "payload", "result", "error", "created_at",
+           "elements", "box", "resolved_at"}
 SYNC_KEYS = {"fresh", "fresh_after_reread", "changed", "replaced", "removed", "new"}
 DOC_KEYS = {
     "id", "title", "updated_at", "version", "url", "pinned", "archived", "element_count",
@@ -116,9 +117,8 @@ def test_op_shapes_and_retry_stays_200(client, canvas):
     assert set(client.get("/ops/op-one").json()) == OP_KEYS
     listed = client.get("/documents/default/ops").json()
     assert set(listed) == {"ops"} and [set(o) for o in listed["ops"]] == [OP_KEYS]
-    patched = client.patch("/ops/op-one", json={"status": "applied", "element_ids": ["op-one:1"]})
+    patched = client.patch("/ops/op-one", json={"status": "expired"})
     assert patched.status_code == 200 and set(patched.json()) == OP_KEYS
-    assert patched.json()["result"] is not None
     default = client.post("/ops", json={**body, "op_id": "op-two"})
     assert default.status_code == 201 and set(default.json()) == OP_KEYS
 

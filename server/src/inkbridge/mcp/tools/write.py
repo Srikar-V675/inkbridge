@@ -75,7 +75,7 @@ def _canvas_url(document_id: str) -> str:
 
 
 def _wait_for_browser(client: ApiClient, op: dict, wait_seconds: float) -> dict:
-    """Poll the op until the browser applied or failed it, or the wait runs out."""
+    """Poll the op until the browser measured or failed it, or the wait runs out."""
     deadline = _clock() + wait_seconds
     while op["status"] in ("pending", "delivered") and _clock() < deadline:
         _sleep(POLL_SECONDS)
@@ -113,7 +113,7 @@ def draw_diagram(
     Only flowcharts (`flowchart` / `graph`) are supported; sequence, class and other diagram
     types are refused. The canvas must be open in a browser: Mermaid is converted there, and this
     call waits (default 20 s) for the browser to draw it. Never edits existing ink; it only adds
-    new, dashed draft elements. Returns {op_id, status: "applied", element_count, anchor_used, note}
+    new, dashed draft elements. Returns {op_id, status: "placed", element_count, anchor_used, note}
     (the last two when an anchor was given; a replaced anchor is followed, a deleted one refused).
     """
     client = get_client()
@@ -132,13 +132,12 @@ def draw_diagram(
         raise ToolError(f"{e} Check document_id, or the anchor chunk id via read_canvas.") from e
     except ApiError as e:
         raise ToolError(str(e)) from e
-    if op["status"] == "applied":
-        ids = (op.get("result") or {}).get("element_ids", [])
+    if op["status"] == "placed":
         return _dump(
             {
                 "op_id": op["id"],
-                "status": "applied",
-                "element_count": len(ids),
+                "status": "placed",
+                "element_count": len(op.get("elements") or []),
                 **_anchor_info(op, anchor),
             }
         )

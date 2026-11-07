@@ -48,8 +48,10 @@ def own(op_id, n="1"):
     return f"{op_id}:{n}"
 
 
-def ack(client, op_id, ids):
-    return client.patch(f"/ops/{op_id}", json={"status": "applied", "element_ids": ids})
+def measure(client, op_id, width=120, height=30):
+    from tests.test_drafts import measure as _measure
+
+    return _measure(client, {"id": op_id}, width=width, height=height)
 
 
 # --- invariant N1: payloads never reference existing ink ---------------------------------------
@@ -122,59 +124,7 @@ def test_unknown_anchor_is_422(client):
     assert r.status_code == 422 and r.json()["detail"]["code"] == "anchor_not_found"
 
 
-# --- invariant N1: the browser's ack ids must be new ---------------------------------------------
-
-
-def test_ack_with_an_existing_user_element_id_is_rejected(client):
-    seed(client)
-    op = write(client).json()
-    r = ack(client, op["id"], [own(op["id"]), "user-a"])
-    assert r.status_code == 422
-    assert r.json()["detail"] == {"code": "existing_element_id", "ids": ["user-a"]}
-    assert client.get(f"/ops/{op['id']}").json()["status"] == "pending"
-
-
-def test_ack_with_ids_not_issued_for_the_op_is_rejected(client):
-    # Not in the scene yet, but not this op's ids either: a later Reject must never reach them.
-    op = write(client).json()
-    r = ack(client, op["id"], ["random-new-id"])
-    assert r.status_code == 422 and r.json()["detail"]["ids"] == ["random-new-id"]
-
-
-def test_ack_with_new_ids_applies_and_records_them(client):
-    seed(client)
-    op = write(client).json()
-    assert op["payload"]["id_prefix"] == f"{op['id']}:"
-    ids = [own(op["id"], "1"), own(op["id"], "2")]
-    r = ack(client, op["id"], ids)
-    assert r.status_code == 200
-    assert r.json()["status"] == "applied"
-    assert r.json()["result"] == {"element_ids": ids}
-
-
-def test_ack_after_autosave_accepts_the_ops_own_drafts(client):
-    # Autosave may store the drafts before the ack arrives.
-    seed(client)
-    op = write(client).json()
-    tag = {"author": "agent", "draft": True, "op_id": op["id"]}
-    seed(client, [USER_A, USER_B, stroke(own(op["id"]), 0, 500, customData=tag)])
-    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
-
-
-def test_ack_cannot_claim_a_user_element_tagged_with_this_op(client):
-    # customData is written by the client, so a tag proves nothing about who made the element.
-    op = write(client).json()
-    tag = {"author": "agent", "draft": True, "op_id": op["id"]}
-    seed(client, [stroke("user-a", 10, 20, customData=tag)])
-    r = ack(client, op["id"], ["user-a"])
-    assert r.status_code == 422 and r.json()["detail"]["ids"] == ["user-a"]
-
-
-def test_ack_cannot_claim_ids_of_another_op(client):
-    first, second = write(client, "one").json(), write(client, "two").json()
-    assert ack(client, first["id"], [own(first["id"])]).status_code == 200
-    r = ack(client, second["id"], [own(first["id"])])
-    assert r.status_code == 422 and r.json()["detail"]["ids"] == [own(first["id"])]
+# --- invariant N1: measured ids must be new (tests/test_drafts.py) ---------------------------
 
 
 def test_client_op_id_whose_prefix_is_already_in_the_scene_is_rejected(client):
@@ -208,13 +158,11 @@ def test_deeply_nested_payload_is_a_422_not_a_crash(client):
 def test_full_lifecycle_and_invalid_transitions(client):
     op = write(client).json()
     assert op["status"] == "pending" and op["document_id"] == "default"
-    assert client.patch(f"/ops/{op['id']}", json={"status": "accepted"}).status_code == 409
-    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
-    assert ack(client, op["id"], [own(op["id"])]).status_code == 200  # same ack again: idempotent
-    assert ack(client, op["id"], [own(op["id"], "2")]).status_code == 409  # different ids: conflict
-    r = client.patch(f"/ops/{op['id']}", json={"status": "rejected"})
+    assert client.patch(f"/ops/{op['id']}", json={"status": "accepted"}).status_code == 422
+    assert measure(client, op["id"])["status"] == "placed"
+    r = client.post(f"/ops/{op['id']}/reject")
     assert r.status_code == 200 and r.json()["status"] == "rejected"
-    assert client.patch(f"/ops/{op['id']}", json={"status": "accepted"}).status_code == 409
+    assert client.post(f"/ops/{op['id']}/accept", json={}).status_code == 409
 
 
 def test_failed_records_the_error(client):
@@ -223,10 +171,11 @@ def test_failed_records_the_error(client):
     ).json()
     r = client.patch(f"/ops/{op['id']}", json={"status": "failed", "error": "parse error"})
     assert r.status_code == 200 and r.json()["error"] == "parse error"
-    assert ack(client, op["id"], [own(op["id"])]).status_code == 409
+    with pytest.raises(ops_db.InvalidTransition):
+        measure(client, op["id"])
 
 
-def test_delivered_ops_can_be_applied_or_expire(client):
+def test_delivered_ops_can_be_placed_or_expire(client):
     a, b = write(client, "a").json(), write(client, "b").json()
     conn = db.connect()
     try:
@@ -235,7 +184,7 @@ def test_delivered_ops_can_be_applied_or_expire(client):
     finally:
         conn.close()
     assert client.get(f"/ops/{a['id']}").json()["status"] == "delivered"
-    assert ack(client, a["id"], [own(a["id"])]).status_code == 200
+    assert measure(client, a["id"])["status"] == "placed"
     assert client.patch(f"/ops/{b['id']}", json={"status": "expired"}).json()["status"] == "expired"
 
 
@@ -247,7 +196,7 @@ def test_patch_cannot_set_pending_or_delivered(client):
 
 def test_unknown_op_is_404(client):
     assert client.get("/ops/missing").status_code == 404
-    assert client.patch("/ops/missing", json={"status": "rejected"}).status_code == 404
+    assert client.patch("/ops/missing", json={"status": "expired"}).status_code == 404
 
 
 def test_post_is_idempotent_by_op_id(client):
@@ -268,7 +217,7 @@ def test_ops_persist_across_restart_and_list_pending_for_replay(tmp_path, monkey
     monkeypatch.setenv("INKBRIDGE_DB", str(tmp_path / "restart.db"))
     with TestClient(app) as c:
         a, b, c3 = (write(c, t).json() for t in ("a", "b", "c"))
-        ack(c, b["id"], [own(b["id"])])
+        measure(c, b["id"])
         conn = db.connect()
         try:
             ops_db.mark_delivered(conn, c3["id"])  # pushed, then the browser went away
@@ -348,14 +297,14 @@ def test_deleted_ink_does_not_block_placement(client):
 
 def test_ops_rows_hold_document_created_at_and_result(client):
     op = write(client).json()
-    ack(client, op["id"], [own(op["id"])])
+    measure(client, op["id"])
     conn = db.connect()
     try:
         row = conn.execute("SELECT * FROM agent_ops WHERE id = ?", (op["id"],)).fetchone()
     finally:
         conn.close()
     assert row["document_id"] == "default" and row["created_at"]
-    assert json.loads(row["result_json"]) == {"element_ids": [own(op["id"])]}
+    assert [e["id"] for e in json.loads(row["elements_json"])] == [own(op["id"])]
 
 
 def test_resolved_ops_release_their_spot(client):
@@ -373,15 +322,6 @@ def test_anchored_diagram_is_placed_beside_the_chunk_when_there_is_room(client):
     box = bbox_of([USER_A])
     gap = max(gap_for(op["payload"]["font_size"]), 1.05 * proximity_threshold([USER_A]))
     assert op["payload"]["placement"] == {"x": box["x"] + box["width"] + gap, "y": box["y"]}
-
-
-def test_reack_with_the_same_ids_in_another_order_is_idempotent(client):
-    op = write(client).json()
-    ids = [own(op["id"], "1"), own(op["id"], "2")]
-    assert ack(client, op["id"], ids).status_code == 200
-    r = ack(client, op["id"], list(reversed(ids)))
-    assert r.status_code == 200 and r.json()["result"] == {"element_ids": ids}
-    assert ack(client, op["id"], ids[:1]).status_code == 409  # a different set still conflicts
 
 
 def test_placement_avoids_the_corners_of_rotated_ink(client):
@@ -515,8 +455,8 @@ def test_same_anchor_same_size_across_ops_and_after_accept(client):
     ).json()
     second = _font(client, anchor=rid)
     assert second == first["payload"]["font_size"]
-    assert ack(client, first["id"], [own(first["id"])]).status_code == 200
-    assert client.patch(f"/ops/{first['id']}", json={"status": "accepted"}).status_code == 200
+    measure(client, first["id"])
+    assert client.post(f"/ops/{first['id']}/accept", json={}).status_code == 200
     assert _font(client, anchor=rid) == second
 
 
@@ -560,11 +500,11 @@ def test_twenty_ops_can_all_be_accepted(client):
     ids = []
     for i in range(20):
         op = write(client, f"t{i}").json()
-        assert ack(client, op["id"], [own(op["id"])]).status_code == 200
+        measure(client, op["id"])
         ids.append(op["id"])
     for op_id in ids:
-        r = client.patch(f"/ops/{op_id}", json={"status": "accepted"})
-        assert r.status_code == 200 and r.json()["status"] == "accepted"
+        r = client.post(f"/ops/{op_id}/accept", json={})
+        assert r.status_code == 200 and r.json()["op"]["status"] == "accepted"
     accepted = client.get(OPS, params={"status": "accepted"}).json()["ops"]
     assert {o["id"] for o in accepted} == set(ids)
     assert len(accepted) == 20
@@ -580,7 +520,8 @@ def test_resolving_an_unapplied_op_is_409(client, verdict, delivered):
             ops_db.mark_delivered(conn, op["id"])
         finally:
             conn.close()
-    assert client.patch(f"/ops/{op['id']}", json={"status": verdict}).status_code == 409
+    url = f"/ops/{op['id']}/{'accept' if verdict == 'accepted' else 'reject'}"
+    assert client.post(url, json={}).status_code == 409
     assert client.get(f"/ops/{op['id']}").json()["status"] == (
         "delivered" if delivered else "pending"
     )
@@ -589,9 +530,9 @@ def test_resolving_an_unapplied_op_is_409(client, verdict, delivered):
 def test_resolving_never_touches_the_stored_scene(client):
     seed(client)
     op = write(client).json()
-    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
+    measure(client, op["id"])
     before = client.get(SCENE).json()
-    r = client.patch(f"/ops/{op['id']}", json={"status": "rejected"})
+    r = client.post(f"/ops/{op['id']}/reject")
     assert r.status_code == 200
     after = client.get(SCENE).json()
     assert after["version"] == before["version"]
@@ -744,18 +685,15 @@ def test_five_ops_form_a_tight_column(client, scale, anchored):
     assert max(_dist(a, b) for a in spots for b in spots) <= bound
 
 
-def test_applied_op_reserves_real_box_not_estimate(client):
+def test_placed_op_reserves_real_box_not_estimate(client):
     seed(client, [stroke("u0", 0, 0), stroke("u1", 0, 20000), stroke("u2", 0, 40000)])
     op = write(client, text="a\n" * 20).json()
     est = estimate_size("write_text", op["payload"])
     p = op["payload"]["placement"]
-    tag = {"author": "agent", "draft": True, "op_id": op["id"]}
-    small = stroke(own(op["id"]), p["x"], p["y"], w=10, h=10, customData=tag)
-    seed(client, [stroke("u0", 0, 0), stroke("u1", 0, 20000), stroke("u2", 0, 40000), small])
-    assert ack(client, op["id"], [own(op["id"])]).status_code == 200
+    placed = measure(client, op["id"], width=10, height=10)
     nxt = write(client, text="b").json()["payload"]["placement"]
-    assert nxt["y"] < p["y"] + est[1]  # old code stayed below the estimated box
-    assert nxt["y"] >= p["y"] + 10
+    assert nxt["y"] < p["y"] + est[1]  # the estimate would have kept it below
+    assert nxt["y"] >= placed["box"]["y"] + 10
 
 
 # --- INK-088: pending and delivered ops expire after 24 h -------------------------------------
@@ -791,13 +729,13 @@ def test_fresh_op_is_not_expired(client):
     assert client.get(f"/ops/{op}").json()["status"] == "pending"
 
 
-def test_applied_op_is_never_expired(client):
+def test_placed_op_is_never_expired(client):
     seed(client)
     op = write(client).json()["id"]
-    assert ack(client, op, [own(op)]).status_code == 200
+    measure(client, op)
     _backdate(op, 48)
     write(client, "later")  # runs the sweep
-    assert client.get(f"/ops/{op}").json()["status"] == "applied"
+    assert client.get(f"/ops/{op}").json()["status"] == "placed"
 
 
 def test_delivered_op_expires_too(client):
