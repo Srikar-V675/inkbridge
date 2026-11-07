@@ -1,12 +1,30 @@
 // One question and its answer inside a thread (ported from the old AskPanel Item and Chips; INK-049, INK-161).
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { cancelQuestion, fileName, keepOnCanvas, runnerLine, type Question, type Source } from "./ask";
+import { cancelQuestion, drawDiagram, fileName, keepOnCanvas, mermaidBlock, noteUrl, runnerLine, type Question, type Source } from "./ask";
 import { AnswerMarkdown } from "./askMarkdown";
 import { liveIds, resolveChunk } from "../chunks/chunks";
 import { Button } from "../ui/Button";
 
 const WAIT_HINT_MS = 60_000;
+
+/** The backend never writes the vault, so Add to note only copies. LAN HTTP is not a secure context: fall back to a textarea. */
+function copyText(text: string): boolean {
+  if (window.isSecureContext && navigator.clipboard) {
+    void navigator.clipboard.writeText(text);
+    return true;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    return document.execCommand("copy");
+  } finally {
+    ta.remove();
+  }
+}
 
 function Sources(props: { api: ExcalidrawImperativeAPI; canvas: string; sources: Source[] }) {
   const { api, canvas, sources } = props;
@@ -43,7 +61,7 @@ function Sources(props: { api: ExcalidrawImperativeAPI; canvas: string; sources:
       <div className="ink-ask__sources">
         {sources.map((s, i) =>
           s.type === "note" ? (
-            <span key={i} className="ink-ask__pill">{fileName(s.path ?? "")}</span>
+            <a key={i} className="ink-ask__pill" href={noteUrl(s.path ?? "")}>{fileName(s.path ?? "")}</a>
           ) : (
             <Button key={i} variant="secondary" className="ink-ask__jump" disabled={gone[s.id!]} onClick={() => void go(s.id!)}>
               {gone[s.id!] ? "gone" : "chunk"}
@@ -72,6 +90,16 @@ export function AskMessage(props: { api: ExcalidrawImperativeAPI; canvas: string
     if (r.ok) onKept();
     setNote(r.ok ? "Draft added, accept it on the canvas" : `Could not add draft (${r.reason})`);
   };
+  const diagram = async () => {
+    setNote("Adding diagram...");
+    const r = await drawDiagram(q, canvas);
+    setNote(r.ok ? "Diagram added, accept it on the canvas" : `Could not add diagram (${r.reason})`);
+  };
+  const addToNote = () => {
+    const names = q.sources.filter((s) => s.type === "note").map((s) => fileName(s.path ?? ""));
+    const text = `${q.answer_md ?? ""}${names.length ? `\n\nSources: ${names.join(", ")}` : ""}`;
+    setNote(copyText(text) ? "Copied, paste it into your note" : "Could not copy");
+  };
   return (
     <div className="ink-ask__msg">
       <section>
@@ -98,6 +126,8 @@ export function AskMessage(props: { api: ExcalidrawImperativeAPI; canvas: string
             <Sources api={api} canvas={canvas} sources={q.sources} />
             <div className="ink-ask__actions">
               <Button variant="secondary" disabled={kept} onClick={() => void keep()}>Keep on canvas</Button>
+              {mermaidBlock(q.answer_md) && <Button variant="secondary" onClick={() => void diagram()}>Draw as diagram</Button>}
+              <Button variant="secondary" onClick={addToNote}>Add to note</Button>
             </div>
           </>
         )}
