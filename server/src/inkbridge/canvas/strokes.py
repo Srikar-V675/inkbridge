@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from inkbridge.canvas.hashes import bbox_of
-from inkbridge.canvas.sketch import Point, _length, usable
+from inkbridge.canvas.sketch import Box, Point, _length, _tip, usable
 
 KINDS = ("writing", "container", "connector", "head", "underline", "scribble")
 
@@ -33,7 +33,6 @@ UNDERLINE_REACH = (
     0.75  # writing is at most this*T above the underline (start value, tune on real pages)
 )
 UNDERLINE_TOUCH = 0.5  # ... or overlapping it by at most this*T (start value, tune on real pages)
-UNDERLINE_COVER = (
     0.5  # ... and its centre x is within the underline's x range (start value, tune on real pages)
 )
 SCRIBBLE_REVERSALS = 6  # scribble: at least this many reversals (start value, tune on real pages)
@@ -54,7 +53,7 @@ class StrokeKinds:
 class _F:
     id: str
     pos: int  # draw-order rank among the classified strokes
-    box: dict[str, float]
+    box: Box
     w: float
     h: float
     extent: float
@@ -85,16 +84,21 @@ def _scale(extents: list[float]) -> float:
     return max(MIN_SCALE, _median(short or extents))  # pass 2: the writing
 
 
-def _features(elements: list[dict[str, Any]]) -> tuple[list[_F], list[dict[str, Any]]]:
-    """Features of the live freedraw strokes in draw order, and the live native arrows/lines."""
+def _features(
+    elements: list[dict[str, Any]],
+) -> tuple[list[_F], list[dict[str, Any]], list[Box]]:
+    """Live freedraw strokes in draw order, native arrows/lines, and native text boxes."""
     live = [e for e in elements if usable(e) and not _dead(e)]
     idx = [e.get("index") if isinstance(e.get("index"), str) else None for e in live]
     feats: list[_F] = []
     natives: list[dict[str, Any]] = []
+    texts: list[Box] = []
     for i in _order(idx):
         e = live[i]
         if e.get("type") in ("arrow", "line"):
             natives.append(e)
+        elif e.get("type") == "text":
+            texts.append(bbox_of([e]))
         elif e.get("type") == "freedraw":
             box = bbox_of([e])
             pts = [(e.get("x", 0) + p[0], e.get("y", 0) + p[1]) for p in e.get("points") or []]
@@ -115,7 +119,7 @@ def _features(elements: list[dict[str, Any]]) -> tuple[list[_F], list[dict[str, 
                     cy=box["y"] + h / 2,
                 )
             )
-    return feats, natives
+    return feats, natives, texts
 
 
 def _dead(e: dict[str, Any]) -> bool:
@@ -164,15 +168,75 @@ def _holds_ink(f: _F, feats: list[_F]) -> bool:
     return False
 
 
+def _dist_point_box(p: Point, box: Box) -> float:
+    """0 inside the box, else the distance to its edge."""
+    dx = max(box["x"] - p[0], 0, p[0] - box["x"] - box["width"])
+    dy = max(box["y"] - p[1], 0, p[1] - box["y"] - box["height"])
+    return math.hypot(dx, dy)
+
+
+def _flat(f: _F) -> bool:
+    return f.h < FLAT * f.w
+
+
+def _has_hook(f: _F) -> bool:
+    """A straight shaft with a trailing barb of at most HOOK_MAX of the path.
+
+    The part up to the tip must itself be straight, or the last loop of a cursive word reads
+    as a barb.
+    """
+    if len(f.pts) < 3:
+        return False
+    far, hooked = _tip(f.pts)
+    if not hooked or _length(f.pts[far:]) > HOOK_MAX * f.L:
+        return False
+    shaft = _length(f.pts[: far + 1])
+    return shaft > 0 and math.dist(f.pts[0], f.pts[far]) / shaft > STRAIGHT
+
+
+def _find_head(f: _F, feats: list[_F], head_of: dict[str, str], t: float) -> _F | None:
+    """The first unclaimed small stroke just after f in draw order, at one of its ends."""
+    ends = (f.pts[0], f.pts[-1])
+    for h in feats[f.pos + 1 : f.pos + 1 + HEAD_ORDER]:
+        if h.id in head_of or h.extent >= HEAD_MAX * t:
+            continue
+        if any(_dist_point_box(p, h.box) <= HEAD_REACH * t for p in ends):
+            return h
+    return None
+
+
+def _column(x: float, t: float) -> int:
+    return int(x // (2 * t))
+
+
+def _writing_above(u: _F, columns: dict[int, list[Box]], t: float) -> bool:
+    """Writing whose centre x is over the underline and whose bottom sits just above it."""
+    top = u.box["y"]
+    for col in range(_column(u.box["x"], t), _column(u.box["x"] + u.w, t) + 1):
+        for b in columns.get(col, ()):
+            cx = b["x"] + b["width"] / 2
+            gap = top - (b["y"] + b["height"])
+            if (
+                u.box["x"] <= cx <= u.box["x"] + u.w
+                and -UNDERLINE_TOUCH * t <= gap <= UNDERLINE_REACH * t
+            ):
+                return True
+    return False
+
+
 def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
-    feats, natives = _features(elements)
+    feats, natives, texts = _features(elements)
     kinds: dict[str, str] = {e["id"]: "connector" for e in natives}
     head_of: dict[str, str] = {}
+    if not feats:
+        return StrokeKinds(kinds=kinds, head_of=head_of, scale=0.0)
     scale = _scale([f.extent for f in feats])
+
+    # Closed loops with ink inside, and tight zigzags.
+    rest: list[_F] = []
     for f in feats:
-        long = f.extent > LONG * scale
         if (
-            long
+            f.extent > LONG * scale
             and f.net < CONTAINER_CLOSE * f.diag
             and f.L >= CONTAINER_LOOP * f.diag
             and _holds_ink(f, feats)
@@ -184,6 +248,45 @@ def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
             and _reversals(f.pts, f.diag) >= SCRIBBLE_REVERSALS
         ):
             kinds[f.id] = "scribble"
+        else:
+            rest.append(f)
+
+    # Shafts in draw order, so each head is claimed once. Heads are decided before underlines.
+    shafts: list[_F] = []
+    evidence: set[str] = set()
+    for f in rest:
+        if f.extent <= LONG * scale or f.L <= 0:
+            continue
+        hook = _has_hook(f)
+        if not (f.net / f.L > STRAIGHT or hook):
+            continue
+        shafts.append(f)
+        head = _find_head(f, feats, head_of, scale)
+        if head is not None:
+            head_of[head.id] = f.id
+        if hook or head is not None:
+            evidence.add(f.id)
+    for hid in head_of:
+        kinds[hid] = "head"
+
+    # Writing that an underline can sit under: small, not flat, not a head; native text too.
+    columns: dict[int, list[Box]] = {}
+    for f in rest:
+        if f.extent <= LONG * scale and not _flat(f) and f.id not in head_of:
+            columns.setdefault(_column(f.cx, scale), []).append(f.box)
+    for b in texts:
+        columns.setdefault(_column(b["x"] + b["width"] / 2, scale), []).append(b)
+
+    shaft_ids = {f.id for f in shafts}
+    for f in rest:
+        if f.id in head_of:
+            continue
+        if f.id in evidence:
+            kinds[f.id] = "connector"
+        elif _flat(f) and f.extent >= UNDERLINE_MIN * scale and _writing_above(f, columns, scale):
+            kinds[f.id] = "underline"
+        elif f.id in shaft_ids:
+            kinds[f.id] = "connector"
         else:
             kinds[f.id] = "writing"
     return StrokeKinds(kinds=kinds, head_of=head_of, scale=scale)

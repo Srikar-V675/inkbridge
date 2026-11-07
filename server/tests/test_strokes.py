@@ -160,3 +160,112 @@ def test_cursive_word_is_not_scribble():
     d = math.hypot(*[max(c) - min(c) for c in zip(*pts, strict=True)])
     assert _reversals(pts, d) < 6
     assert classify([stroke, *field()])["cursive"] == "writing"
+
+
+# --- Task 3 ---
+
+
+def vee(i: str, x: float, y: float, index=None):
+    """A small arrow head (extent 10) with its tip at (x + 10, y)."""
+    return pen(i, [(x, y - 4), (x + 10, y), (x, y + 4)], index)
+
+
+def test_straight_long_stroke_is_connector():
+    result = analyse([line("s", 0, 0, 200, 40), line("forty", 0, 500, 40, 500), *field()])
+    assert result.kinds["s"] == "connector"
+    assert result.kinds["forty"] == "connector"
+    assert result.head_of == {}
+
+
+def test_arrow_with_separate_head():
+    els = [line("s", 0, 0, 200, 40, index="a0"), vee("v", 190, 40, "a1"), *field()]
+    result = analyse(els)
+    assert result.kinds["s"] == "connector"
+    assert result.kinds["v"] == "head"
+    assert result.head_of == {"v": "s"}
+
+
+def test_flat_arrow_with_separate_head_is_not_underline():
+    # writing directly above a flat arrow, and a V at its end: heads are decided first
+    els = [
+        line("s", 0, 0, 200, 0, index="a0"),
+        vee("v", 190, 0, "a1"),
+        word("above", 80, -12, index="a2"),
+        *field(),
+    ]
+    result = analyse(els)
+    assert result.kinds["s"] == "connector"
+    assert result.kinds["v"] == "head"
+    assert result.kinds["above"] == "writing"
+
+
+def test_flat_stroke_under_writing_is_underline():
+    flat = line("u", 0, 0, 200, 0)
+    near = classify([flat, word("above", 80, -12), *field()])
+    assert near["u"] == "underline"
+    far = classify([flat, word("above", 80, -100), *field()])
+    assert far["u"] == "connector"
+
+
+def test_hook_connector():
+    # shaft plus a trailing barb back toward the start
+    hooked = pen("h", [(0, 0), (100, 0), (200, 0), (188, -10)])
+    # out 100 and back 70: the return is more than 0.4 of the path and not straight
+    loops = pen("w", [(0, 600), (100, 600), (30, 620)])
+    result = analyse([hooked, loops, *field()])
+    assert result.kinds["h"] == "connector"
+    assert result.kinds["w"] == "writing"
+    assert result.head_of == {}
+
+
+def test_head_must_be_next_in_draw_order():
+    filler = [word(f"f{k}", 1000 + k * 40, 0, index=f"a{k + 1}") for k in range(5)]
+    far = [line("s", 0, 0, 200, 40, index="a0"), *filler, vee("v", 190, 40, "a6"), *field()]
+    assert classify(far)["v"] == "writing"
+    # the list order is shuffled, the index order is adjacent
+    near = [vee("v", 190, 40, "a1"), *field(), line("s", 0, 0, 200, 40, index="a0")]
+    assert classify(near)["v"] == "head"
+
+
+def test_head_must_be_in_reach():
+    els = [line("s", 0, 0, 200, 0, index="a0"), vee("v", 260, 0, "a1"), *field()]
+    result = analyse(els)
+    assert result.kinds["v"] == "writing"
+    assert result.head_of == {}
+
+
+def test_head_claimed_once():
+    els = [
+        line("s1", 0, 0, 200, 0, index="a0"),
+        line("s2", 420, 0, 220, 0, index="a1"),
+        vee("v", 205, 0, "a2"),
+        *field(),
+    ]
+    result = analyse(els)
+    assert result.head_of == {"v": "s1"}
+    assert result.kinds["s2"] == "connector"
+
+
+def test_heads_are_not_writing_for_scale():
+    els = field(40)
+    for k in range(14):
+        els += [
+            line(f"s{k}", 0, k * 60, 200, k * 60, index=f"b{2 * k:03d}"),
+            vee(f"v{k}", 190, k * 60, f"b{2 * k + 1:03d}"),
+        ]
+    result = analyse(els)
+    assert abs(result.scale - 20.0) <= 1.0
+    assert len(result.head_of) == 14
+
+
+def test_short_flat_underline():
+    under = classify([line("u", 0, 0, 24, 0), word("above", 2, -12), *field()])
+    assert under["u"] == "underline"
+    hyphen = classify([line("hy", 0, 0, 8, 0), word("above", 0, -12), *field()])
+    assert hyphen["hy"] == "writing"
+
+
+def test_native_text_counts_as_writing_above():
+    text = {"id": "t", "type": "text", "x": 10, "y": -25, "width": 40, "height": 20, "text": "hi"}
+    kinds = classify([line("u", 0, 0, 60, 0), text, *field()])
+    assert kinds["u"] == "underline"
