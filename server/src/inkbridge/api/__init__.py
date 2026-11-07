@@ -234,13 +234,23 @@ def post_elements(
         ) from None
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
-    _publish_if_changed(conn, document_id, r)
+    _publish_if_changed(conn, document_id, r, body.device)
     return {"seq": r.seq, "newer": r.newer, "timing": timing}
 
 
-def _publish_if_changed(conn, document_id: str, r: db.MergeResult) -> None:
+def _publish_if_changed(conn, document_id: str, r: db.MergeResult, origin: str) -> None:
     if r.replay or not r.changed:
         return
+    shown = [
+        e
+        for e in r.written
+        if not (isinstance(e.get("customData"), dict) and e["customData"].get("draft"))
+    ]
+    if shown:  # first, so a tab applies the ink before it hears about stale crops
+        ws.hub.publish(
+            document_id,
+            {"type": "scene.delta", "seq": r.seq, "origin": origin, "elements": shown},
+        )
     ws.hub.publish(
         document_id,
         {
@@ -291,7 +301,7 @@ def put_scene(
         raise HTTPException(404, "document not found") from None
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
-    _publish_if_changed(conn, document_id, r)
+    _publish_if_changed(conn, document_id, r, tab if key else "")
     return {"version": r.seq, "seq": r.seq, "newer": r.newer, "timing": timing}
 
 

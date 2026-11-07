@@ -6,7 +6,7 @@ import sqlite3
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from inkbridge.canvas.chunker import (
@@ -55,6 +55,7 @@ class MergeResult:
     newer: list[dict]
     changed: int  # rows written
     replay: bool = False
+    written: list[dict] = field(default_factory=list)  # the winners this merge stored
 
 
 def _stored(conn: sqlite3.Connection, document_id: str, ids: list[str]) -> dict[str, tuple]:
@@ -212,7 +213,7 @@ def merge_elements(
         (t_chunks - t_refresh) * 1000 if write else 0.0,
         " ".join(f"{k}={v:.0f}ms" for k, v in timings.items()),
     )
-    return MergeResult(head, newer, len(write))
+    return MergeResult(head, newer, len(write), written=write)
 
 
 def put_scene(

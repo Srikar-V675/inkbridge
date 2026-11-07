@@ -260,3 +260,18 @@ def test_get_drafts(client):
     assert [d["id"] for d in r.json()["drafts"]] == [a["id"], b["id"]]
     assert r.json()["drafts"][0]["elements"] and r.json()["drafts"][0]["box"]
     assert client.get("/documents/nope/drafts").status_code == 404
+
+
+def test_accept_publishes_scene_delta(client):
+    from tests.test_ws import WS, recv
+
+    op = post(client)
+    measure(client, op)
+    with client.websocket_connect(WS) as ws:
+        while recv(ws)["type"] != "op.placed":
+            pass
+        accept(client, op["id"])
+        got = [recv(ws) for _ in range(3)]
+    delta = next(m for m in got if m["type"] == "scene.delta")
+    assert [e["id"] for e in delta["elements"]] == [f"{op['id']}:1"]
+    assert delta["origin"] == "" and "draft" not in delta["elements"][0]["customData"]

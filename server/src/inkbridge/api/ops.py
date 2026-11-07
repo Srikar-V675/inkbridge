@@ -1,5 +1,6 @@
 """Agent write queue routes (INK-041). MCP tools enqueue; the browser acks; the user resolves."""
 
+import json
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -261,9 +262,16 @@ _RESOLVE_ERRORS = (
 
 
 def _publish_scene_change(conn, op: dict, seq: int) -> None:
-    # scene.delta is wired once INK-112 lands; chunks.updated makes tabs refetch meanwhile.
     doc = op["document_id"]
     hub.publish(doc, updated_message(op))
+    prefix = op["payload"]["id_prefix"]
+    written = [  # the op's rows this change wrote, tombstones included; no origin device
+        json.loads(r["json"])
+        for r in db.read_rows(conn, doc, stubs=True, since=seq - 1)
+        if r["id"].startswith(prefix)
+    ]
+    if written:
+        hub.publish(doc, {"type": "scene.delta", "seq": seq, "origin": "", "elements": written})
     hub.publish(
         doc, {"type": "chunks.updated", "version": seq, "stale_crops": db.stale_crop_ids(conn, doc)}
     )

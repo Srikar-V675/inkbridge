@@ -7,7 +7,7 @@ import { FingerToggle, TouchRouting } from "./TouchLayer";
 import { FastInk } from "../ink/FastInk";
 import { createChunkView } from "../chunks/chunkView";
 import { JumpNotice } from "../chunks/JumpNotice";
-import { createRefresh, wireRefresh } from "../sync/chunkRefresh";
+import { createRefresh, onVisible, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
 import { publishQuestion } from "../ask/ask";
 import { DraftBar } from "../drafts/DraftBar";
@@ -18,6 +18,7 @@ import { type DraftElement } from "../drafts/drafts";
 import { draftOpId, dropDrafts } from "../drafts/resolve";
 import { drawOp } from "../drafts/drawOp";
 import { OpsSocket } from "../sync/opsSocket";
+import { LiveDelta } from "../sync/liveDelta";
 import type { Location } from "../lib/route";
 import { createLoadClock } from "../sync/loadClock";
 import { createStartupGate } from "../sync/startupGate";
@@ -136,6 +137,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const syncRef = useRef<SceneSync | null>(null);
   const cropRef = useRef<CropSync | null>(null);
+  const liveRef = useRef<LiveDelta | null>(null);
   const viewTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fitOnOpen = useRef(false);
   const pendingJump = useRef<JumpResult | null>(null);
@@ -220,6 +222,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
         try {
           api.updateScene({
             elements: elements.map((e) => (live.has(e) ? e : byId.get(e.id))).filter(Boolean) as never,
+            // Ink another device wrote is not this user's edit: Ctrl+Z must not undo it.
+            captureUpdate: CaptureUpdateAction.NEVER,
           });
         } catch {} // the final save on leave (sync.close) can land after Excalidraw unmounted
       },
@@ -313,8 +317,22 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     };
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
     const wire = wireRefresh(refresh, document);
+    const tab = syncRef.current?.tabId ?? "";
+    const live = new LiveDelta({
+      origin: tab,
+      isPenDown: () => penDown.current,
+      apply: (els) => syncRef.current?.applyRemote(els),
+      fetchSince: async (seq) => {
+        const r = await fetch(`/documents/${encodeURIComponent(route.canvas)}/elements?since=${seq}`);
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      },
+    });
+    live.setSeq(syncRef.current?.loadedSeq ?? 0);
+    liveRef.current = live;
+    const offWake = onVisible(document, () => void live.catchUp());
     const socket = new OpsSocket({
-      url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}`,
+      url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}&device=${encodeURIComponent(tab)}`,
       onOp: async (op) => {
         // Saving now also makes the server's next placement see the newest ink. flushNow does not
         // throw when a save fails (offline, 409 merge, 4xx), so check that the server really holds
@@ -348,9 +366,11 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       // A push lost while the socket was down is gone, so the chunk list refetches on every connect.
       onConnection: (c) => {
         wire.onConnection(c);
+        if (c) void live.catchUp(); // a delta lost while the socket was down is gone
         if (c) publishQuestion(null); // pushes sent while the socket was down are lost
       },
       onQuestionUpdate: publishQuestion,
+      onSceneDelta: (d) => live.receive(d),
       // An op that failed, expired or was rejected elsewhere must not leave drafts behind.
       onOpUpdated: (m) => {
         if (DEAD.includes(m.status)) sweep(m.op_id);
@@ -370,6 +390,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       cancel();
       socket.dispose();
       wire.off();
+      offWake();
+      liveRef.current = null;
     };
   }, [open, route.canvas, apiReady, refresh, unseen, gate]);
 
@@ -380,6 +402,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     ) => {
       // Set before any early return below, so every change event keeps it current.
       penDown.current = appState.cursorButton === "down" || appState.newElement != null;
+      liveRef.current?.flush();
       if (syncRef.current?.notify(elements as unknown as SceneElement[])) cropRef.current?.activity();
       // The first change event means the canvas holds the loaded scene, so crops can be exported;
       // a reopened tab then catches up on crops left stale while it was closed.
