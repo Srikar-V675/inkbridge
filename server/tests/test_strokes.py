@@ -1,6 +1,8 @@
 """Stroke kinds classifier (INK-121): pure shape rules, no chunker wiring."""
 
 import math
+import random
+import time
 from typing import Any
 
 from inkbridge.canvas.strokes import _order, _reversals, analyse, classify
@@ -269,3 +271,81 @@ def test_native_text_counts_as_writing_above():
     text = {"id": "t", "type": "text", "x": 10, "y": -25, "width": 40, "height": 20, "text": "hi"}
     kinds = classify([line("u", 0, 0, 60, 0), text, *field()])
     assert kinds["u"] == "underline"
+
+
+# --- Task 4 ---
+
+
+def page_of_824() -> list[dict[str, Any]]:
+    rng = random.Random(7)
+    els: list[dict[str, Any]] = []
+    cell = [0]
+
+    def spot() -> tuple[float, float]:
+        k = cell[0]
+        cell[0] += 1
+        return (k % 8) * 500.0, (k // 8) * 500.0
+
+    for k in range(12):  # containers, each with two words inside
+        x, y = spot()
+        els += [
+            circle(f"c{k}", x, y, 60),
+            word(f"ca{k}", x - 20, y - 15),
+            word(f"cb{k}", x - 10, y + 15),
+        ]
+    for k in range(14):  # shafts with their heads
+        x, y = spot()
+        ye = y + rng.uniform(-30, 30)
+        els += [line(f"s{k}", x, y, x + 200, ye), vee(f"v{k}", x + 190, ye, None)]
+    for k in range(20):  # underlines with writing above
+        x, y = spot()
+        els += [line(f"u{k}", x, y, x + 60, y), word(f"ua{k}", x + 20, y - 12)]
+    for k in range(10):  # scribbles
+        x, y = spot()
+        els.append(pen(f"z{k}", [(x + 40 * (j % 2), y + 30 * j / 12) for j in range(13)]))
+    for k in range(4):
+        els.append(native(f"n{k}", "arrow", *spot()))
+    for k in range(680):  # writing
+        els.append(word(f"w{k}", 6000 + (k % 40) * 60, (k // 40) * 60 + rng.uniform(-3, 3)))
+    while len(els) < 824:
+        x, y = spot()
+        if len(els) % 2:
+            els.append(
+                {
+                    "id": f"r{len(els)}",
+                    "type": "rectangle",
+                    "x": x,
+                    "y": y,
+                    "width": 80,
+                    "height": 50,
+                }
+            )
+        else:
+            els.append(
+                {
+                    "id": f"t{len(els)}",
+                    "type": "text",
+                    "x": x,
+                    "y": y,
+                    "width": 80,
+                    "height": 20,
+                    "text": "note",
+                }
+            )
+    return els
+
+
+def test_runs_under_20ms_for_824_elements():
+    els = page_of_824()
+    assert len(els) == 824
+    times = []
+    for _ in range(5):
+        t0 = time.perf_counter()
+        kinds = classify(els)
+        times.append(time.perf_counter() - t0)
+    assert min(times) < 0.020
+    counts = {
+        k: list(kinds.values()).count(k)
+        for k in ("container", "connector", "head", "underline", "scribble")
+    }
+    assert counts == {"container": 12, "connector": 18, "head": 14, "underline": 20, "scribble": 10}
