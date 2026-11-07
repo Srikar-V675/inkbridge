@@ -89,7 +89,17 @@ def test_fresh_database_has_the_table(tmp_path):
         int(f.name.split("_")[0]) for f in db.MIGRATIONS_DIR.glob("*.sql")
     )
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(scene_elements)")}
-    assert cols == {"document_id", "id", "pos", "seq", "version", "nonce", "is_deleted", "json", "updated_at"}
+    assert cols == {
+        "document_id",
+        "id",
+        "pos",
+        "seq",
+        "version",
+        "nonce",
+        "is_deleted",
+        "json",
+        "updated_at",
+    }
     indexes = {r["name"] for r in conn.execute("PRAGMA index_list(scene_elements)")}
     assert "scene_elements_seq" in indexes
     info = conn.execute("PRAGMA index_info(scene_elements_seq)").fetchall()
@@ -241,7 +251,10 @@ def test_since_returns_changed_rows_and_tombstone_stubs(client):
     second = put(client, [el("a", 2, x=4), el("b", 2, isDeleted=True)], delta=True)
     body = client.get(ELEMENTS, params={"since": first}).json()
     assert body["seq"] == second
-    assert [(e["id"], bool(e.get("isDeleted"))) for e in body["elements"]] == [("a", False), ("b", True)]
+    assert [(e["id"], bool(e.get("isDeleted"))) for e in body["elements"]] == [
+        ("a", False),
+        ("b", True),
+    ]
     assert client.get(ELEMENTS, params={"since": second}).json() == {"seq": second, "elements": []}
     assert shrink(15) == 1
     again = client.get(ELEMENTS, params={"since": first}).json()["elements"]
@@ -278,3 +291,16 @@ def test_scene_get_is_logged(client, caplog):
     with caplog.at_level("INFO", logger="inkbridge.scene"):
         client.get(SCENE)
     assert any("scene GET doc=default seq=" in m and "bytes=" in m for m in caplog.messages)
+
+
+def test_full_put_keeps_deleted_rows_the_client_never_loaded(client):
+    # The web client loads live ink only, so a full save (every element changed) omits deleted ones.
+    first = put(client, [el("a"), el("b", 1, isDeleted=True)])
+    put(client, [el("a", 2, x=3)])
+    assert {r["id"]: r["is_deleted"] for r in rows()} == {"a": 0, "b": 1}
+    body = client.get("/documents/default/elements", params={"since": 0}).json()
+    assert [(e["id"], bool(e.get("isDeleted"))) for e in body["elements"]] == [
+        ("a", False),
+        ("b", True),
+    ]
+    assert first >= 1

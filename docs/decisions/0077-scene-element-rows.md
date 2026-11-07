@@ -31,10 +31,14 @@ sections 2 and 3 want one row per element, so a save writes what changed and a l
   readers (`get_scene`, the chunker, hashes, crops, thumbnails) skip stubs. The agent-op check does not
   (`get_scene(..., stubs=True)` in `db/ops.py`): a long-deleted element's id is still taken, so a payload
   naming it is refused (`test_op_payload_naming_a_tombstoned_id_is_refused` fails without it). Shrinking
-  runs in every save; backfilled rows carry the scene's `updated_at`, so they first shrink 14 days after
-  the migration.
-- **A full (non-delta) PUT hard-deletes stored ids it omits** (the blob replace did the same; Excalidraw
-  never omits ids, only tests do). It does not re-order existing rows. A shortcut, noted here.
+  runs in every save. Backfilled rows carry the old `scenes.updated_at`, so the first save after migrating
+  shrinks the deleted rows of any canvas last saved more than 14 days ago.
+- **A full (non-delta) PUT hard-deletes stored live ids it omits** (the blob replace did the same;
+  Excalidraw never omits ids, only tests do). It keeps omitted deleted rows: the web client loads live ink
+  only, so a full save (every element changed, for instance a select-all edit) omits them without meaning to
+  delete anything. Dropping them would lose tombstones: another device's `?deleted=true` reload would
+  resurrect the stroke, `/elements?since` would never show the deletion, and the op-id check would lose the
+  id (`test_full_put_keeps_deleted_rows_the_client_never_loaded`). A full PUT does not re-order rows.
 - **Load.** `GET /documents/{id}/scene` returns `{"seq", "version", "elements"}`: live rows in `pos` order,
   row text joined with commas and never re-encoded. `version` is an alias of `seq` so the unchanged web
   client and open old tabs keep working until INK-111 moves them to `seq`. Agent drafts are still scene
@@ -46,8 +50,9 @@ sections 2 and 3 want one row per element, so a save writes what changed and a l
   for it; a normal open does not (`sceneSync.ts`, a small approved change).
 - **`GET /documents/{id}/elements?since=N`** (`N >= 0`) returns `{"seq": head, "elements": [...]}`: every
   row with `seq > N`, deleted rows and stubs included, in `pos` order.
-- `scripts/snapshot_canvas.py --db` reads the rows when the table exists; its API branch asks for
-  `?deleted=true` so a snapshot keeps its old content.
+- `scripts/snapshot_canvas.py --db` and `scripts/chunk_scale_eval.py` (`INKBRIDGE_REAL_DB`) read the rows when the table exists; its API branch asks for
+  `?deleted=true` so a snapshot keeps its old content. `scripts/bench_scene_save.py` only inserts `'[]'` into the retired
+  column and saves through `put_scene`, so it needs no change.
 
 ## Numbers
 `scripts/bench_scene_load.py` (INK-095 fixture, in process, identity encoding; `--deleted-ratio` added

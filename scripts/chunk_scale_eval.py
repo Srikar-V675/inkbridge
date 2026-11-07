@@ -62,6 +62,13 @@ def report(name, elements, synthetic):
 
 def real_elements(path):
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    if con.execute(  # migration 0008 (INK-110): the rows are the scene, the blob is retired
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scene_elements'"
+    ).fetchone():
+        rows = con.execute(
+            "SELECT json FROM scene_elements WHERE document_id='default' ORDER BY pos"
+        ).fetchall()
+        return [e for e in (json.loads(r[0]) for r in rows) if "type" in e]  # no tombstone stubs
     row = con.execute(
         "SELECT elements_json FROM scenes WHERE document_id='default' ORDER BY version DESC LIMIT 1"
     ).fetchone()

@@ -110,7 +110,9 @@ def put_scene(
         by_id = {e["id"]: e for e in elements}
         t1 = time.perf_counter()
         changed = _changed_ids(old_elements, by_id)
-        removed = {e["id"] for e in old_elements} - by_id.keys()  # only a full save drops ids
+        # A full save drops stored live ids it omits. Deleted rows stay: the web client loads live
+        # ink only, so a full save omits them without meaning to delete anything (tombstones).
+        removed = {e["id"] for e in old_elements if not e.get("isDeleted")} - by_id.keys()
         write_changed(conn, document_id, elements, changed - removed, base_version + 1, now)
         remove_rows(conn, document_id, removed)
         shrink_tombstones(conn, document_id, now)
