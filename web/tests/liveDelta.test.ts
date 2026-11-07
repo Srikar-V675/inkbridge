@@ -13,6 +13,18 @@ function make(fetchSince: (s: number) => Promise<{ seq: number; elements: SceneE
 }
 
 describe("LiveDelta", () => {
+  it("is not drained while rows wait for the pen, so no snapshot may claim their seq", () => {
+    const { live, pen } = make();
+    pen.down = true;
+    live.receive({ seq: 4, origin: "o", elements: [el("a")] });
+    assert.equal(live.lastSeq, 4);
+    assert.equal(live.drained, false);
+    pen.down = false;
+    live.flush();
+    assert.equal(live.drained, true);
+  });
+
+
   it("holds deltas while the pen is down and applies them once on flush", () => {
     const { live, applied, pen } = make();
     pen.down = true;

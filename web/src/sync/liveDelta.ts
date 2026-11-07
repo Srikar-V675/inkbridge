@@ -22,6 +22,10 @@ export class LiveDelta {
   constructor(o: LiveDeltaOptions) {
     this.o = o;
   }
+  /** True when nothing received is still waiting for the pen to lift: `lastSeq` is then fully applied. */
+  get drained() {
+    return this.queue.size === 0;
+  }
   setSeq(seq: number) {
     this.lastSeq = Math.max(this.lastSeq, seq);
   }

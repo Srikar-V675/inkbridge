@@ -192,7 +192,7 @@ describe("SceneSync", () => {
   });
 
   it("hasSaved is true only once the server acknowledged the elements", async () => {
-    const h = harness([json(200, { version: 1, elements: [el("a")] }), new Error("offline"), json(200, { version: 2 })]);
+    const h = harness([json(200, { version: 1, elements: [el("a")] }), new Error("offline"), new Error("offline"), json(200, { version: 2 })]);
     await h.sync.load();
     assert.equal(h.sync.hasSaved(["a"]), true);
     h.sync.notify([el("a"), el("op:1")]);
@@ -383,21 +383,27 @@ describe("SceneSync", () => {
     assert.equal(h.states.length, n);
   });
 
-  it("close() writes the journal first, then makes one keepalive attempt, then disposes", async () => {
-    const order: string[] = [];
+  it("close() sends from memory without waiting for the journal write, with keepalive, then disposes", async () => {
     const j = new MemoryJournal();
-    const put = j.put.bind(j);
-    j.put = async (...a) => (order.push("journal"), put(...a));
-    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })], {
-      journal: j,
-      onFetch: (c) => c.method === "PUT" && order.push("fetch"),
-    });
+    j.put = () => new Promise(() => {}); // IndexedDB that never answers
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })], { journal: j });
     await h.sync.load();
     h.sync.notify([el("a")]);
-    await h.sync.close();
-    assert.deepEqual(order, ["journal", "fetch"]);
+    void h.sync.close();
+    await settle();
+    assert.equal(h.puts().length, 1);
     assert.equal(h.puts()[0].keepalive, true);
-    assert.equal(h.sync.notify([el("a", 2)]), false); // disposed
+  });
+
+  it("a continuous stroke is journaled at least every 500 ms", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    for (let v = 1; v <= 12; v++) {
+      h.sync.notify([el("s", v)]); // a point every 60 ms: the 50 ms trailing timer never fires
+      mock.timers.tick(60);
+    }
+    await settle();
+    assert.ok((await h.journal.unacked(DOC)).length > 0);
   });
 
   it("close() with nothing to send sends nothing", async () => {

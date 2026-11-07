@@ -344,7 +344,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     });
     live.setSeq(syncRef.current?.loadedSeq ?? 0);
     liveRef.current = live;
-    catchUpRef.current = () => void live.catchUp().then(() => syncRef.current?.snapshot(live.lastSeq));
+    catchUpRef.current = () => void live.catchUp().then(() => void (live.drained && syncRef.current?.snapshot(live.lastSeq))) // a seq with queued (pen-down) rows is not applied yet;
     if (sceneReady.current) catchUpRef.current();
     const offWake = onVisible(document, () => void live.catchUp());
     const socket = new OpsSocket({

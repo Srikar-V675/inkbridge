@@ -49,6 +49,7 @@ export function deltaFor(
 
 const KEEPALIVE_MAX = 60_000;
 const OLD_AFTER_MS = 60_000; // an unacknowledged entry this old turns the quiet bar grey
+const MAX_WAIT_MS = 500; // longest a change waits for the journal while edits keep coming
 const KEEP_ACKED_MS = 7 * 864e5;
 
 /** A 4xx other than 429: the body would be rejected again, so it is not retried. */
@@ -127,6 +128,7 @@ export class SceneSync {
   private queue = new Map<string, SceneElement>(); // changed, not yet journaled
   private unacked = new Map<string, Entry>(); // latest unacknowledged entry per id (mirror of the journal)
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private maxTimer: ReturnType<typeof setTimeout> | null = null;
   private writing: Promise<void> = Promise.resolve();
   private keepalive = false;
   private lastMs = 0;
@@ -267,19 +269,20 @@ export class SceneSync {
   /** The stored scene version the canvas matches exactly; null before load or while edits are
    *  unsaved or being saved (crop sync renders only a saved scene, decision 0015). */
   settledVersion(): number | null {
-    const idle = this.queue.size === 0 && this.unacked.size === 0 && this.timer === null && this.sender.busy === 0;
+    const idle = this.queue.size === 0 && this.unacked.size === 0 && this.timer === null && this.maxTimer === null && this.sender.busy === 0;
     return this.loaded && !this.disposed && idle ? this.version : null;
   }
 
-  /** Journal now, send now (keepalive for a small body), and wait for the requests on the wire. */
+  /** Send now (keepalive for a small body) from the in-memory queue, journal in parallel, wait for the requests on the wire.
+   *  The send never waits for IndexedDB: on pagehide it may not get the time. */
   async flushNow() {
     if (!this.loaded) return;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    await this.enqueueWrite();
+    const written = this.enqueueWrite(true);
     this.keepalive = true;
     try {
       this.sender.kick();
+      await written;
+      this.sender.kick(); // entries a timer write was still persisting
     } finally {
       this.keepalive = false;
     }
@@ -302,30 +305,43 @@ export class SceneSync {
 
   dispose() {
     this.disposed = true;
-    if (this.timer) clearTimeout(this.timer);
+    this.clearTimers();
     this.sender.stop();
   }
 
-  // Trailing: a stroke in progress is not worth journaling mid-stroke.
+  // Trailing 50 ms, but at least every MAX_WAIT_MS while edits keep coming: a long stroke is journaled in pieces.
   private schedule() {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.enqueueWrite();
-    }, this.o.journalMs ?? 50);
+    this.timer = setTimeout(() => void this.enqueueWrite(), this.o.journalMs ?? 50);
+    this.maxTimer ??= setTimeout(() => void this.enqueueWrite(), MAX_WAIT_MS);
   }
 
-  private enqueueWrite(): Promise<void> {
-    return (this.writing = this.writing.then(() => this.writeBatch()));
+  private clearTimers() {
+    if (this.timer) clearTimeout(this.timer);
+    if (this.maxTimer) clearTimeout(this.maxTimer);
+    this.timer = this.maxTimer = null;
   }
 
-  private async writeBatch() {
-    if (this.queue.size === 0) return;
+  /** Take the queue now. `early`: the entries go to the sender's mirror before the journal write finishes. */
+  private enqueueWrite(early = false): Promise<void> {
+    this.clearTimers();
+    if (this.queue.size === 0) return this.writing;
     // Excalidraw mutates element objects in place: journal and send a copy of this version.
     const els = [...this.queue.values()].map((e) => ({ ...e }));
     this.queue.clear();
     const at = this.now();
     for (const e of els) this.journaled.set(e.id, e.version);
+    if (early) this.expose(els, at);
+    return (this.writing = this.writing.then(() => this.persist(els, at, early)));
+  }
+
+  private expose(els: readonly SceneElement[], at: number) {
+    for (const el of els) {
+      this.unacked.set(el.id, { k: entryKey(this.o.documentId, el.id, el.version), doc: this.o.documentId, id: el.id, version: el.version, el, acked: false, at });
+    }
+  }
+
+  private async persist(els: readonly SceneElement[], at: number, early: boolean) {
     let failed = false;
     if (this.o.journal && this.journalOk) {
       try {
@@ -335,9 +351,7 @@ export class SceneSync {
         this.journalOk = false;
       }
     }
-    for (const el of els) {
-      this.unacked.set(el.id, { k: entryKey(this.o.documentId, el.id, el.version), doc: this.o.documentId, id: el.id, version: el.version, el, acked: false, at });
-    }
+    if (!early) this.expose(els, at);
     if (failed) this.emit("error", RISK_LABEL);
     else this.refresh(true);
   }
