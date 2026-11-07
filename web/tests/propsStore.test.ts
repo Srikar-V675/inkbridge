@@ -45,12 +45,14 @@ const keys: KeyboardEventInit[] = [];
 let n = 0;
 const measure = (line: string, size: number) => line.length * size * 0.5;
 const loads: [number, number][] = [];
+let kind: "pen" | "highlighter" = "pen";
 const mkEnv = (f?: { calls: { order: string[] } }) => ({
   never: NEVER, immediately: NOW, mac: false,
   container: () => ({ dispatchEvent: (e: unknown) => (keys.push(e as KeyboardEventInit), true) }),
   makeKey: (i: KeyboardEventInit) => i as never,
   nonce: () => 7000 + n++, now: () => 1700000000000,
   measure,
+  freedrawKind: () => kind,
   loadFont: async (fam: number, size: number) => void (loads.push([fam, size]), f?.calls.order.push("load")),
 });
 
@@ -62,18 +64,60 @@ describe("tool source", () => {
     assert.equal(s.source, "tool");
     assert.deepEqual(s.controls, controlsFor(["rectangle"]));
     assert.equal(s.values.stroke, "#2f55b8");
-    assert.equal(s.title, "Rectangle tool");
+    assert.equal(s.title, "Shapes");
     assert.equal(s.layers, false);
     store.set("width", 4);
     assert.equal(f.calls.scene.length, 1);
     assert.deepEqual(f.calls.scene[0], { appState: { currentItemStrokeWidth: 4 }, captureUpdate: NEVER });
     assert.ok(!("elements" in f.calls.scene[0]));
   });
-  it("pen, eraser and hand hide the card", () => {
-    for (const t of ["freedraw", "eraser", "hand"]) {
+  it("eraser and hand hide the card and toggleCard does nothing", () => {
+    for (const t of ["eraser", "hand", "selection"]) {
       const store = createPropsStore(fake({ activeTool: { type: t } }).api, mkEnv() as never);
+      store.toggleCard();
       assert.equal(store.get().source, null);
     }
+  });
+  it("pen and highlighter start closed, toggle open, and write defaults only", () => {
+    for (const [k, name] of [["pen", "Pen"], ["highlighter", "Highlighter"]] as const) {
+      kind = k;
+      const f = fake({ activeTool: { type: "freedraw" } });
+      const store = createPropsStore(f.api, mkEnv() as never);
+      assert.equal(store.get().source, null);
+      store.toggleCard();
+      const s = store.get();
+      assert.equal(s.source, "tool");
+      assert.equal(s.title, name);
+      assert.deepEqual(s.controls, ["stroke", "width", "opacity"]);
+      store.set("width", 4);
+      assert.deepEqual(f.calls.scene[0], { appState: { currentItemStrokeWidth: 4 }, captureUpdate: NEVER });
+      assert.ok(!("elements" in f.calls.scene[0]));
+      store.toggleCard();
+      assert.equal(store.get().source, null);
+    }
+    kind = "pen";
+  });
+  it("shapes and text are open by default, remembered per tool", () => {
+    const f = fake({ activeTool: { type: "rectangle" } });
+    const store = createPropsStore(f.api, mkEnv() as never);
+    assert.equal(store.get().source, "tool");
+    assert.equal(store.get().title, "Shapes");
+    store.toggleCard();
+    assert.equal(store.get().source, null);
+    f.set({ activeTool: { type: "freedraw" } });
+    f.set({ activeTool: { type: "rectangle" } });
+    assert.equal(store.get().source, null);
+    f.set({ activeTool: { type: "text" } });
+    assert.equal(store.get().source, "tool");
+  });
+  it("a selection shows regardless of the closed state", () => {
+    const f = fake({ activeTool: { type: "rectangle" } }, [el("a", "rectangle")]);
+    const store = createPropsStore(f.api, mkEnv() as never);
+    store.toggleCard();
+    f.set({ selectedElementIds: { a: true } });
+    assert.equal(store.get().source, "selection");
+    store.toggleCard();
+    assert.equal(store.get().source, "selection");
   });
 });
 

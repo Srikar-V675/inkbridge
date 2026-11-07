@@ -1,8 +1,6 @@
 // The properties card (INK-175, docs/decisions/0075): rows for the selection, or for the active
-// shape or text tool when nothing is selected. Edits go through propsStore.
-import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import { CaptureUpdateAction } from "@excalidraw/excalidraw";
-import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
+// shape, text, pen or highlighter tool (INK-178, 0098; the shapes picker row sits inside) when nothing is selected. Edits go through propsStore.
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import { IconButton } from "../../ui/IconButton";
@@ -14,10 +12,11 @@ import {
   AlignCenterIcon, AlignLeftIcon, AlignRightIcon, ArrowElbowIcon, ArrowRoundIcon, ArrowSharpIcon,
   BackwardIcon, ChevronDownIcon, ChevronUpIcon, DuplicateIcon, EdgeRoundIcon, EdgeSharpIcon, FillCrossIcon, FillHachureIcon,
   FillSolidIcon, ForwardIcon, HeadIcon, LockIcon, SloppyIcon, StyleDashedIcon, StyleDottedIcon, StyleSolidIcon,
-  ToBackIcon, ToFrontIcon, TrashIcon, WidthIcon,
+  ShapeIcon, ToBackIcon, ToFrontIcon, TrashIcon, WidthIcon,
 } from "./icons";
-import { loadFont, measure } from "./measureText";
 import { createPropsStore } from "./propsStore";
+import type { RailStore } from "../ToolRail";
+import type { ShapeTool } from "../shellLogic";
 import "./props.css";
 
 type Store = ReturnType<typeof createPropsStore>;
@@ -31,32 +30,13 @@ const LABELS: Record<ControlId, string> = {
   arrowType: "Arrow type", fontFamily: "Font", fontSize: "Size", textAlign: "Align",
 };
 
-export function PropsHost({ api }: { api: ExcalidrawImperativeAPI }) {
-  // Built in an effect: creating it subscribes to the API, which must not happen while React renders.
-  const [store, setStore] = useState<Store | null>(null);
-  useEffect(() => {
-    const s = createPropsStore(api as never, {
-      never: CaptureUpdateAction.NEVER,
-      immediately: CaptureUpdateAction.IMMEDIATELY,
-      mac: /Mac|iPhone|iPad/.test(navigator.platform),
-      container: () => document.querySelector(".excalidraw"),
-      makeKey: (init) => new KeyboardEvent("keydown", init),
-      nonce: () => Math.floor(Math.random() * 2 ** 31),
-      now: () => Date.now(),
-      measure,
-      loadFont,
-    });
-    setStore(s);
-    return () => {
-      s.dispose();
-      setStore(null);
-    };
-  }, [api]);
-  return store ? <PropsCard store={store} /> : null;
-}
+const SHAPE_LABELS: [ShapeTool, string][] = [
+  ["rectangle", "Rectangle"], ["diamond", "Diamond"], ["ellipse", "Ellipse"], ["arrow", "Arrow"], ["line", "Line"],
+];
 
-function PropsCard({ store }: { store: Store }) {
+export function PropsCard({ store, rail }: { store: Store; rail: RailStore }) {
   const snap = useSyncExternalStore(store.subscribe, store.get);
+  const railSnap = useSyncExternalStore(rail.subscribe, rail.get);
   const colours = useMemo(() => {
     const css = getComputedStyle(document.documentElement);
     return palette((n) => css.getPropertyValue(n));
@@ -70,7 +50,7 @@ function PropsCard({ store }: { store: Store }) {
     .filter((c) => !(c === "arrowType" && onSelection && snap.values.arrowType === "elbow"))
     .map((c) => (
       <Row key={c} label={LABELS[c]}>
-        {renderControl(c, snap.values[c] ?? null, set(c), colours, onSelection)}
+        {renderControl(c, snap.values[c] ?? null, set(c), colours, onSelection, snap.tool === "pen" || snap.tool === "highlighter")}
       </Row>
     ));
   return (
@@ -86,6 +66,15 @@ function PropsCard({ store }: { store: Store }) {
             {snap.collapsed ? <ChevronDownIcon /> : <ChevronUpIcon />}
           </IconButton>
         </div>
+        {!snap.collapsed && snap.tool === "shapes" && (
+          <div role="toolbar" aria-label="Shapes" className="ink-props__picker">
+            {SHAPE_LABELS.map(([shape, label]) => (
+              <IconButton key={shape} label={label} aria-pressed={railSnap.shape === shape} onClick={() => rail.pickShape(shape)}>
+                <ShapeIcon shape={shape} />
+              </IconButton>
+            ))}
+          </div>
+        )}
         {!snap.collapsed && rows}
         {!snap.collapsed && snap.layers && (
           <>
@@ -132,10 +121,10 @@ const STYLE_ICONS: Record<string, ReactNode> = { solid: <StyleSolidIcon />, dash
 const ARROW_ICONS: Record<string, ReactNode> = { sharp: <ArrowSharpIcon />, round: <ArrowRoundIcon />, elbow: <ArrowElbowIcon /> };
 const ALIGN_ICONS: Record<string, ReactNode> = { left: <AlignLeftIcon />, center: <AlignCenterIcon />, right: <AlignRightIcon /> };
 
-function renderControl(c: ControlId, cur: Value, on: (v: Value) => void, colours: Palette, onSelection: boolean): ReactNode {
+function renderControl(c: ControlId, cur: Value, on: (v: Value) => void, colours: Palette, onSelection: boolean, pen: boolean): ReactNode {
   switch (c) {
     case "stroke":
-      return colours.stroke.map((hex, i) => (
+      return colours.stroke.slice(0, pen ? 4 : 5).map((hex, i) => (
         <Swatch key={hex + i} label={`Stroke colour ${STROKE_NAMES[i]}`} hex={hex} cur={cur} on={on} />
       ));
     case "background":

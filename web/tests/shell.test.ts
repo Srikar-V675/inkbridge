@@ -104,6 +104,7 @@ describe("rail tools", () => {
   it("reads pen and highlighter from the opacity", () => {
     assert.equal(railTool({ activeTool: { type: "freedraw" }, currentItemOpacity: 100 }), "pen");
     assert.equal(railTool({ activeTool: { type: "freedraw" }, currentItemOpacity: 35 }), "highlighter");
+    assert.equal(railTool({ activeTool: { type: "freedraw" }, currentItemOpacity: 50 }, "pen"), "pen");
     assert.equal(railTool({ activeTool: { type: "selection" }, currentItemOpacity: 100 }), "select");
     assert.equal(railTool({ activeTool: { type: "eraser" }, currentItemOpacity: 100 }), "eraser");
     assert.equal(railTool({ activeTool: { type: "text" }, currentItemOpacity: 100 }), "text");
@@ -113,7 +114,7 @@ describe("rail tools", () => {
   it("select is the selection tool (no lasso in Excalidraw 0.18)", () => {
     assert.deepEqual(toolTap("select", "freedraw").tool, { type: "selection" });
   });
-  it("shapes are the flyout order", () => {
+  it("shapes are the picker order", () => {
     assert.deepEqual([...SHAPES], ["rectangle", "diamond", "ellipse", "arrow", "line"]);
   });
   it("the shapes button picks the last chosen shape, solid, and keeps a shape already active", () => {
@@ -419,5 +420,26 @@ describe("fetchTitle", () => {
     assert.equal(await fetchTitle("x"), "x");
     stub(async () => ({ ok: true, json: async () => null }));
     assert.equal(await fetchTitle("x"), "x");
+  });
+});
+
+describe("rail pen kind and card colour sync", () => {
+  const mk = (f: ReturnType<typeof fakeApi>) =>
+    createRailStore(f.api, ["#2E2D2B", "#2F55B8", "#A63D2A"], { never: "N", mac: false, container: () => null, makeKey: (i) => i as never, frame: () => () => {} });
+  it("remembers the kind from the last tap", () => {
+    const f = fakeApi({ activeTool: { type: "freedraw" } });
+    const r = mk(f);
+    r.tap("pen");
+    f.set({ currentItemOpacity: 50 });
+    assert.equal(r.get().tool, "pen");
+    r.tap("highlighter");
+    f.set({ currentItemOpacity: 100 });
+    assert.equal(r.get().tool, "highlighter");
+  });
+  it("a pen-card stroke colour edit moves the pen index", () => {
+    const f = fakeApi({ activeTool: { type: "freedraw" } });
+    const r = mk(f);
+    f.set({ currentItemStrokeColor: "#2F55B8" });
+    assert.equal(r.get().pen, 1);
   });
 });
