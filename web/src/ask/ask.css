@@ -14,15 +14,15 @@
 .ink-ask__head {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 18px 12px 12px 24px;
+  gap: calc(12px * var(--ui-scale, 1));
+  padding: calc(18px * var(--ui-scale, 1)) calc(12px * var(--ui-scale, 1)) calc(12px * var(--ui-scale, 1)) calc(24px * var(--ui-scale, 1));
 }
 .ink-ask__titlebox {
   flex: 1;
   min-width: 0;
 }
 .ink-ask__title {
-  margin: 0 0 4px;
+  margin: 0 0 calc(4px * var(--ui-scale, 1));
   font: var(--type-title-weight) var(--type-title-size) / 1.2 var(--type-title-family);
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
@@ -37,7 +37,7 @@
   color: var(--color-soft-ink);
 }
 .ink-ask .ink-ask__back {
-  margin: -4px 0 2px -14px;
+  margin: calc(-4px * var(--ui-scale, 1)) 0 calc(2px * var(--ui-scale, 1)) calc(-14px * var(--ui-scale, 1));
 }
 /* The kit's secondary button is panel-coloured, which vanishes on this panel; the boards use the card colour. */
 .ink-ask .ink-button--secondary {
@@ -47,17 +47,17 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 24px 20px;
+  padding: calc(8px * var(--ui-scale, 1)) calc(24px * var(--ui-scale, 1)) calc(20px * var(--ui-scale, 1));
 }
 .ink-ask__thread {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: calc(22px * var(--ui-scale, 1));
 }
 .ink-ask__msg {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: calc(22px * var(--ui-scale, 1));
 }
 .ink-ask__sr {
   position: absolute;
@@ -73,15 +73,15 @@
 .ink-ask__scope {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 10px;
-  font-size: 15px;
+  gap: calc(8px * var(--ui-scale, 1));
+  margin: 0 0 calc(10px * var(--ui-scale, 1));
+  font-size: var(--type-control-size);
 }
 .ink-ask__field {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
-  padding: 10px 10px 10px 14px;
+  gap: calc(8px * var(--ui-scale, 1));
+  padding: calc(10px * var(--ui-scale, 1)) calc(10px * var(--ui-scale, 1)) calc(10px * var(--ui-scale, 1)) calc(14px * var(--ui-scale, 1));
   border-radius: 14px;
   background: var(--color-card);
 }
@@ -96,7 +96,7 @@
   resize: none;
   border: 0;
   background: transparent;
-  padding: 4px 0;
+  padding: calc(4px * var(--ui-scale, 1)) 0;
   font: var(--type-reading-weight) var(--type-reading-size) / var(--type-reading-line-height) var(--type-reading-family);
   color: var(--color-charcoal);
 }
@@ -123,7 +123,7 @@
   opacity: 0.5;
 }
 .ink-ask__hint {
-  margin: 10px 0 0;
+  margin: calc(10px * var(--ui-scale, 1)) 0 0;
   font-size: var(--type-note-size);
   line-height: 1.4;
   color: var(--color-soft-ink);
@@ -131,14 +131,14 @@
 
 /* List */
 .ink-ask__earlier {
-  margin: 30px 0 4px;
-  font: 600 17px / 1.2 var(--type-control-family);
+  margin: calc(30px * var(--ui-scale, 1)) 0 calc(4px * var(--ui-scale, 1));
+  font: 600 var(--type-reading-size) / 1.2 var(--type-control-family);
 }
 .ink-ask .ink-ask__row {
-  width: calc(100% + 24px);
-  margin: 0 -12px;
+  width: calc(100% + 24px * var(--ui-scale, 1));
+  margin: 0 calc(-12px * var(--ui-scale, 1));
   height: auto;
-  padding: 12px;
+  padding: calc(12px * var(--ui-scale, 1));
   justify-content: flex-start;
   align-items: flex-start;
   text-align: left;
@@ -152,7 +152,7 @@
 }
 .ink-ask__row-title {
   display: block;
-  font-size: 17px;
+  font-size: var(--type-reading-size);
   font-weight: 500;
   line-height: 1.3;
   overflow: hidden;
@@ -161,7 +161,7 @@
 }
 .ink-ask__row-line {
   display: block;
-  font-size: 15px;
+  font-size: var(--type-control-size);
   line-height: 1.4;
   color: var(--color-soft-ink);
   white-space: nowrap;
@@ -174,18 +174,18 @@
 .ink-ask__row-time {
   display: block;
   margin-top: 2px;
-  font-size: 14px;
+  font-size: var(--type-note-size);
   color: var(--color-soft-ink);
 }
 
 /* Thread */
 .ink-ask__label {
-  margin: 0 0 6px;
-  font-size: 14px;
+  margin: 0 0 calc(6px * var(--ui-scale, 1));
+  font-size: var(--type-note-size);
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--ui-scale, 1));
 }
 .ink-ask__dot {
   width: 8px;
@@ -204,12 +204,12 @@
   overflow-wrap: anywhere;
 }
 .ink-ask__answer p {
-  margin: 0 0 10px;
+  margin: 0 0 calc(10px * var(--ui-scale, 1));
 }
 .ink-ask__answer ul,
 .ink-ask__answer ol {
-  padding-left: 20px;
-  margin: 0 0 10px;
+  padding-left: calc(20px * var(--ui-scale, 1));
+  margin: 0 0 calc(10px * var(--ui-scale, 1));
 }
 .ink-ask__answer a {
   color: var(--color-charcoal);
@@ -223,51 +223,51 @@
   background: var(--color-card);
 }
 .ink-ask__sources-note {
-  margin: 12px 0 6px;
-  font-size: 14px;
+  margin: calc(12px * var(--ui-scale, 1)) 0 calc(6px * var(--ui-scale, 1));
+  font-size: var(--type-note-size);
   color: var(--color-soft-ink);
 }
 .ink-ask__sources {
   display: flex;
-  gap: 8px;
+  gap: calc(8px * var(--ui-scale, 1));
   flex-wrap: wrap;
 }
 .ink-ask__pill {
-  min-height: 36px;
-  padding: 0 12px;
+  min-height: calc(36px * var(--ui-scale, 1)); /* a plain label, not a tap target */
+  padding: 0 calc(12px * var(--ui-scale, 1));
   border-radius: 8px;
   background: var(--color-paper);
   display: inline-flex;
   align-items: center;
-  font-size: 15px;
+  font-size: var(--type-control-size);
   font-weight: 500;
 }
 .ink-ask__jump {
-  font-size: 15px;
+  font-size: var(--type-control-size);
 }
 .ink-ask__actions {
   display: flex;
-  gap: 8px;
+  gap: calc(8px * var(--ui-scale, 1));
   flex-wrap: wrap;
   margin-top: 8px;
 }
 .ink-ask__note {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--type-note-size);
   color: var(--color-soft-ink);
 }
 .ink-ask__error {
-  margin: 8px 0 0;
-  font-size: 14px;
+  margin: calc(8px * var(--ui-scale, 1)) 0 0;
+  font-size: var(--type-note-size);
   color: var(--color-alarm);
 }
 
 /* Follow-up bar */
 .ink-ask__form {
-  padding: 16px 16px 16px 24px;
+  padding: calc(16px * var(--ui-scale, 1)) calc(16px * var(--ui-scale, 1)) calc(16px * var(--ui-scale, 1)) calc(24px * var(--ui-scale, 1));
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: calc(10px * var(--ui-scale, 1));
 }
 .ink-ask__form label {
   flex: 1;
@@ -281,7 +281,7 @@
   border: 0;
   border-radius: 12px;
   background: var(--color-paper);
-  padding: 12px 14px;
+  padding: calc(12px * var(--ui-scale, 1)) calc(14px * var(--ui-scale, 1));
   font: 400 16px / 1.4 var(--type-reading-family);
   color: var(--color-charcoal);
 }

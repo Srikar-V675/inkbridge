@@ -8,6 +8,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-sm);
-  min-height: var(--space-touch);
+  min-height: calc(var(--space-touch) * var(--ui-scale, 1));
   font: var(--type-control-weight) var(--type-control-size)/1.3 var(--type-control-family);
 }

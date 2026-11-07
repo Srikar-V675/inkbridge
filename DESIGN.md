@@ -151,7 +151,7 @@ Proportions: paper and panel 60 percent, charcoal 30 percent, lime 10 percent at
 
 Pen colours are the user's own and never lime: charcoal `#2E2D2B`, blue `#2F55B8`, brick `#A63D2A`.
 
-Rules: lime is never used for the user's strokes, selection, focus rings or decoration. Alarm is never decoration. Text on lime is charcoal. Contrast: charcoal on paper, panel and card passes WCAG AA; soft-ink is for 14 px notes and above only, on paper or card.
+Rules: lime is never used for the user's strokes, selection, focus rings or decoration. Alarm is never decoration. Text on lime is charcoal. Contrast: charcoal on paper, panel and card passes WCAG AA; soft-ink is for 14 px notes and above only (12 px at Small UI size), on paper or card.
 
 ## Typography
 
@@ -170,10 +170,11 @@ One family, Instrument Sans (Google Fonts, self-host for the tablet: no network 
 - Canvas first: the canvas fills the viewport; chrome floats over it.
 - Top bar 64 px, transparent: Canvases (back to home), canvas title, saved status, Focus, Ask. Zoom control: compact pill, bottom right, 36 px tall visual with a 44 px hit area.
 - Tool rail: left, 16 px from the edge (8 px on tablets), 72 px under the top edge on tablets and short screens; capped to the viewport (`100dvh`) and scrolls when still too tall; gaps pack to 0 under 720 px of height. 60 px wide, 8 px padding, 4 px gap: pen, highlighter, eraser, lasso, shapes, text, three ink colours, undo, redo.
-- Tablet density: under 1300 px or on a coarse pointer the top bar title is 18 px and status 13 px. Touch targets stay 44 px (decision 0074).
+- Tablet density: under 1300 px or on a coarse pointer the top bar title is 18 px and status 13 px. Touch targets stay 44 px (decision 0074); visual sizes shrink with the UI size and hit areas stay 44 px (decision 0083).
 - Side panel (Ask, threads): right, 440 px, full height under the bar. The canvas does not resize; it pans to keep the working area visible.
 - Home: 76 px header with wordmark, search and New canvas; 40 px side margins; Continue card, Recent list, All canvases grid, Archived.
-- Spacing scale 4, 8, 16, 24, 40. **Every touch target is 44 px or larger** (the tablet is the primary device); 36 px chips only when they sit on the canvas next to ink.
+- Spacing scale 4, 8, 16, 24, 40. **Every touch target has a hit area of 44 px or more** (the tablet is the primary device). The visible face scales with the UI size (Small 0.8, Medium 0.9, Large 1.0; default Small on a coarse pointer and Large on a fine one) and a `::after` pseudo-element supplies the rest of the 44 px (the zoom-pill pattern, INK-170), so neighbours' hit areas overlap by up to about 6 px at Small and the later one wins. Inside the shell (`.ink-shell`) every spacing, type and component size is the token value times `--ui-scale` (`web/src/app/uiScale.css`); `--space-touch` is never scaled, type has a 12 px floor, and Home and the Kit are unscaled. 36 px chips only when they sit on the canvas next to ink (INK-177, decision 0083).
+- **UI size.** A quiet "Size S/M/L" button in the top bar, left of "Finger draws", cycles Small, Medium, Large and is remembered per device (`inkbridge-ui-scale`). `?ui=0.7` sets and remembers a custom value (0.6 to 1.2); `?ui=0` clears it.
 - The canvas background is a CSS dot layer (`paper-dot`, 1 px radius, one dot per 36 scene units, doubled while the gap is under 10 px) that follows pan and zoom, under a transparent Excalidraw canvas. Excalidraw's own toolbar and menus are hidden.
 - Shapes flyout and properties card: the Shapes button opens a card of five shape buttons beside the rail; selecting an element, or choosing a shape or text tool, opens a 280 px properties card to the right of the rail (layer 6, above the chunk chips and under the top bar and Ask panel; the flyout paints over it), card colour, radius 12, rows of 44 px options with a `note` label, collapsible to its header; stroke palette is the three pen colours plus soft-ink and dot; pen and highlighter never open it; scrolls when the screen is short.
 

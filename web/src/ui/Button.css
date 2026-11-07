@@ -1,6 +1,7 @@
 .ink-button {
+  position: relative;
   box-sizing: border-box;
-  min-height: var(--space-touch);
+  min-height: calc(var(--space-touch) * var(--ui-scale, 1));
   border: 0;
   border-radius: var(--component-button-primary-rounded);
   font: var(--type-button-weight) var(--type-button-size)/1 var(--type-button-family);
@@ -41,4 +42,10 @@
 .ink-button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* 44 px hit area around the scaled face, vertical only (INK-177). */
+.ink-button::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((var(--ui-scale, 1) - 1) * var(--space-touch) / 2)) 0;
 }
