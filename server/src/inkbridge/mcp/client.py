@@ -269,9 +269,16 @@ class ApiClient:
         ]
 
     def answer_question(
-        self, question_id: str, answer_md: str, sources: list[dict], canvas_text: str | None = None
+        self,
+        question_id: str,
+        answer_md: str,
+        sources: list[dict],
+        canvas_text: str | None = None,
+        final: bool = True,
     ) -> dict:
         body = {"answer_md": answer_md, "sources": sources}
+        if not final:
+            body["final"] = False
         if canvas_text is not None:
             body["canvas_text"] = canvas_text
         return self._send("POST", f"/questions/{quote(question_id, safe='')}/answer", body)
