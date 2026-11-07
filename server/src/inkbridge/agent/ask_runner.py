@@ -66,8 +66,8 @@ MODE_TOOLS = {
     "brief": ("read_canvas", "get_region", "set_canvas_brief"),
 }  # fmt: skip
 ALL_INKBRIDGE_WRITE = (
-    "write_text", "draw_diagram", "create_canvas", "answer_question", "set_canvas_brief",
-    "link_chunks",
+    "write_text", "draw_diagram", "edit_diagram", "create_canvas", "answer_question",
+    "set_canvas_brief", "link_chunks",
 )  # fmt: skip
 VAULT_MODES = ("question", "link")
 ENV_KEEP = re.compile(

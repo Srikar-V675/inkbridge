@@ -1,6 +1,7 @@
 // Browser-only: convert a pending op and measure it (tech ref 9.9, INK-115).
 import { convertToExcalidrawElements } from "@excalidraw/excalidraw";
 import { timed } from "../lib/timing";
+import { layoutGraph, type GraphIR } from "./graphLayout";
 import { measureDrafts, opFontSize, wrapText, type DraftElement, type PendingOp } from "./drafts";
 
 type Skeleton = Parameters<typeof convertToExcalidrawElements>[0];
@@ -9,11 +10,21 @@ async function skeletonFor(op: PendingOp, fontSize: number): Promise<Skeleton> {
   if (op.op_type === "write_text") {
     return [{ type: "text", x: 0, y: 0, text: wrapText(op.payload.text ?? "", op.payload.wrap_chars), fontSize }] as Skeleton;
   }
+  const source = op.payload.source ?? op.payload.mermaid ?? ""; // mermaid: ops queued before INK-140
+  if (op.payload.source_kind === "graph") {
+    let graph: GraphIR;
+    try {
+      graph = JSON.parse(source);
+    } catch {
+      throw new Error("The graph source is not valid JSON");
+    }
+    return layoutGraph(graph, fontSize) as Skeleton;
+  }
   // Mermaid conversion only runs in the browser; load it on first use.
   const { parseMermaidToExcalidraw } = await import("@excalidraw/mermaid-to-excalidraw");
   let parsed: Awaited<ReturnType<typeof parseMermaidToExcalidraw>>;
   try {
-    parsed = await parseMermaidToExcalidraw(op.payload.mermaid ?? "", {
+    parsed = await parseMermaidToExcalidraw(source, {
       themeVariables: { fontSize: `${fontSize}px` },
     });
   } catch (e) {

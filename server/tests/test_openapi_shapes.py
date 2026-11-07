@@ -17,7 +17,7 @@ REGION_KEYS = {
     "text", "latex", "source", "text_hash", "live_successor",
 }  # fmt: skip
 OP_KEYS = {"id", "document_id", "type", "status", "payload", "result", "error", "created_at",
-           "elements", "box", "resolved_at", "question_id"}
+           "elements", "box", "resolved_at", "question_id", "diagram_id", "revises"}
 SYNC_KEYS = {"fresh", "fresh_after_reread", "changed", "replaced", "removed", "new"}
 DOC_KEYS = {
     "id", "title", "updated_at", "version", "url", "pinned", "archived", "element_count",

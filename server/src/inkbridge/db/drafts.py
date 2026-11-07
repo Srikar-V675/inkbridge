@@ -15,7 +15,7 @@ from typing import Any
 from inkbridge.agent import placement
 from inkbridge.agent.attention import attention
 from inkbridge.canvas.hashes import bbox_of
-from inkbridge.db import scenes
+from inkbridge.db import diagrams, scenes
 from inkbridge.db.common import _now
 from inkbridge.db.elements import _int
 from inkbridge.db.ops import (
@@ -116,9 +116,25 @@ def measure_op(conn: sqlite3.Connection, op_id: str, elements: Any, width: Any, 
         box = bbox_of(elements)
         dx, dy = spot["x"] - box["x"], spot["y"] - box["y"]
         placed = [_as_draft(e, op_id, dx, dy) for e in elements]
+        tag = {
+            e["id"]: e["customData"]["node"]
+            for e in elements
+            if isinstance(e.get("customData"), dict) and isinstance(e["customData"].get("node"), str)
+        }
+        node_map: dict[str, list[str]] = {}
+        for e in elements:
+            n = tag.get(e["id"]) or tag.get(e.get("containerId"))
+            if n:
+                node_map.setdefault(n, []).append(e["id"])
+        payload = {**op["payload"], **({"node_map": node_map} if node_map else {})}
         conn.execute(
-            "UPDATE agent_ops SET status='placed', elements_json=?, box_json=? WHERE id=?",
-            (json.dumps(placed), json.dumps({**spot, "width": width, "height": height}), op_id),
+            "UPDATE agent_ops SET status='placed', elements_json=?, box_json=?, payload_json=? WHERE id=?",
+            (
+                json.dumps(placed),
+                json.dumps({**spot, "width": width, "height": height}),
+                json.dumps(payload),
+                op_id,
+            ),
         )
         conn.commit()
         return get_op(conn, op_id)
@@ -164,26 +180,56 @@ def accept_op(
             }
         )
 
+    # A revision's Accept also tombstones the previous op's elements. Invariant: this is the only
+    # agent path that deletes, and the server enforces it here, not the client: only ids of the
+    # previous op (`<prev_id>:`, rows read from the scene) and only while (version, nonce) still
+    # equal the stamps recorded at its Accept, so anything the user touched stays (INK-140, 0100).
+    prev = get_op(conn, op["revises"]) if op.get("revises") else None
+    n_new = len(out)
+
     def guard(c):
         if get_op(c, op_id)["status"] != "placed":  # re-read under the write lock
             raise InvalidTransition(get_op(c, op_id)["status"], "accepted")
-        marks = ",".join("?" * len(out))
+        marks = ",".join("?" * n_new)
         hit = [
             r["id"]
             for r in c.execute(
                 f"SELECT id FROM scene_elements WHERE document_id=? AND id IN ({marks})",
-                [op["document_id"], *[e["id"] for e in out]],
+                [op["document_id"], *[e["id"] for e in out[:n_new]]],
             )  # tombstones count
         ]
         if hit:
             raise IdCollision(sorted(hit))
+        del out[n_new:]  # the guard may run again on a retry
+        if prev and prev["status"] == "accepted" and prev["result"]:
+            rows = {
+                r["id"]: r
+                for r in c.execute(
+                    "SELECT id, version, nonce, json FROM scene_elements"
+                    " WHERE document_id=? AND id LIKE ? ESCAPE '\\'",
+                    [op["document_id"], _like(prev["id"])],
+                )
+            }
+            for i, (v, n) in prev["result"]["stamps"].items():
+                r = rows.get(i)
+                if r is not None and (r["version"], r["nonce"]) == (v, n):  # user has not touched it
+                    out.append(
+                        {
+                            **json.loads(r["json"]),
+                            "isDeleted": True,
+                            "version": v + 1,
+                            "versionNonce": random.getrandbits(31) or 1,
+                        }
+                    )
 
     def finish(c, head):
-        stamps = {e["id"]: [e["version"], e["versionNonce"]] for e in out}
+        stamps = {e["id"]: [e["version"], e["versionNonce"]] for e in out[:n_new]}
         c.execute(
             "UPDATE agent_ops SET status='accepted', resolved_at=?, result_json=? WHERE id=?",
             (now, json.dumps({"seq": head, "stamps": stamps, "at": now}), op_id),
         )
+        if op.get("diagram_id"):
+            diagrams.commit_version(c, op)
 
     try:
         r = scenes.merge_elements(
@@ -222,6 +268,8 @@ def unaccept_op(conn: sqlite3.Connection, op_id: str) -> tuple[dict, list[str], 
     op = get_op(conn, op_id)
     if op["status"] != "accepted":
         raise InvalidTransition(op["status"], "placed")
+    if op.get("revises"):
+        raise WindowClosed(op_id)  # shortcut: restoring the old version is out of scope (decision 0100)
     age = (datetime.now(UTC) - datetime.fromisoformat(op["result"]["at"])).total_seconds()
     if age > UNACCEPT_WINDOW_S:
         raise WindowClosed(op_id)

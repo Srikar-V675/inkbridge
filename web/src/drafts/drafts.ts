@@ -16,7 +16,9 @@ export interface PendingOp {
   op_type: "write_text" | "draw_diagram";
   payload: {
     text?: string;
-    mermaid?: string;
+    mermaid?: string; // ops queued before INK-140
+    source?: string;
+    source_kind?: "mermaid" | "graph";
     anchor?: string;
     font_size?: number;
     wrap_chars?: number;

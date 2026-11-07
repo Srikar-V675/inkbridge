@@ -45,6 +45,8 @@ def tool(client, monkeypatch):
     now = [0.0]
     monkeypatch.setattr(write, "_clock", lambda: now[0])
 
+    self_name = ["draw_diagram"]
+
     def run(action=None, after=1, **args):
         browser = Browser(client, action, after)
 
@@ -53,8 +55,9 @@ def tool(client, monkeypatch):
             browser(seconds)
 
         monkeypatch.setattr(write, "_sleep", sleep)
-        return asyncio.run(server.mcp.call_tool("draw_diagram", {"mermaid": FLOW, **args}))
+        return asyncio.run(server.mcp.call_tool(self_name[0], {"source": FLOW, **args}))
 
+    run.name = self_name
     yield run
     server.set_client(None)
 
@@ -62,8 +65,13 @@ def tool(client, monkeypatch):
 def test_placed_diagram_returns_its_element_count(tool, client):
     out = json.loads(tool(apply, after=2).content[0].text)
     (op,) = client.get("/documents/default/ops").json()["ops"]
-    assert out == {"op_id": op["id"], "status": "placed", "element_count": 3}
-    assert op["type"] == "draw_diagram" and op["payload"]["mermaid"] == FLOW
+    assert out == {
+        "op_id": op["id"],
+        "status": "placed",
+        "element_count": 3,
+        "diagram_id": op["diagram_id"],
+    }
+    assert op["type"] == "draw_diagram" and op["payload"]["source"] == FLOW
 
 
 def test_invalid_mermaid_reported_by_the_browser_is_a_tool_error(tool, client):
@@ -106,7 +114,7 @@ def test_browser_finishing_as_the_wait_ends_still_counts(tool, client, monkeypat
 @pytest.mark.parametrize("source", ["sequenceDiagram\n  A->>B: hi", "classDiagram\n  A <|-- B"])
 def test_non_flowcharts_are_refused_before_any_op_exists(tool, client, source):
     with pytest.raises(ToolError, match="only Mermaid flowcharts are supported"):
-        tool(mermaid=source)
+        tool(source=source)
     assert client.get("/documents/default/ops").json()["ops"] == []
 
 
@@ -149,3 +157,26 @@ def test_draw_diagram_question_id(tool, client):
     tool(apply, after=2, question_id=q, relation="diagram")
     (op,) = client.get("/documents/default/ops").json()["ops"]
     assert op["payload"]["question_id"] == q and op["payload"]["relation"] == "diagram"
+
+
+def test_graph_source_and_from_chunks_reach_the_api(tool, client):
+    graph = json.dumps({"nodes": [{"id": "a", "label": "A"}], "edges": []})
+    tool(apply, after=2, source=graph, source_kind="graph")
+    (op,) = client.get("/documents/default/ops").json()["ops"]
+    assert op["payload"]["source_kind"] == "graph" and op["payload"]["source"] == graph
+    with pytest.raises(ToolError, match="chunk_not_found"):
+        tool(from_chunks=["nope"])
+
+
+def test_edit_diagram_revises_an_accepted_diagram_only(tool, client):
+    from tests.test_drafts import accept
+
+    tool(apply, after=2)
+    (op,) = client.get("/documents/default/ops").json()["ops"]
+    tool.name[0] = "edit_diagram"
+    with pytest.raises(ToolError, match="not been accepted"):
+        tool(apply, after=2, diagram_id=op["diagram_id"])
+    accept(client, op["id"])
+    out = json.loads(tool(apply, after=2, diagram_id=op["diagram_id"]).content[0].text)
+    assert out["status"] == "placed" and out["revises"] == op["id"]
+    assert out["diagram_id"] == op["diagram_id"]

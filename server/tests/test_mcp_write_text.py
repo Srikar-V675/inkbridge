@@ -94,7 +94,7 @@ def test_write_text_errors_say_what_to_do(mcp_client):
 
 def test_tools_are_registered():
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
-    assert {"write_text", "create_canvas", "draw_diagram"} <= names
+    assert {"write_text", "create_canvas", "draw_diagram", "edit_diagram"} <= names
 
 
 def test_open_drafts_per_canvas_are_capped(mcp_client, monkeypatch):

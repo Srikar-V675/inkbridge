@@ -19,6 +19,7 @@ from typing import Any
 from inkbridge.agent import placement
 from inkbridge.agent.attention import attention
 from inkbridge.canvas.hashes import bbox_of
+from inkbridge.db import diagrams
 from inkbridge.db import tasks as tasks_db
 from inkbridge.db.common import DocumentNotFound, _now
 from inkbridge.db.documents import document_exists, get_scene
@@ -116,6 +117,8 @@ def _row_dict(row: sqlite3.Row) -> dict:
         "box": json.loads(row["box_json"]) if row["box_json"] else None,
         "resolved_at": row["resolved_at"],
         "question_id": row["question_id"],
+        "diagram_id": row["diagram_id"],
+        "revises": row["revises"],
     }
 
 
@@ -264,7 +267,7 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id
             stored = {
                 k: v
                 for k, v in existing["payload"].items()
-                if k not in ("placement", "id_prefix", "font_size", "wrap_chars", "anchor_resolved")
+                if k not in ("placement", "id_prefix", "font_size", "wrap_chars", "anchor_resolved", "node_map")
             }
             if (existing["document_id"], existing["type"], stored) != (
                 document_id,
@@ -321,9 +324,12 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id
         placement.connectors_of(elements),
     )
 
+    diagram_id, revises = (
+        diagrams.attach(conn, document_id, oid, payload) if op_type == "draw_diagram" else (None, None)
+    )
     conn.execute(
         "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at,"
-        " question_id, task_id) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+        " question_id, task_id, diagram_id, revises) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)",
         (
             oid,
             document_id,
@@ -332,6 +338,8 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id
             _now(),
             payload.get("question_id"),
             task_id,
+            diagram_id,
+            revises,
         ),
     )
     conn.commit()

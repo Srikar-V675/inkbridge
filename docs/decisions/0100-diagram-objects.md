@@ -1,0 +1,12 @@
+# 0100: Diagram objects and revisions (INK-140)
+
+Date: 2026-11-08. Migration 0017.
+
+- **Row model.** `diagrams` has one row per diagram. It is created with the first `draw_diagram` op (`current_op` = that op, `version` 0). Only Accept moves `version`, `source`, `source_kind`, `node_map_json`, `from_chunks_json` and `current_op`. A rejected or expired revision leaves the diagram as it was.
+- **Revision = a `draw_diagram` op with `diagram_id`.** No new op type and no edit or delete op, so invariant N1 text stays true. The server sets `agent_ops.diagram_id` and `revises` (the diagram's current op). Revising needs the current op `accepted` (409 `diagram_not_accepted`); an unknown id is 422 `diagram_not_found`.
+- **Accept of a revision replaces only untouched elements.** It tombstones the previous op's elements whose `(version, nonce)` still equal the stamps recorded at its Accept (the unaccept rule). Only `<prev_op>:` ids read from the stored scene, only inside Accept, enforced in `db/drafts.py` and covered by `test_revision_accept_replaces_unchanged_keeps_user_changed` (fails without the stamp check). Elements the user touched stay.
+- **Unaccept of a revision is refused** (`window_closed`). Shortcut: restoring the old version is out of scope.
+- **Staleness.** `from_chunks_json` = `[{chunk, text_hash}]`, snapshotted at Accept from the chunk's reading hash (decision 0005). The `stale_diagram` detector (0.7) fires when an active chunk's current `text_hash` differs from the snapshot; no reading at snapshot or now means no offer. Moved ink changes no reading hash, so it raises nothing. Shortcuts: a chunk replaced by a new id is skipped (no successor follow); the whole draft is placed as one block (no "unchanged nodes keep their position"); no groups or radial/tree layouts.
+- **Payload.** `source` + `source_kind` (`mermaid` | `graph`). The old `mermaid` key is accepted as an alias; the browser falls back to `payload.mermaid` for ops queued before. Graph IR is validated server-side (`agent/diagram_ir.py`) and laid out in the browser (`web/src/drafts/graphLayout.ts`, simple layered layout).
+- **Node map.** Derived server-side at measure time from `customData.node` on node elements and their bound text, stored as `payload.node_map`, copied to the diagram at Accept. If the browser drops `customData.node` it is `{}`; nothing else depends on it yet.
+- The Ask runner denies `edit_diagram` by default (not in any mode's tool list).
