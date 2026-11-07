@@ -153,3 +153,50 @@ def test_unaccept_of_revision_refused(client):
     accept(client, b["id"])
     r = client.post(f"/ops/{b['id']}/unaccept")
     assert r.status_code == 409 and r.json()["detail"]["code"] == "window_closed"
+
+
+# --- stale_diagram offers ---------------------------------------------------------------------
+
+
+def accepted_from(client, chunk):
+    op = draw(client, from_chunks=[chunk["id"]]).json()
+    measure(client, op)
+    assert accept(client, op["id"]).status_code == 200
+    return op
+
+
+def test_stale_diagram_when_reading_changes(client):
+    _, (c,) = chunks(client, "plan A")
+    op = accepted_from(client, c)
+    assert of_kind("stale_diagram") == []
+    recognise(c, "plan B")
+    (found,) = of_kind("stale_diagram")
+    assert found.anchor == c["id"]
+    assert found.payload["action"] == "diagram" and found.payload["diagram"] == op["diagram_id"]
+
+
+def test_moved_ink_raises_nothing(client):
+    canvas, (c,) = chunks(client, "plan A")
+    accepted_from(client, c)
+    for e in canvas.elements:  # same ink 40 px right: content hash same, absolute position changed
+        e["x"] += 40
+    canvas.put()
+    moved = canvas.chunk_of("r00")
+    assert moved["text_hash"] == c["text_hash"]
+    recognise(moved, "plan A")
+    assert of_kind("stale_diagram") == []
+
+
+def test_unaccepted_diagram_never_stale(client):
+    _, (c,) = chunks(client, "plan A")
+    op = draw(client, from_chunks=[c["id"]]).json()
+    measure(client, op)
+    recognise(c, "plan B")
+    assert of_kind("stale_diagram") == []
+
+
+def test_no_baseline_no_offer(client):
+    _, (c,) = chunks(client, None)
+    accepted_from(client, c)
+    recognise(c, "plan B")
+    assert of_kind("stale_diagram") == []
