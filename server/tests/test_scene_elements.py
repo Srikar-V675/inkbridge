@@ -93,3 +93,128 @@ def test_fresh_database_has_the_table(tmp_path):
     info = conn.execute("PRAGMA index_info(scene_elements_seq)").fetchall()
     assert [r["name"] for r in info] == ["document_id", "seq"]
     conn.close()
+
+
+# --- saving rows (Task 2) ---------------------------------------------------------------------
+
+from datetime import UTC, datetime, timedelta
+
+from tests.test_ops_api import OPS, write
+
+SCENE = "/documents/default/scene"
+
+
+def el(eid, v=1, **extra):
+    return {
+        "id": eid,
+        "type": "freedraw",
+        "x": 0,
+        "y": 0,
+        "version": v,
+        "versionNonce": v,
+        "points": [[0, 0], [5, 5]],
+        "pressures": [0.5, 0.7],
+        "simulatePressure": False,
+        **extra,
+    }
+
+
+def head(client):
+    return client.get(SCENE).json()["version"]
+
+
+def put(client, elements, delta=False):
+    r = client.put(SCENE, json={"base_version": head(client), "elements": elements, "delta": delta})
+    assert r.status_code == 200, r.text
+    return r.json()["version"]
+
+
+def rows(order="pos"):
+    conn = db.connect()
+    try:
+        return conn.execute(f"SELECT * FROM scene_elements ORDER BY {order}").fetchall()
+    finally:
+        conn.close()
+
+
+def later(days):
+    return (datetime.now(UTC) + timedelta(days=days)).isoformat()
+
+
+def test_save_writes_only_changed_rows(client):
+    first = put(client, [el("a"), el("b"), el("c")])
+    assert {r["seq"] for r in rows()} == {first}
+    second = put(client, [el("b", 2, x=9), el("d")], delta=True)
+    by_id = {r["id"]: r for r in rows()}
+    assert (by_id["a"]["seq"], by_id["c"]["seq"]) == (first, first)
+    assert (by_id["b"]["seq"], by_id["d"]["seq"]) == (second, second)
+    assert by_id["b"]["version"] == 2
+    assert [r["id"] for r in rows()] == ["a", "b", "c", "d"]  # slots kept, new id appended
+    assert head(client) == second
+
+
+def test_row_json_keeps_pressures_and_float_spelling(client):
+    put(client, [el("a", pressures=[0.5, 0.7], points=[[0, 0], [1.25, 3]])])
+    stored = json.loads(rows()[0]["json"])
+    assert stored["pressures"] == [0.5, 0.7] and stored["simulatePressure"] is False
+    assert stored["points"] == [[0, 0], [1.25, 3]]
+
+
+def test_deleted_element_becomes_a_deleted_row_with_full_json(client):
+    put(client, [el("a")])
+    put(client, [el("a", 2, isDeleted=True)], delta=True)
+    r = rows()[0]
+    assert r["is_deleted"] == 1 and json.loads(r["json"])["points"] == [[0, 0], [5, 5]]
+
+
+def test_full_put_drops_omitted_rows(client):
+    put(client, [el("a"), el("b")])
+    put(client, [el("a")])
+    assert [r["id"] for r in rows()] == ["a"]
+
+
+def test_undo_of_a_deleted_element_revives_the_row(client):
+    put(client, [el("a"), el("b")])
+    put(client, [el("a", 2, isDeleted=True)], delta=True)
+    pos = {r["id"]: r["pos"] for r in rows()}
+    put(client, [el("a", 3)], delta=True)
+    again = {r["id"]: r for r in rows()}["a"]
+    assert again["is_deleted"] == 0 and again["pos"] == pos["a"] and again["version"] == 3
+
+
+def shrink(days=15):
+    conn = db.connect()
+    try:
+        n = db.shrink_tombstones(conn, "default", now=later(days))
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
+def test_tombstones_shrink_after_14_days(client):
+    put(client, [el("a"), el("b")])
+    seq = put(client, [el("a", 2, isDeleted=True)], delta=True)
+    assert shrink(13) == 0
+    assert "points" in rows()[0]["json"]
+    assert shrink(15) == 1
+    a, b = rows()
+    assert json.loads(a["json"]) == {"id": "a", "version": 2, "versionNonce": 2, "isDeleted": True}
+    assert (a["seq"], a["version"], a["is_deleted"]) == (seq, 2, 1)
+    assert "points" in b["json"]  # a live row is untouched
+    conn = db.connect()
+    assert [e["id"] for e in json.loads(db.get_scene(conn, "default")[1])] == ["b"]
+    stubbed = json.loads(db.get_scene(conn, "default", stubs=True)[1])
+    assert [e["id"] for e in stubbed] == ["a", "b"]
+    conn.close()
+    put(client, [el("a", 3)], delta=True)  # undo after the shrink restores a full row
+    assert "points" in {r["id"]: r for r in rows()}["a"]["json"]
+
+
+def test_op_payload_naming_a_tombstoned_id_is_refused(client):
+    put(client, [el("gone"), el("kept")])
+    put(client, [el("gone", 2, isDeleted=True)], delta=True)
+    assert shrink(15) == 1
+    r = write(client, text="gone")
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "existing_element_id"
+    assert client.get(OPS).json()["ops"] == []

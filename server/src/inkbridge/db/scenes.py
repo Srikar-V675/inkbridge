@@ -16,6 +16,7 @@ log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never M
 from inkbridge.db.chunks import _gc_orphans, _sync_chunks
 from inkbridge.db.common import DocumentNotFound, _now
 from inkbridge.db.documents import get_scene
+from inkbridge.db.elements import read_rows, remove_rows, shrink_tombstones, write_changed
 from inkbridge.db.regions import _refresh_regions
 
 # (document, save key) -> version that save produced (INK-083, decision 0040).
@@ -60,7 +61,8 @@ def put_scene(
 
     With `delta`, `elements_json` holds only the elements that changed since base_version: each
     replaces the stored element with its id (in place) or is appended. Nothing is removed, because
-    Excalidraw keeps deleted elements (`isDeleted`) in the scene. base_version pins the stored
+    Excalidraw keeps deleted elements (`isDeleted`) in the scene. Only the rows whose element
+    changed are written (INK-110); a full save also drops stored ids it omits. base_version pins the stored
     scene to what the client diffed against, so a stale client gets a conflict, never a bad merge.
 
     BEGIN IMMEDIATE takes the write lock before the old scene is read, and the UPDATE compares
@@ -81,7 +83,7 @@ def put_scene(
     timings["lock"] = round((t_lock - t_start) * 1000, 1)
     try:
         old = conn.execute(
-            "SELECT version, elements_json FROM scenes WHERE document_id = ?", (document_id,)
+            "SELECT version FROM scenes WHERE document_id = ?", (document_id,)
         ).fetchone()
         if old is None:
             raise DocumentNotFound(document_id)
@@ -90,31 +92,32 @@ def put_scene(
             return _applied[(document_id, save_key)]
         if old["version"] != base_version:
             raise VersionConflict(old["version"])
-        old_elements = json.loads(old["elements_json"])
+        t0 = time.perf_counter()
+        old_elements = [json.loads(r["json"]) for r in read_rows(conn, document_id)]
         if delta:
-            elements_json = json.dumps(
-                _apply_delta(old_elements, json.loads(elements_json)),
-                ensure_ascii=False,
-                separators=(",", ":"),
-            )
+            elements = _apply_delta(old_elements, json.loads(elements_json))
+        else:
+            elements = json.loads(elements_json)
         cur = conn.execute(
-            "UPDATE scenes SET version = version + 1, elements_json = ?, updated_at = ?"
+            "UPDATE scenes SET version = version + 1, updated_at = ?"
             " WHERE document_id = ? AND version = ?",
-            (elements_json, now, document_id, base_version),
+            (now, document_id, base_version),
         )
         if cur.rowcount == 0:  # second guard: only reachable if the write lock was not held
             raise VersionConflict(get_scene(conn, document_id)[0])
-        t0 = time.perf_counter()
-        elements = json.loads(elements_json)
         if max_elements is not None and len(elements) > max_elements:
             raise SceneTooLarge(len(elements))
+        by_id = {e["id"]: e for e in elements}
+        t1 = time.perf_counter()
+        changed = _changed_ids(old_elements, by_id)
+        removed = {e["id"] for e in old_elements} - by_id.keys()  # only a full save drops ids
+        write_changed(conn, document_id, elements, changed - removed, base_version + 1, now)
+        remove_rows(conn, document_id, removed)
+        shrink_tombstones(conn, document_id, now)
         conn.execute(
             "UPDATE scenes SET element_count = ? WHERE document_id = ?",
             (count_live(elements), document_id),
         )
-        by_id = {e["id"]: e for e in elements}
-        t1 = time.perf_counter()
-        changed = _changed_ids(old_elements, by_id)
         t2 = time.perf_counter()
         _refresh_regions(conn, document_id, by_id, changed, now)
         t3 = time.perf_counter()
