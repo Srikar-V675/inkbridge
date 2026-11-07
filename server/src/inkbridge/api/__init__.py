@@ -24,6 +24,7 @@ from inkbridge.api import (
     overrides,
     questions,
     regions,
+    retrieve,
     search,
     sync,
     ws,
@@ -88,6 +89,7 @@ app.include_router(ops.router)
 app.include_router(overrides.router)
 app.include_router(questions.router)
 app.include_router(regions.router)
+app.include_router(retrieve.router)
 app.include_router(search.router)
 app.include_router(sync.router)
 app.include_router(ws.router)

@@ -74,9 +74,13 @@ def test_migrate_creates_all_tables_and_columns(conn):
         assert columns(conn, table) == cols, table
 
 
+def migration_versions():
+    """Versions from the file names: reserved numbers can leave gaps while tickets are in flight."""
+    return sorted(int(f.name.split("_")[0]) for f in db.MIGRATIONS_DIR.glob("*.sql"))
+
+
 def test_migrate_twice_is_noop(conn):
-    files = sorted(db.MIGRATIONS_DIR.glob("*.sql"))
-    assert db.migrate(conn) == list(range(1, len(files) + 1))
+    assert db.migrate(conn) == migration_versions()
     assert db.migrate(conn) == []
 
 
@@ -143,8 +147,7 @@ def test_second_migrator_waits_for_the_first_then_applies_nothing(tmp_path, monk
     release.set()
     a.join(10)
     b.join(10)
-    files = sorted(db.MIGRATIONS_DIR.glob("*.sql"))
-    assert results["a"] == list(range(1, len(files) + 1))
+    assert results["a"] == migration_versions()
     assert results["b"] == []
 
 

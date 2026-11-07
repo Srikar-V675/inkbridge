@@ -102,6 +102,13 @@ def answer_question(
         " WHERE id = ? AND status = 'pending'",
         (answer_md, json.dumps(sources), question_id),
     )
+    if cur.rowcount:  # same transaction as the answer, so the index never lags (INK-136)
+        conn.execute("DELETE FROM answer_fts WHERE question_id = ?", (question_id,))
+        conn.execute(
+            "INSERT INTO answer_fts (question_id, document_id, question, answer)"
+            " SELECT id, document_id, text, answer_md FROM questions WHERE id = ?",
+            (question_id,),
+        )
     return _finish(conn, question_id, cur.rowcount)
 
 
