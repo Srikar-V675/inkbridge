@@ -5,7 +5,9 @@ import { CaptureUpdateAction } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { readRoute } from "../lib/route";
 import { PaperDots } from "./PaperDots";
-import { PropsHost } from "./props/PropsCard";
+import { PropsCard } from "./props/PropsCard";
+import { loadFont, measure } from "./props/measureText";
+import { createPropsStore } from "./props/propsStore";
 import { createRailStore } from "./railStore";
 import { penColours } from "./shellLogic";
 import { ToolRail, type RailStore } from "./ToolRail";
@@ -29,7 +31,7 @@ export interface ShellProps {
 export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, children }: ShellProps) {
   const scale = useSyncExternalStore(uiScale.subscribe, uiScale.get); // UI size, INK-177
   // Built in an effect: creating it calls the API, which must not happen while React renders.
-  const [store, setStore] = useState<RailStore | null>(null);
+  const [stores, setStores] = useState<{ rail: RailStore; props: ReturnType<typeof createPropsStore> } | null>(null);
   useEffect(() => {
     if (!api) return;
     const css = getComputedStyle(document.documentElement);
@@ -44,10 +46,23 @@ export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, ch
         return () => cancelAnimationFrame(id);
       },
     });
-    setStore(s);
+    const p = createPropsStore(api as never, {
+      never: CaptureUpdateAction.NEVER,
+      immediately: CaptureUpdateAction.IMMEDIATELY,
+      mac: /Mac|iPhone|iPad/.test(navigator.platform),
+      container: () => document.querySelector(".excalidraw"),
+      makeKey: (init) => new KeyboardEvent("keydown", init),
+      nonce: () => Math.floor(Math.random() * 2 ** 31),
+      now: () => Date.now(),
+      measure,
+      loadFont,
+      freedrawKind: () => (s.get().tool === "highlighter" ? "highlighter" : "pen"),
+    });
+    setStores({ rail: s, props: p });
     return () => {
       s.dispose();
-      setStore(null);
+      p.dispose();
+      setStores(null);
     };
   }, [api]);
 
@@ -56,11 +71,11 @@ export function Shell({ api, title, status, chunks, overlays, onAsk, askOpen, ch
       {api && <PaperDots api={api} />}
       <div className="ink-shell__canvas">{children}</div>
       <TopBar title={title} status={status} chunks={chunks} onAsk={onAsk} askOpen={askOpen} />
-      {store && <ToolRail store={store} />}
-      {store && <ZoomControl store={store} />}
+      {stores && <ToolRail store={stores.rail} toggleCard={stores.props.toggleCard} />}
+      {stores && <ZoomControl store={stores.rail} />}
       <div className="ink-shell__overlays">{overlays}</div>
       {/* After the overlays at the same layer, so the card sits above chunk chips (INK-175, 0075). */}
-      {api && <PropsHost api={api} />}
+      {stores && <PropsCard store={stores.props} rail={stores.rail} />}
     </div>
   );
 }
