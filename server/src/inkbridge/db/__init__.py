@@ -105,6 +105,7 @@ from inkbridge.db.scenes import (
     put_scene,
     was_applied,
 )
+from inkbridge.db.watch import list_watches, put_watch
 
 __all__ = [
     "APPLIED_CAP",
@@ -171,6 +172,7 @@ __all__ = [
     "list_drafts",
     "list_links",
     "list_regions",
+    "list_watches",
     "mark_opened",
     "mark_png_fresh",
     "measure_op",
@@ -179,6 +181,7 @@ __all__ = [
     "migrate",
     "patch_document",
     "put_scene",
+    "put_watch",
     "read_fresh_crop",
     "read_rows",
     "recognition_candidates",
