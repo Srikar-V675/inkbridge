@@ -21,6 +21,8 @@ export interface Question {
   created_at: string;
   runner_status: "pending" | "running" | "failed";
   runner_error: string | null;
+  partial_answer: string | null; // streamed text of a pending question (INK-176)
+  partial_seq: number;
 }
 
 export function applyQuestionUpdate(list: Question[], q: Question): Question[] {
@@ -29,6 +31,30 @@ export function applyQuestionUpdate(list: Question[], q: Question): Question[] {
   const next = list.slice();
   next[i] = q;
   return next;
+}
+
+export interface QuestionDelta { id: string; seq: number; text: string }
+export const isStreaming = (q: Question) => q.status === "pending" && !!q.partial_answer;
+
+/** seq == partial_seq + 1 appends; an older seq is a duplicate; anything else needs a refetch. */
+export function applyQuestionDelta(list: Question[], d: QuestionDelta): { list: Question[]; gap: boolean } {
+  const i = list.findIndex((x) => x.id === d.id);
+  const q = list[i];
+  if (!q || q.status !== "pending") return { list, gap: true };
+  if (d.seq <= q.partial_seq) return { list, gap: false };
+  if (d.seq !== q.partial_seq + 1) return { list, gap: true };
+  const next = list.slice();
+  next[i] = { ...q, partial_answer: (q.partial_answer ?? "") + d.text, partial_seq: d.seq };
+  return { list: next, gap: false };
+}
+
+const deltaListeners = new Set<(d: QuestionDelta) => void>();
+export function subscribeDeltas(fn: (d: QuestionDelta) => void): () => void {
+  deltaListeners.add(fn);
+  return () => void deltaListeners.delete(fn);
+}
+export function publishDelta(d: QuestionDelta) {
+  deltaListeners.forEach((fn) => fn(d));
 }
 
 // App.tsx feeds the socket into this; AskPanel listens. null = refetch (the socket reconnected).

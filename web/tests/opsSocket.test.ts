@@ -176,6 +176,19 @@ describe("OpsSocket", () => {
     assert.deepEqual(got, [{ id: "q1" }]);
   });
 
+  it("passes question.delta to its hook", () => {
+    let sock!: FakeSocket;
+    const got: unknown[] = [];
+    new OpsSocket({
+      url: "x",
+      onOp: async () => measured("x"),
+      onQuestionDelta: (d) => got.push(d),
+      createSocket: () => (sock = new FakeSocket()),
+    }).start();
+    sock.push({ type: "question.delta", id: "q1", seq: 1, text: "he" });
+    assert.deepEqual(got, [{ type: "question.delta", id: "q1", seq: 1, text: "he" }]);
+  });
+
   it("passes scene.delta to its hook", () => {
     let sock!: FakeSocket;
     const got: unknown[] = [];

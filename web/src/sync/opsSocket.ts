@@ -2,12 +2,12 @@
 // Reconnects with backoff; the server replays pending ops on every connect (a replay re-measures)
 // and placed ops as `op.placed`. The browser only measures: it answers `op.measured` and the server
 // places the draft (INK-114, INK-115). Ops are measured one at a time, and an op already being
-// measured is not started twice. question.update
+// measured is not started twice. question.update and question.delta (INK-176)
 // (INK-104) is handed to onQuestionUpdate so the Ask panel needs no polling. scene.delta (INK-112)
 // goes to onSceneDelta.
 
 import type { PendingOp } from "../drafts/drafts";
-import type { Question } from "../ask/ask";
+import type { Question, QuestionDelta } from "../ask/ask";
 import type { SceneDelta } from "./liveDelta.ts";
 import type { Offer } from "../offers/offers.ts";
 
@@ -46,6 +46,7 @@ export interface OpsSocketOptions {
   onChunksUpdated?: (msg: ChunksUpdated) => void; // crop sync hooks in here (INK-057)
   onOpUpdated?: (msg: OpUpdated) => void;
   onQuestionUpdate?: (question: Question) => void;
+  onQuestionDelta?: (d: QuestionDelta) => void;
   onSceneDelta?: (d: SceneDelta) => void;
   onOfferCreated?: (o: Offer) => void;
   onOfferUpdated?: (o: Offer) => void;
@@ -140,6 +141,8 @@ export class OpsSocket {
         return this.o.onOfferCreated?.((msg as unknown as { offer: Offer }).offer);
       case "offer.updated":
         return this.o.onOfferUpdated?.((msg as unknown as { offer: Offer }).offer);
+      case "question.delta":
+        return this.o.onQuestionDelta?.(msg as unknown as QuestionDelta);
       case "question.update":
         return this.o.onQuestionUpdate?.((msg as { question: Question }).question);
     }
