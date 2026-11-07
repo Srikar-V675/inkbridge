@@ -161,10 +161,11 @@ def list_offers(
     rows = offers_db.list_offers(conn, document_id, status, swept)
     publish_updates(swept)
     waiting = 0
-    if status in (None, "open") and offers_db.get_focus(conn, document_id):
+    focus = offers_db.get_focus(conn, document_id)
+    if status in (None, "open") and focus:
         waiting = sum(1 for o in rows if o["status"] == "open")
         rows = [o for o in rows if o["status"] != "open"]
-    return {"offers": rows, "waiting": waiting}
+    return {"offers": rows, "waiting": waiting, "focus": focus}
 
 
 def _resolve(fn, offer_id: str, conn) -> dict:

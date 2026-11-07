@@ -88,6 +88,14 @@ describe("offer store", () => {
     assert.equal(s.get().offers.length, 0);
   });
 
+  it("applies focus from the list when given", () => {
+    const s = createOfferStore();
+    s.set([], 3, true);
+    assert.equal(s.get().focus, true);
+    s.set([], 0);
+    assert.equal(s.get().focus, true);
+  });
+
   it("holds focus and the waiting count", () => {
     const s = createOfferStore();
     let n = 0;
@@ -100,23 +108,39 @@ describe("offer store", () => {
 
 describe("attention", () => {
   const view = { x: 0, y: 0, width: 1, height: 1, zoom: 1 };
-  it("never drops pen frames and sends one view per throttle window", () => {
-    const sent: unknown[] = [];
+  it("never drops pen frames, throttles views and sends the last one after the window", () => {
+    const sent: { pen: boolean; view: unknown }[] = [];
+    const timers: (() => void)[] = [];
     let t = 1000;
-    const a = createAttention((f) => sent.push(f), () => t, 500);
+    const a = createAttention((f) => sent.push(f), () => t, 500, (fn) => timers.push(fn));
     a.pen(true, view);
     a.pen(false, view);
     assert.equal(sent.length, 2);
     t += 500;
     a.view(view);
     t += 100;
-    a.view(view);
+    a.view({ ...view, x: 5 });
     t += 100;
-    a.view(view);
+    a.view({ ...view, x: 9 });
     assert.equal(sent.length, 3);
-    t += 500;
+    assert.equal(timers.length, 1);
+    t += 300;
+    timers[0]();
+    assert.deepEqual(sent[3], { pen: false, view: { ...view, x: 9 } });
+    a.view(view, true); // reconnect bypasses the throttle
+    assert.equal(sent.length, 5);
+  });
+
+  it("treats a pen-down with no pen event for 5 s as a missed pen-up", () => {
+    const sent: { pen: boolean }[] = [];
+    let t = 0;
+    const a = createAttention((f) => sent.push(f), () => t);
+    a.pen(true, view);
+    t += 1000;
     a.view(view);
-    assert.equal(sent.length, 4);
+    t += 5000;
+    a.view(view);
+    assert.deepEqual(sent.map((f) => f.pen), [true, true, false]);
   });
 
   it("maps app state to scene units and refuses non-finite numbers", () => {

@@ -356,11 +356,16 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     const att = createAttention((a) => socket.sendAttention(a), () => performance.now());
     const viewNow = () => (apiRef.current ? toAttentionView(apiRef.current.getAppState()) : null);
     const sendView = () => att.view(viewNow());
+    const releasePen = () => att.pen(false, viewNow()); // a pen-up that never arrives must not hold offers back
     const offAtt = apiReady.promise.then((api) => [
-      api.onPointerDown((tool) => tool.type === "freedraw" && att.pen(true, viewNow())),
+      api.onPointerDown((tool) => (tool.type === "freedraw" || tool.type === "eraser") && att.pen(true, viewNow())),
       api.onPointerUp(() => att.pen(false, viewNow())),
       api.onScrollChange(sendView),
     ]);
+    const onHide = () => document.visibilityState === "hidden" && releasePen();
+    window.addEventListener("pointercancel", releasePen, true);
+    window.addEventListener("blur", releasePen);
+    document.addEventListener("visibilitychange", onHide);
     const socket = new OpsSocket({
       url: `${scheme}://${window.location.host}/ws?document=${encodeURIComponent(route.canvas)}&device=${encodeURIComponent(tab)}`,
       onOp: (op) => measureOp(op),
@@ -377,8 +382,8 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
         if (c) refetch(); // placed ops are replayed too, but a verdict made while down is only seen here
         if (c) void live.catchUp(); // a delta lost while the socket was down is gone
         if (c) publishQuestion(null); // pushes sent while the socket was down are lost
-        if (c) void listOffers(route.canvas).then((r) => offerStore.set(r.offers, r.waiting)).catch(() => {}); // same for offers
-        if (c) sendView(); // the server holds offers until it has seen the view
+        if (c) void listOffers(route.canvas).then((r) => offerStore.set(r.offers, r.waiting, r.focus)).catch(() => {}); // same for offers
+        if (c) att.view(viewNow(), true); // the server holds offers until it has seen the view
       },
       onQuestionUpdate: publishQuestion,
       onSceneDelta: (d) => live.receive(d),
@@ -395,6 +400,9 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       window.clearTimeout(fallback);
       cancel();
       socket.dispose();
+      window.removeEventListener("pointercancel", releasePen, true);
+      window.removeEventListener("blur", releasePen);
+      document.removeEventListener("visibilitychange", onHide);
       void offAtt.then((offs) => offs.forEach((off) => off()));
       wire.off();
       offWake();

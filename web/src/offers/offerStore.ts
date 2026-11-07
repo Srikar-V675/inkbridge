@@ -20,7 +20,8 @@ export function createOfferStore() {
       listeners.add(l);
       return () => void listeners.delete(l);
     },
-    set: (offers: Offer[], waiting: number) => put({ offers: offers.filter((o) => o.status === "open"), waiting }),
+    set: (offers: Offer[], waiting: number, focus?: boolean) =>
+      put({ offers: offers.filter((o) => o.status === "open"), waiting, ...(focus !== undefined && { focus }) }),
     upsert(o: Offer) {
       const rest = state.offers.filter((x) => x.id !== o.id);
       put({ offers: o.status === "open" ? [...rest, o] : rest });

@@ -14,6 +14,7 @@ import {
   canvasLink,
   chipLabel,
   dismissOffer,
+  linksText,
   listOffers,
   obsidianUrl,
   planeStyle,
@@ -62,9 +63,11 @@ function PopoverBody({ offer, store, close, onOpenAsk }: { offer: Offer; store: 
                   Open in Obsidian
                 </a>
               )}
-              <Button variant="secondary" onClick={() => void run(() => addLinks(offer, window.location.origin))}>
-                Add links beside
-              </Button>
+              {linksText(offer, window.location.origin) && (
+                <Button variant="secondary" onClick={() => void run(() => addLinks(offer, window.location.origin))}>
+                  Add links beside
+                </Button>
+              )}
             </>
           )}
         </>
@@ -147,7 +150,7 @@ export function OfferLayer(props: { api: ExcalidrawImperativeAPI; canvas: string
   );
 }
 
-const reload = (store: OfferStore, canvas: string) => listOffers(canvas).then((r) => store.set(r.offers, r.waiting)).catch(() => {});
+const reload = (store: OfferStore, canvas: string) => listOffers(canvas).then((r) => store.set(r.offers, r.waiting, r.focus)).catch(() => {});
 
 function FocusBar({ store, canvas }: { store: OfferStore; canvas: string }) {
   const { waiting } = useSyncExternalStore(store.subscribe, store.get);

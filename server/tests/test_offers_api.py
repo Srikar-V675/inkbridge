@@ -148,7 +148,7 @@ def test_focus_holds_and_releases(client, chunk, clock):
         open_gate(ws, clock)
         assert client.put("/documents/default/focus", json={"on": True}).json() == {"on": True}
         offer = post(client, chunk)
-        assert client.get("/documents/default/offers").json() == {"offers": [], "waiting": 1}
+        assert client.get("/documents/default/offers").json() == {"offers": [], "waiting": 1, "focus": True}
         q = client.post("/documents/default/questions", json={"text": "hi"})
         assert q.status_code == 201
         assert recv(ws)["type"] == "question.update"  # asks ignore Focus, offers stay held
@@ -160,10 +160,11 @@ def test_focus_holds_and_releases(client, chunk, clock):
 def test_list_reports_waiting_while_focus_on(client, chunk, clock):
     post(client, chunk)
     post(client, chunk, kind="other")
-    assert client.get("/documents/default/offers?status=open").json()["waiting"] == 0
+    first = client.get("/documents/default/offers?status=open").json()
+    assert first["waiting"] == 0 and first["focus"] is False
     client.put("/documents/default/focus", json={"on": True})
     body = client.get("/documents/default/offers?status=open").json()
-    assert body["offers"] == [] and body["waiting"] == 2
+    assert body["offers"] == [] and body["waiting"] == 2 and body["focus"] is True
 
 
 def test_tap_and_dismiss(client, chunk, clock):

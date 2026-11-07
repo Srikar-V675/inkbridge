@@ -7,21 +7,48 @@ export function toAttentionView(s: { scrollX: number; scrollY: number; zoom: { v
   return Object.values(v).every(Number.isFinite) ? v : null;
 }
 
-/** Pen changes always go out; view frames at most once per throttleMs (a dropped one is carried by the next). */
-export function createAttention(send: (a: { pen: boolean; view: AttentionView | null }) => void, now: () => number, throttleMs = 500) {
+const PEN_STALE_MS = 5000; // a pen-down with no pen event for this long was a missed pen-up
+
+/**
+ * Pen changes always go out; view frames at most once per throttleMs, and the last one dropped in
+ * a window is sent when it ends. `view(v, true)` bypasses the throttle (reconnect).
+ */
+export function createAttention(
+  send: (a: { pen: boolean; view: AttentionView | null }) => void,
+  now: () => number,
+  throttleMs = 500,
+  setTimer: (fn: () => void, ms: number) => unknown = setTimeout,
+) {
   let last = -Infinity;
   let penDown = false;
+  let penAt = 0;
+  let pending: { view: AttentionView | null } | null = null;
+  const out = (view: AttentionView | null) => {
+    last = now();
+    if (penDown && last - penAt > PEN_STALE_MS) penDown = false;
+    send({ pen: penDown, view });
+  };
   return {
     pen(down: boolean, view: AttentionView | null) {
-      last = now();
       penDown = down;
-      send({ pen: down, view });
+      penAt = now();
+      pending = null;
+      out(view);
     },
-    view(view: AttentionView | null) {
-      const t = now();
-      if (t - last < throttleMs) return;
-      last = t;
-      send({ pen: penDown, view });
+    view(view: AttentionView | null, force = false) {
+      const wait = throttleMs - (now() - last);
+      if (force || wait <= 0) {
+        pending = null;
+        return out(view);
+      }
+      const armed = pending !== null;
+      pending = { view };
+      if (!armed)
+        setTimer(() => {
+          const p = pending;
+          pending = null;
+          if (p) out(p.view);
+        }, wait);
     },
   };
 }

@@ -56,9 +56,9 @@ async function call(f: Fetch, url: string, init: RequestInit, okStatus: (s: numb
 
 const doc = (canvas: string) => `/documents/${encodeURIComponent(canvas)}`;
 
-export async function listOffers(canvas: string, f: Fetch = defaultFetch): Promise<{ offers: Offer[]; waiting: number }> {
-  const r = (await call(f, `${doc(canvas)}/offers?status=open`, {})) as { offers: Offer[]; waiting?: number };
-  return { offers: r.offers, waiting: r.waiting ?? 0 };
+export async function listOffers(canvas: string, f: Fetch = defaultFetch): Promise<{ offers: Offer[]; waiting: number; focus: boolean }> {
+  const r = (await call(f, `${doc(canvas)}/offers?status=open`, {})) as { offers: Offer[]; waiting?: number; focus?: boolean };
+  return { offers: r.offers, waiting: r.waiting ?? 0, focus: r.focus === true };
 }
 
 /** A tap on an offer that is no longer open (409) is fine: the chip is stale, not broken. */
