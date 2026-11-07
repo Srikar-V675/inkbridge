@@ -14,7 +14,6 @@ from tests.integrity_check import successor_problems
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("INKBRIDGE_DB", str(tmp_path / "api.db"))
     db._applied.clear()
-    api._last_writer.clear()
     with TestClient(app) as c:  # context manager runs the lifespan (DB init)
         yield c
 

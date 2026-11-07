@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import math
 import re
@@ -190,7 +189,6 @@ def get_elements(document_id: str, conn: Conn, since: Annotated[int, Query(ge=0)
     return Response(f'{{"seq":{seq},"elements":{array}}}', media_type="application/json")
 
 
-_last_writer: dict[str, tuple[str, str]] = {}  # document -> (tab, ip) of the last save (INK-083)
 _log = logging.getLogger("inkbridge.request")
 _scene_log = logging.getLogger("inkbridge.scene")
 
@@ -210,7 +208,6 @@ def put_scene(
         else None
     )
     tab = key.split(":")[0] if key else "?"
-    replay = key is not None and db.was_applied(document_id, key)
     ip = request.client.host if request.client else "?"
     _log.info(
         "scene PUT doc=%s tab=%s ip=%s ua=%s key=%s",
@@ -221,38 +218,31 @@ def put_scene(
         x_inkbridge_save,
     )
     try:
-        version = db.put_scene(
+        # strict=False: INK-114 drops this flag (the legacy PUT keeps storing drafts until drafts leave the scene)
+        r = db.merge_elements(
             conn,
             document_id,
-            body.base_version,
-            json.dumps(body.elements, ensure_ascii=False, separators=(",", ":")),
-            delta=body.delta,
+            body.elements,
+            key=key,
+            base_seq=body.base_version,
+            strict=False,
             max_elements=MAX_ELEMENTS,
-            save_key=key,
             timings=timing,
         )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None
-    except db.VersionConflict as e:
-        detail: dict[str, Any] = {"current_version": e.current_version}
-        if last := _last_writer.get(document_id):
-            detail["last_writer"] = {"tab": last[0], "same_ip": last[1] == ip}
-        raise HTTPException(409, detail) from None
     except db.SceneTooLarge:
         raise HTTPException(422, f"too many elements (max {MAX_ELEMENTS})") from None
-    if replay:
-        return {"version": version, "timing": timing}
-    if key:
-        _last_writer[document_id] = (tab, ip)
-    ws.hub.publish(
-        document_id,
-        {
-            "type": "chunks.updated",
-            "version": version,
-            "stale_crops": db.stale_crop_ids(conn, document_id),
-        },
-    )
-    return {"version": version, "timing": timing}
+    if not r.replay and r.changed:
+        ws.hub.publish(
+            document_id,
+            {
+                "type": "chunks.updated",
+                "version": r.seq,
+                "stale_crops": db.stale_crop_ids(conn, document_id),
+            },
+        )
+    return {"version": r.seq, "seq": r.seq, "newer": r.newer, "timing": timing}
 
 
 mount_web(app, config.web_dist())  # last: every API route wins over the static paths (INK-100)

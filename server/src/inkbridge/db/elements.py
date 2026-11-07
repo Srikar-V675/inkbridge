@@ -132,14 +132,6 @@ def write_changed(
         next_pos += 1  # a harmless gap when the id already existed
 
 
-def remove_rows(conn: sqlite3.Connection, document_id: str, ids: set[str]) -> None:
-    """Hard-delete rows a full save left out (Excalidraw never omits ids; only tests do)."""
-    conn.executemany(
-        "DELETE FROM scene_elements WHERE document_id = ? AND id = ?",
-        [(document_id, i) for i in ids],
-    )
-
-
 def shrink_tombstones(conn: sqlite3.Connection, document_id: str, now: str | None = None) -> int:
     """Cut deleted rows older than TOMBSTONE_DAYS down to a stub; seq and updated_at stay."""
     cutoff = (datetime.fromisoformat(now or _now()) - timedelta(days=TOMBSTONE_DAYS)).isoformat()

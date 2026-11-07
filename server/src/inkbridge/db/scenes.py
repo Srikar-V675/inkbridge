@@ -5,6 +5,7 @@ import logging
 import sqlite3
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 from inkbridge.canvas.chunker import (
@@ -15,8 +16,15 @@ log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never M
 
 from inkbridge.db.chunks import _gc_orphans, _sync_chunks
 from inkbridge.db.common import DocumentNotFound, _now
-from inkbridge.db.documents import get_scene
-from inkbridge.db.elements import read_rows, remove_rows, shrink_tombstones, write_changed
+from inkbridge.db.elements import (
+    ElementsRefused,
+    n1_violations,
+    read_rows,
+    shrink_tombstones,
+    stamp,
+    wins,
+    write_changed,
+)
 from inkbridge.db.regions import _refresh_regions
 
 # (document, save key) -> version that save produced (INK-083, decision 0040).
@@ -24,12 +32,6 @@ from inkbridge.db.regions import _refresh_regions
 _applied: OrderedDict[tuple[str, str], int] = OrderedDict()
 APPLIED_CAP = 256
 SLOW_SAVE_S = 1.0  # a scene save slower than this is logged at warning (INK-072, decision 0027)
-
-
-class VersionConflict(Exception):
-    def __init__(self, current_version: int):
-        super().__init__(f"scene is at version {current_version}")
-        self.current_version = current_version
 
 
 def was_applied(document_id: str, save_key: str) -> bool:
@@ -46,89 +48,128 @@ def count_live(elements: list[dict]) -> int:
     return sum(1 for e in elements if not e.get("isDeleted") and not draft(e))
 
 
-def put_scene(
+@dataclass
+class MergeResult:
+    seq: int
+    newer: list[dict]
+    changed: int  # rows written
+    replay: bool = False
+
+
+def _stored(conn: sqlite3.Connection, document_id: str, ids: list[str]) -> dict[str, tuple]:
+    """id -> (version, nonce, json) for the rows that exist, tombstone stubs included."""
+    out: dict[str, tuple] = {}
+    for i in range(0, len(ids), 500):  # stay under SQLite's variable limit
+        chunk = ids[i : i + 500]
+        marks = ",".join("?" * len(chunk))
+        for r in conn.execute(
+            "SELECT id, version, nonce, json FROM scene_elements"
+            f" WHERE document_id = ? AND id IN ({marks})",
+            [document_id, *chunk],
+        ):
+            out[r["id"]] = (r["version"], r["nonce"], r["json"])
+    return out
+
+
+def merge_elements(
     conn: sqlite3.Connection,
     document_id: str,
-    base_version: int,
-    elements_json: str,
+    elements: list[dict],
+    *,
+    key: str | None = None,
+    base_seq: int | None = None,
+    strict: bool = True,
     chunker_config: ChunkerConfig | None = None,
-    delta: bool = False,
     max_elements: int | None = None,
-    save_key: str | None = None,
     timings: dict[str, float] | None = None,
-) -> int:
-    """Store the scene if base_version is current; return the new version.
+) -> MergeResult:
+    """Merge a batch of elements into the scene, one element at a time (INK-111, decision 0080).
 
-    With `delta`, `elements_json` holds only the elements that changed since base_version: each
-    replaces the stored element with its id (in place) or is appended. Nothing is removed, because
-    Excalidraw keeps deleted elements (`isDeleted`) in the scene. Only the rows whose element
-    changed are written (INK-110); a full save also drops stored ids it omits. base_version pins the stored
-    scene to what the client diffed against, so a stale client gets a conflict, never a bad merge.
+    An incoming element replaces its stored row only if it wins (`elements.wins`: higher version,
+    then lower versionNonce); a batch never deletes by omission. The head bumps once, and only if a
+    row changed; a batch that changes nothing touches no regions or chunks. `key` makes a retry a
+    no-op that returns the first result. `base_seq` (legacy PUT) also reports rows other devices
+    wrote after it. `strict` enforces N1: no draft-flagged element and no new `<op_id>:` id.
 
-    BEGIN IMMEDIATE takes the write lock before the old scene is read, and the UPDATE compares
-    the version again, so two writers with the same base_version cannot both win even if one
-    guard is lost. Regions and chunks are re-derived in the same transaction, so they never
-    disagree with the stored scene; any error rolls the whole save back.
-
-    `timings` is filled with lock, work, commit and total in ms; the timer starts before the lock
-    wait (INK-102).
+    `newer` holds the stored copy of every sent element that lost to a different (version, nonce).
+    BEGIN IMMEDIATE takes the write lock first, so the compare and the write are one step; any
+    error rolls the whole batch back. `timings` is filled with lock, work, commit and total in ms;
+    the timer starts before the lock wait (INK-102).
     """
     now = _now()
     recorded = False
     crops: list[str] = []
     timings = {} if timings is None else timings
     t_start = time.perf_counter()  # before the lock wait
-    conn.execute("BEGIN IMMEDIATE")  # read the old scene and replace it under one write lock
+    conn.execute("BEGIN IMMEDIATE")  # the write lock first; the merge is read-compare-write under it
     t_lock = time.perf_counter()
     timings["lock"] = round((t_lock - t_start) * 1000, 1)
+    t_diff = t_refresh = t_chunks = t_lock
+    write: list[dict] = []
     try:
-        old = conn.execute(
+        head_row = conn.execute(
             "SELECT version FROM scenes WHERE document_id = ?", (document_id,)
         ).fetchone()
-        if old is None:
+        if head_row is None:
             raise DocumentNotFound(document_id)
-        if save_key is not None and (document_id, save_key) in _applied:
-            conn.rollback()  # a retry of a save that already landed: replay its version
-            return _applied[(document_id, save_key)]
-        if old["version"] != base_version:
-            raise VersionConflict(old["version"])
-        t0 = time.perf_counter()
-        old_elements = [json.loads(r["json"]) for r in read_rows(conn, document_id)]
-        if delta:
-            elements = _apply_delta(old_elements, json.loads(elements_json))
-        else:
-            elements = json.loads(elements_json)
-        cur = conn.execute(
-            "UPDATE scenes SET version = version + 1, updated_at = ?"
-            " WHERE document_id = ? AND version = ?",
-            (now, document_id, base_version),
-        )
-        if cur.rowcount == 0:  # second guard: only reachable if the write lock was not held
-            raise VersionConflict(get_scene(conn, document_id)[0])
-        if max_elements is not None and len(elements) > max_elements:
-            raise SceneTooLarge(len(elements))
-        by_id = {e["id"]: e for e in elements}
-        t1 = time.perf_counter()
-        changed = _changed_ids(old_elements, by_id)
-        # A full save drops stored live ids it omits. Deleted rows stay: the web client loads live
-        # ink only, so a full save omits them without meaning to delete anything (tombstones).
-        removed = {e["id"] for e in old_elements if not e.get("isDeleted")} - by_id.keys()
-        write_changed(conn, document_id, elements, changed - removed, base_version + 1, now)
-        remove_rows(conn, document_id, removed)
-        shrink_tombstones(conn, document_id, now)
-        conn.execute(
-            "UPDATE scenes SET element_count = ? WHERE document_id = ?",
-            (count_live(elements), document_id),
-        )
-        t2 = time.perf_counter()
-        _refresh_regions(conn, document_id, by_id, changed, now)
-        t3 = time.perf_counter()
-        _sync_chunks(conn, document_id, elements, by_id, changed, now, chunker_config)
-        crops = _gc_orphans(conn, document_id, now)
-        t4 = time.perf_counter()
-        conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
-        if save_key is not None:  # recorded under the write lock, so a blocked retry sees it
-            _applied[(document_id, save_key)] = base_version + 1
+        head = head_row["version"]
+        if key is not None and (document_id, key) in _applied:
+            conn.rollback()  # a retry of a batch that already landed: replay its seq
+            return MergeResult(_applied[(document_id, key)], [], 0, replay=True)
+        best: dict[str, dict] = {}  # one winner per id inside the batch, by the same rule
+        for e in elements:
+            cur = best.get(e["id"])
+            if cur is None or wins(*stamp(e), *stamp(cur)):
+                best[e["id"]] = e
+        stored = _stored(conn, document_id, list(best))
+        if strict:
+            refused = n1_violations(list(best.values()), set(stored))
+            if refused:
+                raise ElementsRefused(refused)
+        newer: list[dict] = []
+        for i, e in best.items():
+            row = stored.get(i)
+            if row is None or wins(*stamp(e), row[0], row[1]):
+                write.append(e)
+            elif stamp(e) != (row[0], row[1]):
+                newer.append(json.loads(row[2]))
+        if base_seq is not None:  # legacy PUT: what others wrote since the client's last head
+            newer += [
+                json.loads(r["json"])
+                for r in read_rows(conn, document_id, stubs=True, since=base_seq)
+                if r["id"] not in best
+            ]
+        if max_elements is not None and write:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM scene_elements WHERE document_id = ?", (document_id,)
+            ).fetchone()[0]
+            if total + sum(1 for e in write if e["id"] not in stored) > max_elements:
+                raise SceneTooLarge(total)
+        t_diff = time.perf_counter()
+        if write:
+            # first statement of the write phase: tests/test_chunk_persistence.py::_RacingConn races here
+            conn.execute(
+                "UPDATE scenes SET version = version + 1, updated_at = ? WHERE document_id = ?",
+                (now, document_id),
+            )
+            head += 1
+            ids = {e["id"] for e in write}
+            write_changed(conn, document_id, write, ids, head, now)
+            shrink_tombstones(conn, document_id, now)
+            all_elements = [json.loads(r["json"]) for r in read_rows(conn, document_id)]
+            by_id = {e["id"]: e for e in all_elements}
+            conn.execute(
+                "UPDATE scenes SET element_count = ? WHERE document_id = ?",
+                (count_live(all_elements), document_id),
+            )
+            _refresh_regions(conn, document_id, by_id, ids, now)
+            t_refresh = time.perf_counter()
+            _sync_chunks(conn, document_id, all_elements, by_id, ids, now, chunker_config)
+            crops = _gc_orphans(conn, document_id, now)
+            t_chunks = time.perf_counter()
+            conn.execute("UPDATE documents SET updated_at = ? WHERE id = ?", (now, document_id))
+        if key is not None:  # recorded under the write lock, so a blocked retry sees it
+            _applied[(document_id, key)] = head
             recorded = True
             while len(_applied) > APPLIED_CAP:
                 _applied.popitem(last=False)
@@ -145,7 +186,7 @@ def put_scene(
                 log.debug("could not remove crop %s", path)
     except BaseException:
         if recorded:
-            _applied.pop((document_id, save_key), None)
+            _applied.pop((document_id, key), None)
         conn.rollback()
         raise
     log.log(
@@ -154,25 +195,48 @@ def put_scene(
         " chunks=%.0fms %s",
         document_id,
         len(elements),
-        len(changed),
-        (t1 - t0) * 1000,
-        (t2 - t1) * 1000,
-        (t3 - t2) * 1000,
-        (t4 - t3) * 1000,
+        len(write),
+        0.0,
+        (t_diff - t_lock) * 1000,
+        (t_refresh - t_diff) * 1000 if write else 0.0,
+        (t_chunks - t_refresh) * 1000 if write else 0.0,
         " ".join(f"{k}={v:.0f}ms" for k, v in timings.items()),
     )
-    return base_version + 1
+    return MergeResult(head, newer, len(write))
+
+
+def put_scene(
+    conn: sqlite3.Connection,
+    document_id: str,
+    base_version: int,
+    elements_json: str,
+    chunker_config: ChunkerConfig | None = None,
+    delta: bool = False,
+    max_elements: int | None = None,
+    save_key: str | None = None,
+    timings: dict[str, float] | None = None,
+) -> int:
+    """Merge a scene body and return the head seq (db/outline.py, tests and scripts use this).
+
+    `base_version` and `delta` are accepted and ignored: a full list and a delta are the same
+    merge, and nothing here conflicts (decision 0080). N1 is not enforced on this path.
+    """
+    # INK-114: drop this flag (legacy PUT keeps storing drafts until drafts leave the scene)
+    return merge_elements(
+        conn,
+        document_id,
+        json.loads(elements_json),
+        key=save_key,
+        strict=False,
+        chunker_config=chunker_config,
+        max_elements=max_elements,
+        timings=timings,
+    ).seq
 
 
 class SceneTooLarge(Exception):
     def __init__(self, count: int):
         super().__init__(f"too many elements: {count}")
-
-
-def _apply_delta(old_elements: list[dict], changed: list[dict]) -> list[dict]:
-    new_by_id = {e["id"]: e for e in changed}
-    merged = [new_by_id.pop(e["id"], e) for e in old_elements]
-    return merged + list(new_by_id.values())  # ids not stored yet, in the order sent
 
 
 def _changed_ids(old_elements: list[dict], new_by_id: dict[str, dict]) -> set[str]:
