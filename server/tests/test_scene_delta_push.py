@@ -1,7 +1,6 @@
 """INK-112 (decision 0087): scene.delta goes to every device except the writer."""
 
-from inkbridge import api
-from tests.test_elements_post import URL, el, post
+from tests.test_elements_post import el, post
 from tests.test_regions_api import SCENE
 from tests.test_ws import recv
 
