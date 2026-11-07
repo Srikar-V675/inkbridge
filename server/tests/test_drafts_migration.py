@@ -63,7 +63,7 @@ def test_migration_11_moves_drafts_out_of_the_scene(tmp_path, monkeypatch):
     assert conn.execute("SELECT json FROM scene_elements WHERE id = 'user-1'").fetchone()[0] == before
     assert "draft" not in got["acc:1"]["customData"] and got["acc:1"]["version"] == 4
     assert not got["acc:1"]["isDeleted"]
-    assert "app:1" not in got and "app:2" not in got
+    assert got["app:1"]["isDeleted"] and got["app:2"]["isDeleted"] and got["app:1"]["version"] == 4
     assert got["rej:1"]["isDeleted"] and got["lonely"]["isDeleted"]
     ops = {r["id"]: r for r in conn.execute("SELECT * FROM agent_ops")}
     assert ops["app"]["status"] == "placed" and ops["stuck"]["status"] == "expired"
@@ -71,8 +71,12 @@ def test_migration_11_moves_drafts_out_of_the_scene(tmp_path, monkeypatch):
     assert [e["id"] for e in placed] == ["app:1", "app:2"]
     assert all(e["customData"]["draft"] for e in placed) and json.loads(ops["app"]["box_json"])
     assert conn.execute("SELECT version FROM scenes").fetchone()[0] == 5
+    assert conn.execute("SELECT element_count FROM scenes").fetchone()[0] == 2  # user-1, acc:1
+    chunk_ids = [json.loads(r[0]) for r in conn.execute(
+        "SELECT element_ids_json FROM regions WHERE created_by = 'auto' AND status = 'active'")]
+    assert ["acc:1"] in chunk_ids
     seqs = {r["id"]: r["seq"] for r in conn.execute("SELECT id, seq FROM scene_elements")}
-    assert seqs["acc:1"] == seqs["rej:1"] == 5 and seqs["user-1"] == 1
+    assert seqs["acc:1"] == seqs["rej:1"] == seqs["app:1"] == 5 and seqs["user-1"] == 1
     snapshot = [tuple(r) for r in conn.execute("SELECT * FROM scene_elements ORDER BY id")]
     assert db.migrate(conn) == []
     assert [tuple(r) for r in conn.execute("SELECT * FROM scene_elements ORDER BY id")] == snapshot

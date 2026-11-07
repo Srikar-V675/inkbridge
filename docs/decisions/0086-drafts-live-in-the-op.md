@@ -30,8 +30,8 @@ drafts out of the scene: the one approved change to "drafts are not content".
    `(version, nonce)` still equals the stamp stored at accept; anything the user touched is kept and
    reported in `kept`. The op returns to `placed`.
 5. **Migration data step** (`_move_drafts_out_of_scene`): draft rows of accepted ops lose the flag;
-   rows of `applied` ops move into the op as `placed`; other draft rows are soft-deleted; leftover
-   `applied` ops expire. One scene version bump per document that changed.
+   rows of `applied` ops move into the op as `placed` and are tombstoned in the scene (so seq-based clients see the removal); other draft rows are soft-deleted; leftover
+   `applied` ops expire. One scene version bump per document that changed; `scenes.element_count` is recounted and chunks are rebuilt with `_sync_chunks` (default chunker settings).
 
 ## Skipped on purpose
 - `revises` / `superseded` handling and the tether: columns only, no tool sets them.

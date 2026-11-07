@@ -16,7 +16,7 @@ from inkbridge.canvas.hashes import (
 
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 
-from inkbridge.db.common import connect
+from inkbridge.db.common import _now, connect
 from inkbridge.db.documents import ensure_default_document
 from inkbridge.db.elements import _int, row_json
 from inkbridge.db.recognitions import _reindex_region
@@ -106,12 +106,9 @@ def _move_drafts_out_of_scene(conn: sqlite3.Connection) -> None:
             status = ops.get(op_id)
             if status == "applied":
                 e["customData"] = {**e["customData"], "op_id": op_id}
-                moved.setdefault(op_id, []).append(e)
-                conn.execute(
-                    "DELETE FROM scene_elements WHERE document_id = ? AND id = ?", (doc, r["id"])
-                )
-                continue
-            if status == "accepted":
+                moved.setdefault(op_id, []).append(dict(e))
+                e["isDeleted"] = True  # tombstone, so seq-based clients see the removal
+            elif status == "accepted":
                 e["customData"] = {k: v for k, v in e["customData"].items() if k != "draft"}
             else:
                 e["isDeleted"] = True
@@ -131,6 +128,21 @@ def _move_drafts_out_of_scene(conn: sqlite3.Connection) -> None:
                     r["id"],
                 ),
             )
+        live = [
+            json.loads(r["json"])
+            for r in conn.execute(
+                "SELECT json FROM scene_elements WHERE document_id = ? AND is_deleted = 0"
+                " AND json_extract(json, '$.type') IS NOT NULL",
+                (doc,),
+            )
+        ]
+        conn.execute(
+            "UPDATE scenes SET element_count = ? WHERE document_id = ?",
+            (sum(1 for e in live if not (e.get("customData") or {}).get("draft")), doc),
+        )
+        from inkbridge.db.chunks import _sync_chunks  # local: chunks imports the db package
+
+        _sync_chunks(conn, doc, live, {e["id"]: e for e in live}, {r["id"] for r in rows}, _now(), None)
         for op_id, els in moved.items():
             conn.execute(
                 "UPDATE agent_ops SET status = 'placed', elements_json = ?, box_json = ? WHERE id = ?",
