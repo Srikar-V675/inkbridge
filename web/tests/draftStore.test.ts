@@ -34,6 +34,12 @@ describe("reconcile", () => {
     const moved = first.map((e) => ({ ...e, x: 400 }));
     assert.equal(reconcile(moved, [op("a")])[0].x, 400);
   });
+  it("brings a draft back over the solid element an unaccept deleted", () => {
+    const solid = el({ id: "a:1", type: "text", x: 100, y: 50, isDeleted: true, version: 3 });
+    const out = reconcile([user, solid], [op("a")]);
+    assert.deepEqual(out.map((e) => [e.id, e.isDeleted ?? false]), [["u1", false], ["a:1", false]]);
+    assert.equal(out[1].customData?.draft, true);
+  });
   it("does not bring back an erased draft", () => {
     const first = reconcile([], [op("a")]);
     const erased = first.map((e) => ({ ...e, isDeleted: true }));

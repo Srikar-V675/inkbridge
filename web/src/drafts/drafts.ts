@@ -124,7 +124,7 @@ export function draftOpId(e: DraftElement): string | null {
 }
 
 /** Like draftOpId but also true for a soft-deleted draft: the sender must never see either. */
-export function isDraftTagged(e: DraftElement): boolean {
+export function isDraftTagged(e: Pick<DraftElement, "id" | "customData">): boolean {
   const opId = e.customData?.op_id;
   return !!e.customData?.draft && typeof opId === "string" && e.id.startsWith(`${opId}:`);
 }

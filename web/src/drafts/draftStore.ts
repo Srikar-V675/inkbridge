@@ -1,7 +1,7 @@
 // The placed-op list and the pure function from it to the scene's draft elements (INK-115,
 // decision 0090). The server owns placement; the scene shows exactly the placed ops.
 import { draftBox } from "./draftView.ts";
-import { draftOpId, markDraft, type DraftElement } from "./drafts.ts";
+import { draftOpId, isDraftTagged, markDraft, type DraftElement } from "./drafts.ts";
 
 export interface PlacedOp {
   id: string;
@@ -47,11 +47,14 @@ export type DraftStore = ReturnType<typeof createDraftStore>;
  */
 export function reconcile<T extends DraftElement>(scene: readonly T[], ops: readonly PlacedOp[]): T[] {
   const live = new Set(ops.map((o) => o.id));
+  const prefixes = ops.map((o) => o.payload.id_prefix);
   const kept = scene.filter((e) => {
     const id = draftOpId(e);
-    return id === null || live.has(id);
+    // A solid element the server deleted (unaccept) under a placed op's prefix makes room for its draft again.
+    if (id === null) return !(e.isDeleted && !isDraftTagged(e) && prefixes.some((p) => e.id.startsWith(p)));
+    return live.has(id);
   });
-  const have = new Set(scene.map((e) => e.id)); // soft-deleted drafts count: the user erased it, so it stays gone
+  const have = new Set(kept.map((e) => e.id)); // an erased draft counts: the user erased it, so it stays gone
   const add = ops.flatMap((o) =>
     markDraft(o.elements.filter((e) => e.id.startsWith(o.payload.id_prefix) && !have.has(e.id)), o.id),
   );
