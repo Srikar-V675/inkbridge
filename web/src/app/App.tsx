@@ -9,7 +9,7 @@ import { createChunkView } from "../chunks/chunkView";
 import { JumpNotice } from "../chunks/JumpNotice";
 import { createRefresh, onVisible, wireRefresh } from "../sync/chunkRefresh";
 import AskPanel from "../ask/AskPanel";
-import { publishQuestion } from "../ask/ask";
+import { publishDelta, publishQuestion } from "../ask/ask";
 import { DraftBar } from "../drafts/DraftBar";
 import { createDraftStore, reconcile, reloadWithDrafts } from "../drafts/draftStore";
 import { createUnseen, draftBox, panTarget, planReveal, type Unseen } from "../drafts/draftView";
@@ -386,6 +386,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
         if (c) att.view(viewNow(), true); // the server holds offers until it has seen the view
       },
       onQuestionUpdate: publishQuestion,
+      onQuestionDelta: publishDelta,
       onSceneDelta: (d) => live.receive(d),
       onOfferCreated: offerStore.upsert,
       onOfferUpdated: offerStore.upsert,

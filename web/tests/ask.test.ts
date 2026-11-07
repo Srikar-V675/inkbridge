@@ -8,7 +8,7 @@ import {
 const q = (over: Partial<Question> = {}): Question => ({
   id: "abc123", document_id: "c", parent_id: null, text: "t", focus_element_ids: [], focus_chunk_ids: [],
   status: "answered", answer_md: "Hello **world**", canvas_text: null, sources: [], created_at: "",
-  runner_status: "pending", runner_error: null, ...over,
+  runner_status: "pending", runner_error: null, partial_answer: null, partial_seq: 0, ...over,
 });
 
 describe("focusIds", () => {

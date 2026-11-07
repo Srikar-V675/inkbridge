@@ -5,7 +5,8 @@ import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { AskMessage } from "./AskMessage";
 import { BackIcon, CloseIcon } from "./askIcons";
-import { canSend, messageCount, threadTitle, type Thread } from "./threads";
+import { isStreaming } from "./ask";
+import { canSend, messageCount, replyTarget, threadTitle, type Thread } from "./threads";
 
 export function AskThread(props: {
   api: ExcalidrawImperativeAPI; canvas: string; thread: Thread; text: string; setText: (t: string) => void;
@@ -18,7 +19,7 @@ export function AskThread(props: {
     const el = body.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [thread.items.length]);
-  const ok = canSend({ text, busy, selected: 0, followUp: true });
+  const ok = canSend({ text, busy, selected: 0, followUp: true }) && !isStreaming(replyTarget(thread));
   return (
     <>
       <div className="ink-ask__head">

@@ -1,9 +1,9 @@
 // Ask AI side panel (INK-049, docs/decisions/0046; rebuilt for v4 in INK-161, docs/decisions/0067). Asking never
 // touches the canvas; Keep on canvas goes through the agent op queue as a draft the user accepts in DraftBar.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { applyQuestionUpdate, askQuestion, focusIds, listQuestions, subscribeQuestions, type Question } from "./ask";
+import { applyQuestionDelta, applyQuestionUpdate, askQuestion, focusIds, listQuestions, subscribeDeltas, subscribeQuestions, type Question } from "./ask";
 import { AskList } from "./AskList";
 import { AskThread } from "./AskThread";
 import { AnchorGlow } from "./AnchorGlow";
@@ -34,6 +34,8 @@ interface Props {
 
 export default function AskPanel({ api, canvas, open, onClose, openThreadId, onThreadChange, draftOps }: Props) {
   const [qs, setQs] = useState<Question[]>([]);
+  const qsRef = useRef(qs); // the deltas read the latest list synchronously
+  qsRef.current = qs;
   // Half-typed text is kept per view ("" is the list, otherwise the thread id), so Back does not discard it.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [kept, setKept] = useState<ReadonlySet<string>>(new Set());
@@ -56,10 +58,20 @@ export default function AskPanel({ api, canvas, open, onClose, openThreadId, onT
   useEffect(() => {
     if (!open) return setLoaded(false);
     void refetch();
-    return subscribeQuestions((q) => {
+    const offQ = subscribeQuestions((q) => {
       if (!q) void refetch();
-      else if (q.document_id === canvas) setQs((l) => applyQuestionUpdate(l, q));
+      else if (q.document_id === canvas) {
+        qsRef.current = applyQuestionUpdate(qsRef.current, q);
+        setQs(qsRef.current);
+      }
     });
+    const offD = subscribeDeltas((d) => {
+      const r = applyQuestionDelta(qsRef.current, d);
+      if (r.gap) return void refetch();
+      qsRef.current = r.list;
+      setQs(r.list);
+    });
+    return () => (offQ(), offD());
   }, [open, canvas, refetch]);
 
   const threads = useMemo(() => groupThreads(qs), [qs]);

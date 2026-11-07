@@ -60,18 +60,34 @@ def answer_question(
             "the full answer stays in the thread",
         ),
     ] = None,
+    final: Annotated[
+        bool,
+        Field(
+            description="false appends answer_md to a streaming partial the panel shows growing; "
+            "the default completes the answer"
+        ),
+    ] = True,
 ) -> str:
     """Answer a pending question. Stores the text only; it changes no ink and writes no note.
 
     canvas_text is the answer for the canvas card; omit and the first paragraph is used.
-    Fails if the question is already answered or cancelled.
+    Fails if the question is already answered or cancelled. To stream, call with final=false and
+    pieces of the answer in order (the panel shows them as they arrive), then finish with one
+    final call (the full answer, sources and canvas_text go on that call).
     """
     try:
         q = get_client().answer_question(
-            question_id, answer_md, [s.model_dump(exclude_none=True) for s in sources], canvas_text
+            question_id,
+            answer_md,
+            [s.model_dump(exclude_none=True) for s in sources],
+            canvas_text,
+            final,
         )
     except (NotFound, Conflict) as e:
         raise ToolError(f"{e} {_NEXT_STEP}") from e
     except ApiError as e:
         raise ToolError(str(e)) from e
-    return _dump({"id": q["id"], "status": q["status"]})
+    out = {"id": q["id"], "status": q["status"]}
+    if not final:
+        out["seq"] = q["partial_seq"]
+    return _dump(out)

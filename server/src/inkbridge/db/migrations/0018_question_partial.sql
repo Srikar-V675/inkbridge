@@ -1,0 +1,2 @@
+ALTER TABLE questions ADD COLUMN partial_answer TEXT;
+ALTER TABLE questions ADD COLUMN partial_seq INTEGER NOT NULL DEFAULT 0;

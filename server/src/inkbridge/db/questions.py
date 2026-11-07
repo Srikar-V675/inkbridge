@@ -18,6 +18,7 @@ from inkbridge.db.documents import document_exists
 HISTORY_MAX = 5  # earlier question/answer pairs of a thread sent along with a question
 STATUSES = ("pending", "answered", "cancelled")
 RUNNER_STATUSES = ("pending", "running", "failed")
+PARTIAL_MAX = 20_000  # streamed answer text kept on a pending question (INK-176)
 
 
 class QuestionNotFound(Exception):
@@ -25,6 +26,10 @@ class QuestionNotFound(Exception):
 
 
 class ParentNotFound(Exception):
+    pass
+
+
+class PartialTooLong(Exception):
     pass
 
 
@@ -114,7 +119,7 @@ def answer_question(
     # The status guard is in the UPDATE itself, so two racing answers cannot both win.
     cur = conn.execute(
         "UPDATE questions SET status = 'answered', answer_md = ?, sources_json = ?,"
-        " canvas_text = ?"
+        " canvas_text = ?, partial_answer = NULL"
         " WHERE id = ? AND status = 'pending'",
         (answer_md, json.dumps(sources), canvas_text, question_id),
     )
@@ -127,6 +132,37 @@ def answer_question(
         )
         tasks_db.finish_for_question(conn, question_id, "done")
     return _finish(conn, question_id, cur.rowcount)
+
+
+def append_partial(conn: sqlite3.Connection, question_id: str, text: str) -> int:
+    """Append a streamed piece to a pending question; returns the new seq."""
+    row = conn.execute(
+        "SELECT status, partial_answer, partial_seq FROM questions WHERE id = ?", (question_id,)
+    ).fetchone()
+    if row is None:
+        raise QuestionNotFound(question_id)
+    if row["status"] != "pending":
+        raise InvalidTransition(row["status"])
+    new = (row["partial_answer"] or "") + text
+    if len(new) > PARTIAL_MAX:
+        raise PartialTooLong()
+    seq = row["partial_seq"] + 1
+    # status guard in the UPDATE too, so a racing final answer wins cleanly
+    cur = conn.execute(
+        "UPDATE questions SET partial_answer = ?, partial_seq = ? WHERE id = ? AND status = 'pending'",
+        (new, seq, question_id),
+    )
+    if not cur.rowcount:
+        raise InvalidTransition("answered")
+    conn.commit()
+    return seq
+
+
+def reset_partial(conn: sqlite3.Connection, question_id: str) -> None:
+    conn.execute(
+        "UPDATE questions SET partial_answer = NULL, partial_seq = 0 WHERE id = ?", (question_id,)
+    )
+    conn.commit()
 
 
 def cancel_question(conn: sqlite3.Connection, question_id: str) -> dict:
@@ -199,6 +235,8 @@ def _full(conn: sqlite3.Connection, row: sqlite3.Row, chunks: list[tuple[str, se
         "history": _history(conn, row),
         "runner_status": row["runner_status"],
         "runner_error": row["runner_error"],
+        "partial_answer": row["partial_answer"],
+        "partial_seq": row["partial_seq"],
         "created_at": row["created_at"],
     }
 

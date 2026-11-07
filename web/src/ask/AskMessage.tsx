@@ -1,7 +1,7 @@
 // One question and its answer inside a thread (ported from the old AskPanel Item and Chips; INK-049, INK-161).
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import { cancelQuestion, drawDiagram, fileName, keepOnCanvas, mermaidBlock, noteUrl, runnerLine, type Question, type Source } from "./ask";
+import { cancelQuestion, drawDiagram, fileName, keepOnCanvas, mermaidBlock, noteUrl, isStreaming, runnerLine, type Question, type Source } from "./ask";
 import { AnswerMarkdown } from "./askMarkdown";
 import { liveIds, resolveChunk } from "../chunks/chunks";
 import { Button } from "../ui/Button";
@@ -110,7 +110,12 @@ export function AskMessage(props: { api: ExcalidrawImperativeAPI; canvas: string
         <p className="ink-ask__label"><span className="ink-ask__dot" />Agent</p>
         {q.status === "pending" && (
           <>
-            {line ? (
+            {isStreaming(q) ? (
+              <>
+                <div className="ink-ask__answer"><AnswerMarkdown source={q.partial_answer!} /></div>
+                <p className="ink-ask__note">Writing...</p>
+              </>
+            ) : line ? (
               <p className={q.runner_status === "failed" ? "ink-ask__error" : "ink-ask__note"}>{line}</p>
             ) : (
               <p className="ink-ask__note">{old ? "Waiting for an agent: ask your MCP client to run list_questions" : "Waiting for an agent"}</p>

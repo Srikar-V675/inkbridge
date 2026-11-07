@@ -49,6 +49,8 @@ def test_v2_tables_and_columns(tmp_path):
         "runner_ref",
         "runner_status",
         "runner_error",
+        "partial_answer",
+        "partial_seq",
         "created_at",
     }
     assert {"document_id", "created_at", "result_json", "error"} <= cols(conn, "agent_ops")
