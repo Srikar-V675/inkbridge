@@ -27,6 +27,20 @@ export function groupThreads(list: Question[]): Thread[] {
   return [...groups.entries()].sort((a, b) => b[1].last - a[1].last).map(([id, g]) => ({ id, items: g.items }));
 }
 
+/** Root id of the thread that holds this question (a follow-up resolves to its root), else null. */
+export const threadOfQuestion = (threads: Thread[], questionId: string): string | null =>
+  threads.find((t) => t.items.some((x) => x.id === questionId))?.id ?? null;
+
+/** Threads with an unresolved draft linked to one of their questions. */
+export function threadsWithDraft(threads: Thread[], ops: readonly { payload: { question_id?: string | null } }[]): Set<string> {
+  const out = new Set<string>();
+  for (const o of ops) {
+    const id = o.payload.question_id && threadOfQuestion(threads, o.payload.question_id);
+    if (id) out.add(id);
+  }
+  return out;
+}
+
 export const replyTarget = (t: Thread): Question => t.items[t.items.length - 1];
 export const threadTitle = (t: Thread): string => t.items[0].text;
 export const messageCount = (t: Thread): number => t.items.length + t.items.filter((q) => q.status === "answered").length;
