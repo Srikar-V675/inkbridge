@@ -2,13 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   markDraft,
-  opElements,
   opFontSize,
   wrapText,
-  placeAt,
   prefixIds,
-  rejectOp,
-  toDrafts,
+  measureDrafts,
   type DraftElement,
   type PendingOp,
 } from "../src/drafts/drafts.ts";
@@ -16,7 +13,7 @@ import {
 const op: PendingOp = {
   op_id: "op1",
   op_type: "draw_diagram",
-  payload: { mermaid: "flowchart TD\nA-->B", placement: { x: 500, y: 300 }, id_prefix: "op1:" },
+  payload: { mermaid: "flowchart TD\nA-->B", id_prefix: "op1:" },
 };
 
 // What convertToExcalidrawElements gives for "A --> B": two boxes with bound labels and an arrow.
@@ -66,56 +63,19 @@ describe("drafts", () => {
     assert.deepEqual(out[1].boundElements, []);
   });
 
-  it("moves the group's top-left corner to the placement, arrows by their points", () => {
-    const out = placeAt(
-      [
-        { id: "a", x: 10, y: 20, width: 5, height: 5 },
-        { id: "b", x: 50, y: 50, points: [[-30, -40], [0, 0]] },
-      ],
-      { x: 100, y: 200 },
-    );
-    assert.deepEqual(out.map((e) => [e.x, e.y]), [[100, 210], [140, 240]]);
-  });
-
   it("tags drafts and draws them dashed, keeping other customData", () => {
     const [e] = markDraft([{ id: "a", type: "rectangle", x: 0, y: 0, customData: { keep: 1 } }], "op1");
     assert.equal(e.strokeStyle, "dashed");
     assert.deepEqual(e.customData, { keep: 1, author: "agent", draft: true, op_id: "op1" });
   });
 
-  it("runs the whole pipeline without touching the input", () => {
+  it("measures the converted elements: prefixed ids and their bbox, input untouched", () => {
     const input = converted();
     const before = JSON.stringify(input);
-    const out = toDrafts(input, op);
+    const m = measureDrafts(input, op);
     assert.equal(JSON.stringify(input), before);
-    assert.ok(out.every((e) => e.id.startsWith("op1:") && e.customData?.op_id === "op1"));
-    assert.equal(Math.min(...out.map((e) => e.x)), 500);
-    assert.equal(Math.min(...out.map((e) => e.y)), 300);
-  });
-
-  it("finds an op's elements so a replay is not drawn twice", () => {
-    const scene = [{ id: "user", x: 0, y: 0 }, ...toDrafts(converted(), op)];
-    assert.equal(opElements(scene, "op1:").length, 4);
-    assert.equal(opElements(scene, "op2:").length, 0);
-  });
-
-  it("reject sweeps exactly the op's prefix and leaves user ink and other drafts alone", () => {
-    const user = { id: "user", x: 0, y: 0, version: 3 };
-    const other = { id: "op10:1", x: 0, y: 0, version: 1 };
-    const scene = [user, other, ...toDrafts(converted(), op)];
-    const out = rejectOp(scene, "op1:");
-    assert.equal(out[0], user);
-    assert.equal(out[1], other); // "op10:" does not start with "op1:"
-    assert.ok(out.slice(2).every((e) => e.isDeleted && e.version === 1));
-  });
-
-  it("reject leaves a user's duplicate of a draft alone (new random id, copied tags)", () => {
-    const [draft] = toDrafts(converted(), op);
-    // Excalidraw's duplicate (Ctrl+D, Alt-drag) keeps customData but gives a fresh random id.
-    const dup = { ...draft, id: "Xk3_9aQ-random", version: 1 };
-    const out = rejectOp([draft, dup], "op1:");
-    assert.equal(out[0].isDeleted, true);
-    assert.equal(out[1], dup);
+    assert.ok(m.elements.every((e) => e.id.startsWith("op1:")));
+    assert.deepEqual([m.width, m.height], [100, 140]);
   });
 });
 
