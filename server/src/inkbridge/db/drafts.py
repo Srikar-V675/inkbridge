@@ -116,9 +116,25 @@ def measure_op(conn: sqlite3.Connection, op_id: str, elements: Any, width: Any, 
         box = bbox_of(elements)
         dx, dy = spot["x"] - box["x"], spot["y"] - box["y"]
         placed = [_as_draft(e, op_id, dx, dy) for e in elements]
+        tag = {
+            e["id"]: e["customData"]["node"]
+            for e in elements
+            if isinstance(e.get("customData"), dict) and isinstance(e["customData"].get("node"), str)
+        }
+        node_map: dict[str, list[str]] = {}
+        for e in elements:
+            n = tag.get(e["id"]) or tag.get(e.get("containerId"))
+            if n:
+                node_map.setdefault(n, []).append(e["id"])
+        payload = {**op["payload"], **({"node_map": node_map} if node_map else {})}
         conn.execute(
-            "UPDATE agent_ops SET status='placed', elements_json=?, box_json=? WHERE id=?",
-            (json.dumps(placed), json.dumps({**spot, "width": width, "height": height}), op_id),
+            "UPDATE agent_ops SET status='placed', elements_json=?, box_json=?, payload_json=? WHERE id=?",
+            (
+                json.dumps(placed),
+                json.dumps({**spot, "width": width, "height": height}),
+                json.dumps(payload),
+                op_id,
+            ),
         )
         conn.commit()
         return get_op(conn, op_id)

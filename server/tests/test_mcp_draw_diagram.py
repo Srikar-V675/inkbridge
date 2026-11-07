@@ -63,7 +63,7 @@ def test_placed_diagram_returns_its_element_count(tool, client):
     out = json.loads(tool(apply, after=2).content[0].text)
     (op,) = client.get("/documents/default/ops").json()["ops"]
     assert out == {"op_id": op["id"], "status": "placed", "element_count": 3}
-    assert op["type"] == "draw_diagram" and op["payload"]["mermaid"] == FLOW
+    assert op["type"] == "draw_diagram" and op["payload"]["source"] == FLOW
 
 
 def test_invalid_mermaid_reported_by_the_browser_is_a_tool_error(tool, client):
