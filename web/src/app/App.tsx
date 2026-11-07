@@ -159,11 +159,11 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   const expireNotice = useCallback(() => setNoticeOpen(false), []);
   const closeNotice = useCallback(() => (setNoticeOpen(false), setGhostOpen(false)), []);
   const [askOpen, setAskOpen] = useState(false);
-const [askThread, setAskThread] = useState<string | null>(null);
-const closeAsk = () => {
-setAskOpen(false);
-setAskThread(null);
-};
+  const [askThread, setAskThread] = useState<string | null>(null);
+  const closeAsk = () => {
+    setAskOpen(false);
+    setAskThread(null);
+  };
   // The home passes the canvas title along: no id flash, and no request before the first paint.
   const hint = useMemo(() => titleHint(route.canvas), [route.canvas]);
   const [title, setTitle] = useState(hint ?? route.canvas);
@@ -479,9 +479,9 @@ setAskThread(null);
           )}
           {noticeOpen && jump && jumpNotice(jump) && <JumpNotice text={jumpNotice(jump)!} onClose={closeNotice} onExpire={expireNotice} />}
           {liveApi && <DraftBar api={liveApi} documentId={route.canvas} unseen={unseen} drafts={drafts} onOpenThread={(id) => {
-setAskThread(id);
-setAskOpen(true);
-}} />}
+            setAskThread(id);
+            setAskOpen(true);
+          }} />}
         </>
       }
       onAsk={() => (askOpen ? closeAsk() : setAskOpen(true))}
