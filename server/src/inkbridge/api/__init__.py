@@ -28,6 +28,7 @@ from inkbridge.api import (
     retrieve,
     search,
     sync,
+    tasks,
     watch,
     ws,
 )
@@ -35,6 +36,7 @@ from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.api.web import mount_web
 from inkbridge.db import questions as q_db
+from inkbridge.db import tasks as tasks_db
 from inkbridge.recognizer.worker import RecognitionWorker
 from inkbridge.timing import RequestTiming, configure_logging, request_parts, sample_loop_lag
 
@@ -54,6 +56,7 @@ async def lifespan(app: FastAPI):
     conn = db.connect()
     try:
         q_db.reset_runner(conn, "failed" if ask_error else "pending", ask_error)
+        tasks_db.reset_runner(conn)
     finally:
         conn.close()
     if ask:
@@ -95,6 +98,7 @@ app.include_router(regions.router)
 app.include_router(retrieve.router)
 app.include_router(search.router)
 app.include_router(sync.router)
+app.include_router(tasks.router)
 app.include_router(watch.router)
 app.include_router(memory.router)
 app.include_router(ws.router)

@@ -12,6 +12,7 @@ from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
+from inkbridge.db import tasks as tasks_db
 from inkbridge.timing import timed
 
 router = APIRouter()
@@ -89,6 +90,14 @@ def _publish_expired(swept: list[dict]) -> None:
 
 
 def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
+    task_id = body.payload.pop("task_id", None)  # INK-133: not part of the op's own payload
+    if task_id and not (body.op_id and ops_db.op_exists(conn, body.op_id)):  # a retry is not new
+        try:
+            tasks_db.op_budget(conn, task_id, document_id, body.type)
+        except tasks_db.TaskNotFound:
+            raise HTTPException(404, "task not found") from None
+        except tasks_db.TaskRefused as e:
+            raise HTTPException(409, {"code": e.code, "msg": e.msg}) from None
     try:
         # Before the schema: an existing id must be refused whichever field carries it. A retry of
         # an op that already exists skips this; create_op returns the stored op or a conflict.
@@ -161,6 +170,8 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
         raise HTTPException(409, {"code": "op_id_conflict", "op_id": body.op_id}) from None
     _publish_expired(swept)
     response.status_code = 201 if created else 200
+    if created and task_id:
+        tasks_db.attach_op(conn, op["id"], task_id)
     if created:
         hub.publish(document_id, op=op)  # draw it now in any open browser
     return op
