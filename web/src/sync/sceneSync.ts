@@ -1,8 +1,12 @@
 // Framework-free load/autosave for one canvas. App.tsx wires it to Excalidraw's onChange.
-// Rules (tech ref 9.1 / 10.1): never block drawing, PUT with base_version, 409 means reload and merge (docs/decisions/0008).
+// Rules (tech ref 9.1 / 10.1): never block drawing. The server merges every save element by element
+// (decision 0080) and answers with the `newer` elements that beat ours, which we show (applyNewer).
+// The 409 reload-and-merge path below is dead since INK-111 (the server never answers 409 now);
+// INK-113 removes it with the single-flight sender (docs/decisions/0008).
 
 import type { LoadClock } from "./loadClock.ts";
 import { lastResource, netParts, record, serverParts } from "../lib/timing.ts";
+import { winsOver } from "./mergeRule.ts";
 
 export interface SceneElement {
   id: string;
@@ -82,11 +86,9 @@ const sigMatches = (s: Sig, els: readonly SceneElement[]): boolean => {
 };
 const sameSig = (a: Sig, b: Sig) => a.ids.length === b.ids.length && a.ids.every((id, i) => id === b.ids[i] && Object.is(a.vers[i], b.vers[i]));
 
-const nonce = (e: SceneElement) => (e.versionNonce as number | undefined) ?? 0;
 // Excalidraw's undo and edits always bump `version` (never reuse an older number), so deltaFor stays safe.
-// Not verified against a real Excalidraw run (decision 0038).
-const localWins = (l: SceneElement, s: SceneElement) =>
-  l.version > s.version || (l.version === s.version && nonce(l) < nonce(s));
+// Not verified against a real Excalidraw run (decision 0038). The rule lives in mergeRule.ts, shared with the server,
+// which now merges every save with it (decision 0080); mergeReport only serves the dead 409 path.
 
 /** Server scene plus every local element. The higher `version` wins; on a tie the lower
  *  `versionNonce` wins, the same rule Excalidraw's reconcile uses, so both tabs pick the same one.
@@ -98,12 +100,29 @@ export function mergeReport(server: readonly SceneElement[], local: readonly Sce
   for (const e of local) {
     const theirs = byId.get(e.id);
     if (!theirs) byId.set(e.id, e);
-    else if (localWins(e, theirs)) {
+    else if (winsOver(e, theirs)) {
       if (e.version === theirs.version) kept.push(e.id);
       byId.set(e.id, e);
-    } else if (e.version !== theirs.version || nonce(e) !== nonce(theirs)) taken.push(e.id);
+    } else if (winsOver(theirs, e)) taken.push(e.id);
   }
   return { merged: [...byId.values()], kept, taken };
+}
+
+/** Show the elements a save answer says beat ours (decision 0080). A newer copy replaces the local one in
+ *  place if it wins by the shared rule; an unknown id is appended; a tombstone stub (no `type`) only sets
+ *  the delete on the shape we have, and is ignored for an id we never had. */
+export function applyNewer(local: readonly SceneElement[], newer: readonly SceneElement[]): SceneElement[] {
+  const byId = new Map(local.map((e) => [e.id, e]));
+  const added: SceneElement[] = [];
+  for (const n of newer) {
+    const mine = byId.get(n.id);
+    if (!mine) {
+      if (n.type !== undefined) added.push(n); // a stub for an unknown id: nothing to show
+      continue;
+    }
+    if (winsOver(n, mine)) byId.set(n.id, n.type === undefined ? { ...mine, ...n } : n); // stub: keep the shape, set the delete
+  }
+  return [...local.map((e) => byId.get(e.id)!), ...added];
 }
 
 export const mergeScenes = (server: readonly SceneElement[], local: readonly SceneElement[]) =>
@@ -305,7 +324,7 @@ export class SceneSync {
       });
       this.unsettled = null; // any HTTP answer is definite
       if (r.ok) {
-        const saved = (await r.json()) as { version: number; timing?: Record<string, number> };
+        const saved = (await r.json()) as { version: number; newer?: SceneElement[]; timing?: Record<string, number> };
         this.version = saved.version;
         this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
         this.lastSig = sentSig;
@@ -320,7 +339,9 @@ export class SceneSync {
           ...serverParts(saved.timing),
           ...netParts(lastResource(this.url(), t0)),
         });
-        if (sameSig(this.pendingSig, sentSig)) this.pending = null;
+        const idle = sameSig(this.pendingSig, sentSig); // nothing was drawn while the request was in flight
+        if (saved.newer?.length) this.applyNewerAnswer(saved.newer, idle);
+        else if (idle) this.pending = null;
         if (this.pending) {
           this.emit("dirty");
           this.schedule(this.o.debounceMs ?? 1500);
@@ -343,6 +364,30 @@ export class SceneSync {
       this.retryLater();
     } finally {
       this.saving = false;
+    }
+  }
+
+  // The server kept elements that beat ours (another device's ink, or a higher version). Show them
+  // without a conflict: the canvas reloads with them, and what we have drawn since stays pending.
+  private applyNewerAnswer(newer: readonly SceneElement[], idle: boolean) {
+    const base = this.latest ?? this.pending ?? [];
+    const mine = new Map(base.map((e) => [e.id, e]));
+    const merged = applyNewer(base, newer);
+    for (const n of newer) {
+      const local = mine.get(n.id);
+      // The server holds `n`; a local copy that still beats it (a later edit, or a tie we win) must go out again.
+      const keepsLocal = local !== undefined && !winsOver(n, local);
+      this.baseline?.set(n.id, keepsLocal && local.version === n.version ? -1 : n.version);
+    }
+    const shown = merged.length !== base.length || merged.some((e, i) => e !== base[i]);
+    if (shown && !this.disposed) this.o.onReload(merged);
+    if (idle) {
+      this.lastSig = sigOf(merged);
+      this.savedIds = liveIds(merged);
+      this.pending = null;
+    } else {
+      this.pending = merged;
+      this.pendingSig = sigOf(merged);
     }
   }
 

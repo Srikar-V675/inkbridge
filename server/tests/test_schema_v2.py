@@ -50,7 +50,7 @@ def test_moving_a_region_keeps_its_reading_but_makes_the_crop_stale(client):
     ra = post(client, ["a"]).json()
     recognise(ra, "hello world")
     assert ra["content_hash"] == content_hash([A])
-    moved = {**A, "x": A["x"] + 300, "y": A["y"] + 50}
+    moved = {**A, "x": A["x"] + 300, "y": A["y"] + 50, "version": 2}
     client.put(SCENE, json={"base_version": 1, "elements": [moved, B]})
     after = client.get(f"/regions/{ra['id']}").json()
     assert after["stroke_hash"] != ra["stroke_hash"] and after["stroke_hash"] == stroke_hash(
@@ -73,7 +73,7 @@ def test_changing_a_point_drops_the_old_reading(client):
     client.put(SCENE, json={"base_version": 0, "elements": [A, B]})
     ra = post(client, ["a"]).json()
     recognise(ra, "hello world")
-    client.put(SCENE, json={"base_version": 1, "elements": [{**A, "points": [[0, 0], [5, 5]]}, B]})
+    client.put(SCENE, json={"base_version": 1, "elements": [{**A, "points": [[0, 0], [5, 5]], "version": 2}, B]})
     after = client.get(f"/regions/{ra['id']}").json()
     assert after["text"] is None and after["content_hash"] != ra["content_hash"]
     assert search(client, "hello") == []

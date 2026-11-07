@@ -19,11 +19,47 @@ OTHER = {
 class Scene:
     def __init__(self, client, elements):
         self.client, self.elements = client, elements
+        self.sent: dict[str, str] = {}  # id -> JSON last sent, to bump what a test edited
         self.version = client.get(SCENE).json()["version"]
         self.put()
 
+    def _bump_edited(self):
+        """The server merges by version (decision 0080) and Excalidraw bumps it on every edit, so a
+        test that edits an element in place, or puts back an older state, gets a higher version and
+        a fresh nonce here, unless it set a higher `version` itself."""
+        for e in self.elements:
+            was = self.sent.get(e["id"])
+            if was is None:
+                continue
+            old = json.loads(was)
+            changed = json.dumps(e, sort_keys=True) != json.dumps(old, sort_keys=True)
+            if changed and (e.get("version") or 0) <= (old.get("version") or 0):
+                e["version"] = (old.get("version") or 0) + 1
+                e["versionNonce"] = (old.get("versionNonce") or 0) + 1000
+
+    def _omitted(self):
+        """Elements a test dropped from the list: Excalidraw deletes by `isDeleted`, never by
+        omission, and a save no longer replaces the scene, so they go out as deleted copies."""
+        ids = {e["id"] for e in self.elements}
+        out = []
+        for i, was in self.sent.items():
+            old = json.loads(was)
+            if i not in ids and not old.get("isDeleted"):
+                out.append(
+                    {
+                        **old,
+                        "isDeleted": True,
+                        "version": (old.get("version") or 0) + 1,
+                        "versionNonce": (old.get("versionNonce") or 0) + 1000,
+                    }
+                )
+        return out
+
     def put(self):
-        r = self.client.put(SCENE, json={"base_version": self.version, "elements": self.elements})
+        self._bump_edited()
+        send = self.elements + self._omitted()
+        self.sent.update({e["id"]: json.dumps(e) for e in send})
+        r = self.client.put(SCENE, json={"base_version": self.version, "elements": send})
         assert r.status_code == 200
         self.version = r.json()["version"]
 

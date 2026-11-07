@@ -30,6 +30,37 @@ def _int(value) -> int:
     return int(value)
 
 
+def wins(inc_version: int, inc_nonce: int, cur_version: int, cur_nonce: int) -> bool:
+    """The merge rule (decision 0038, 0080): higher version; on a tie the lower versionNonce.
+    Equal on both keeps the stored row. Excalidraw's own reconcile rule."""
+    return inc_version > cur_version or (inc_version == cur_version and inc_nonce < cur_nonce)
+
+
+def stamp(element: dict) -> tuple[int, int]:
+    return _int(element.get("version")), _int(element.get("versionNonce"))
+
+
+class ElementsRefused(Exception):
+    """N1: the batch holds a draft-flagged element or a new op-prefixed id."""
+
+    def __init__(self, ids: list[str]):
+        super().__init__(f"refused: {ids}")
+        self.ids = ids
+
+
+def n1_violations(elements: list[dict], existing: set[str]) -> list[str]:
+    """Ids a batch may not write: drafts never enter the scene, and only accept creates
+    `<op_id>:` ids, so a client cannot mint one (INK-111, tech ref v4 section 3)."""
+    bad: list[str] = []
+    for e in elements:
+        data = e.get("customData")
+        draft = isinstance(data, dict) and data.get("draft")
+        new_op_id = ":" in e["id"] and e["id"] not in existing
+        if draft or new_op_id:
+            bad.append(e["id"])
+    return bad
+
+
 def row_json(element: dict) -> str:
     """The text stored for one element: as received, so pressures and float spelling survive."""
     return json.dumps(element, ensure_ascii=False, separators=(",", ":"))
@@ -99,14 +130,6 @@ def write_changed(
             ),
         )
         next_pos += 1  # a harmless gap when the id already existed
-
-
-def remove_rows(conn: sqlite3.Connection, document_id: str, ids: set[str]) -> None:
-    """Hard-delete rows a full save left out (Excalidraw never omits ids; only tests do)."""
-    conn.executemany(
-        "DELETE FROM scene_elements WHERE document_id = ? AND id = ?",
-        [(document_id, i) for i in ids],
-    )
 
 
 def shrink_tombstones(conn: sqlite3.Connection, document_id: str, now: str | None = None) -> int:

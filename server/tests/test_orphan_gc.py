@@ -111,6 +111,7 @@ def test_old_orphan_is_collected_but_successor_chain_survives(client):
         canvas.el(f"q{i}")["x"] -= 1000
     canvas.put()
     execute("UPDATE regions SET updated_at = ? WHERE id = ?", days_ago(30), p["id"])
+    canvas.el("q6")["y"] += 1  # a save that changes nothing collects nothing (decision 0080)
     canvas.put()  # a save collects
     assert one("SELECT count(*) FROM regions WHERE id = ?", p["id"]) == 0
     assert one("SELECT count(*) FROM regions WHERE id = ?", q["id"]) == 1
@@ -120,6 +121,7 @@ def test_old_orphan_is_collected_but_successor_chain_survives(client):
     x, y = [c["id"] for c in canvas.chunks("orphaned")][:2]
     execute("UPDATE regions SET updated_at = ? WHERE id = ?", days_ago(30), y)
     execute("UPDATE regions SET successor_of = ?, updated_at = ? WHERE id = ?", y, days_ago(0), x)
+    canvas.el("q6")["y"] += 1
     canvas.put()
     assert one("SELECT count(*) FROM regions WHERE id = ?", y) == 1
     assert get(client, x)["id"] == x

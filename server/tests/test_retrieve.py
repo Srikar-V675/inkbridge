@@ -131,7 +131,7 @@ def test_archived_canvas_skipped_under_all_only(client, two):
 
 def test_orphaned_chunk_not_returned(client):
     doc, _ = canvas_with_reading(client, "Gone", "gradient descent")
-    gone = [{**e, "isDeleted": True} for e in row("a", 3)]
+    gone = [{**e, "isDeleted": True, "version": e["version"] + 1} for e in row("a", 3)]
     version = client.get(f"/documents/{doc}/scene").json()["version"]
     r = client.put(f"/documents/{doc}/scene", json={"base_version": version, "elements": gone})
     assert r.status_code == 200, r.text

@@ -40,8 +40,10 @@ from inkbridge.db.documents import (
 )
 from inkbridge.db.elements import (
     TOMBSTONE_DAYS,
+    ElementsRefused,
     read_rows,
     shrink_tombstones,
+    wins,
     write_changed,
 )
 from inkbridge.db.ink import get_region_ink, get_sketch_elements, list_links
@@ -83,11 +85,11 @@ from inkbridge.db.regions import (
 from inkbridge.db.scenes import (
     APPLIED_CAP,
     SLOW_SAVE_S,
+    MergeResult,
     SceneTooLarge,
-    VersionConflict,
     _applied,
-    _apply_delta,
     _changed_ids,
+    merge_elements,
     put_scene,
     was_applied,
 )
@@ -107,13 +109,13 @@ __all__ = [
     "ChunkNotActive",
     "ChunkNotFound",
     "DocumentNotFound",
+    "ElementsRefused",
     "InvalidOverride",
+    "MergeResult",
     "ReservedCreator",
     "SceneTooLarge",
     "UnknownElements",
-    "VersionConflict",
     "_applied",
-    "_apply_delta",
     "_apply_migration",
     "_backfill_scene_rows",
     "_backfill_v2",
@@ -154,6 +156,7 @@ __all__ = [
     "mark_opened",
     "mark_png_fresh",
     "merge_chunks",
+    "merge_elements",
     "migrate",
     "patch_document",
     "put_scene",
@@ -171,5 +174,6 @@ __all__ = [
     "split_chunk",
     "stale_crop_ids",
     "was_applied",
+    "wins",
     "write_changed",
 ]

@@ -4,7 +4,6 @@ import logging
 import time
 
 from tests.test_chunk_persistence import Canvas, row
-from tests.test_regions_api import SCENE
 
 
 def test_a_save_logs_one_timing_record(client, caplog):
@@ -16,12 +15,15 @@ def test_a_save_logs_one_timing_record(client, caplog):
     assert "elements=3" in rec.getMessage() and "total=" in rec.getMessage()
 
 
-def test_a_version_conflict_logs_nothing(client, caplog):
+def test_a_refused_batch_logs_nothing(client, caplog):
     Canvas(client, row("a", 3))
     caplog.clear()  # the app now logs at INFO from startup (INK-067)
+    draft = {"id": "d", "type": "rectangle", "version": 1, "customData": {"draft": True}}
     with caplog.at_level(logging.INFO, logger="inkbridge.scene"):
-        r = client.put(SCENE, json={"base_version": 0, "elements": []})
-    assert r.status_code == 409
+        r = client.post(
+            "/documents/default/elements", json={"device": "d1", "batch": 1, "elements": [draft]}
+        )
+    assert r.status_code == 422
     assert [r for r in caplog.records if r.name == "inkbridge.scene"] == []
 
 
