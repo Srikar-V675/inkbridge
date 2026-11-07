@@ -289,3 +289,18 @@ class ApiClient:
 
     def create_document(self, title: str) -> dict:
         return self._send("POST", "/documents", {"title": title})
+
+    def list_tasks(self, document_id: str | None, status: str | None, limit: int) -> list[dict]:
+        path = f"/documents/{self._document(document_id)}/tasks"
+        return self._json(self._get(path, {"status": status, "limit": limit}, not_found=NO_CANVAS))[
+            "tasks"
+        ]
+
+    def claim_task(self, task_id: str, claimed_by: str) -> dict:
+        return self._send(
+            "POST", f"/tasks/{quote(task_id, safe='')}/claim", {"claimed_by": claimed_by}
+        )
+
+    def complete_task(self, task_id: str, status: str, error: str | None) -> dict:
+        body = {"status": status, **({"error": error} if error else {})}
+        return self._send("POST", f"/tasks/{quote(task_id, safe='')}/complete", body)

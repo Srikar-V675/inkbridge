@@ -30,6 +30,10 @@ def write_text(
     document_id: Annotated[
         str | None, Field(description="Defaults to the configured document")
     ] = None,
+    task_id: Annotated[
+        str | None,
+        Field(description="Task you claimed; the API enforces its mode and draft limit"),
+    ] = None,
 ) -> str:
     """Add a text box to the canvas as a draft the user can accept or reject.
 
@@ -46,6 +50,7 @@ def write_text(
         "text": text,
         **({"anchor": anchor} if anchor else {}),
         **({"size": size} if size else {}),
+        **({"task_id": task_id} if task_id else {}),
     }
     try:
         op = client.create_op(document_id or client.default_document, "write_text", payload)
@@ -107,6 +112,10 @@ def draw_diagram(
     wait_seconds: Annotated[
         float, Field(ge=1, le=60, description="How long to wait for the browser to draw it")
     ] = 20,
+    task_id: Annotated[
+        str | None,
+        Field(description="Task you claimed; the API enforces its mode and draft limit"),
+    ] = None,
 ) -> str:
     """Draw a Mermaid FLOWCHART on the canvas as a draft the user can accept or reject.
 
@@ -118,7 +127,11 @@ def draw_diagram(
     """
     client = get_client()
     doc = document_id or client.default_document
-    payload = {"mermaid": mermaid, **({"anchor": anchor} if anchor else {})}
+    payload = {
+        "mermaid": mermaid,
+        **({"anchor": anchor} if anchor else {}),
+        **({"task_id": task_id} if task_id else {}),
+    }
     try:
         op = client.create_op(doc, "draw_diagram", payload)
         op = _wait_for_browser(client, op, wait_seconds)
