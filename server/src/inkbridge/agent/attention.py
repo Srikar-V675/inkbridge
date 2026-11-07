@@ -25,6 +25,10 @@ class Attention:
         s = self._s.get(doc)
         return None if not s or s[0] else max(0.0, config.quiet_s() - (self.clock() - s[1]))
 
+    def view(self, doc):
+        s = self._s.get(doc)
+        return s[2] if s else None
+
     def forget(self, doc):
         self._s.pop(doc, None)
 

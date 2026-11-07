@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from inkbridge.agent import placement
+from inkbridge.agent.attention import attention
 from inkbridge.canvas.hashes import bbox_of
 from inkbridge.db import scenes
 from inkbridge.db.common import _now
@@ -108,8 +109,9 @@ def measure_op(conn: sqlite3.Connection, op_id: str, elements: Any, width: Any, 
             (float(width), float(height)),
             _anchor_box(conn, op),
             op["payload"]["font_size"],
-            0.0,  # no clearance: accepted agent ink is excluded from proximity (INK-078)
             recent,
+            placement.view_rect(attention.view(op["document_id"])),
+            placement.connectors_of(scene),
         )
         box = bbox_of(elements)
         dx, dy = spot["x"] - box["x"], spot["y"] - box["y"]
