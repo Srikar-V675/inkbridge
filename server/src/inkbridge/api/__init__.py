@@ -27,6 +27,7 @@ from inkbridge.api import (
     retrieve,
     search,
     sync,
+    watch,
     ws,
 )
 from inkbridge.api.deps import Conn
@@ -93,6 +94,7 @@ app.include_router(regions.router)
 app.include_router(retrieve.router)
 app.include_router(search.router)
 app.include_router(sync.router)
+app.include_router(watch.router)
 app.include_router(ws.router)
 if debug.enabled():  # absent unless INKBRIDGE_DEVICE_LOG=1 (INK-102)
     app.include_router(debug.router)
