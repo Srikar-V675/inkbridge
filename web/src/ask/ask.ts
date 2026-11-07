@@ -16,6 +16,7 @@ export interface Question {
   focus_chunk_ids: string[];
   status: "pending" | "answered" | "cancelled" | string;
   answer_md: string | null;
+  canvas_text: string | null;
   sources: Source[];
   created_at: string;
   runner_status: "pending" | "running" | "failed";
@@ -122,29 +123,64 @@ export function cancelQuestion(id: string, f: Fetch = defaultFetch): Promise<Que
   return ok(call<Question>(f, `/questions/${encodeURIComponent(id)}/cancel`, { method: "POST" }));
 }
 
+export const CARD_CAP = 300; // chars drawn beside the ink
+
+const firstParagraph = (t: string) => t.split(/\n\s*\n/)[0].trim();
+
+/** The text a Keep draft carries: the agent's canvas summary, else the answer's first paragraph. */
+export function cardText(q: Question): string {
+  const own = plainText(q.canvas_text ?? "", CARD_CAP);
+  return own || firstParagraph(plainText(q.answer_md ?? "")).slice(0, CARD_CAP);
+}
+
 export function keepOp(q: Question, anchor: string | null) {
   return {
     type: "write_text" as const,
     op_id: `keep-${q.id}`, // idempotent: a double tap makes one draft
-    payload: { text: plainText(q.answer_md ?? ""), ...(anchor && { anchor }) },
+    payload: { text: cardText(q), question_id: q.id, relation: "answer" as const, ...(anchor && { anchor }) },
   };
 }
 
-export async function keepOnCanvas(q: Question, canvas: string, f: Fetch = defaultFetch): Promise<{ ok: boolean; reason?: string }> {
-  if (!plainText(q.answer_md ?? "")) return { ok: false, reason: "empty answer" };
+/** Body of the first flowchart block in the answer, else null (no model call: the answer drew it). */
+export function mermaidBlock(md: string): string | null {
+  for (const m of md.matchAll(/```mermaid[^\S\n]*\n([\s\S]*?)```/g)) {
+    const body = m[1].trim();
+    if (/^(flowchart|graph)\b/.test(body)) return body;
+  }
+  return null;
+}
+
+export function diagramOp(q: Question, anchor: string | null) {
+  const mermaid = mermaidBlock(q.answer_md ?? "");
+  if (!mermaid) return null;
+  return {
+    type: "draw_diagram" as const,
+    op_id: `diagram-${q.id}`,
+    payload: { mermaid, question_id: q.id, relation: "diagram" as const, ...(anchor && { anchor }) },
+  };
+}
+
+/** Opens the note by name only: a vault path never reaches the DOM (decision 0046). */
+export const noteUrl = (path: string): string =>
+  `obsidian://open?file=${encodeURIComponent(fileName(path).replace(/\.md$/i, ""))}`;
+
+async function resolveAnchor(q: Question, canvas: string, f: Fetch): Promise<string | null> {
   const candidates = [...q.focus_chunk_ids, ...q.sources.filter((s) => s.type === "chunk" && s.id).map((s) => s.id!)];
-  let anchor: string | null = null;
   for (const id of candidates) {
     const r = await resolveChunk(id, canvas, f);
-    if (r.chunk?.status === "active") {
-      anchor = r.chunk.id;
-      break;
-    }
+    if (r.chunk?.status === "active") return r.chunk.id;
   }
+  return null;
+}
+
+async function postDraft(
+  q: Question, canvas: string, f: Fetch, make: (anchor: string | null) => object,
+): Promise<{ ok: boolean; reason?: string }> {
+  const anchor = await resolveAnchor(q, canvas, f);
   const url = `/documents/${encodeURIComponent(canvas)}/ops`;
   try {
-    let r = await call<{ status?: string; detail?: { code?: string } }>(f, url, post(keepOp(q, anchor)));
-    if (r.status === 422 && anchor && r.body?.detail?.code === "anchor_gone") r = await call(f, url, post(keepOp(q, null)));
+    let r = await call<{ status?: string; detail?: { code?: string } }>(f, url, post(make(anchor)));
+    if (r.status === 422 && anchor && r.body?.detail?.code === "anchor_gone") r = await call(f, url, post(make(null)));
     if (r.status !== 200 && r.status !== 201) return { ok: false, reason: String(r.status) };
     // A replay (200) returns the stored op: say so if the user already resolved that draft.
     const st = (r.body as { status?: string } | null)?.status;
@@ -152,4 +188,14 @@ export async function keepOnCanvas(q: Question, canvas: string, f: Fetch = defau
   } catch (e) {
     return { ok: false, reason: e instanceof Error ? e.message : "failed" };
   }
+}
+
+export async function keepOnCanvas(q: Question, canvas: string, f: Fetch = defaultFetch): Promise<{ ok: boolean; reason?: string }> {
+  if (!cardText(q)) return { ok: false, reason: "empty answer" };
+  return postDraft(q, canvas, f, (a) => keepOp(q, a));
+}
+
+export async function drawDiagram(q: Question, canvas: string, f: Fetch = defaultFetch): Promise<{ ok: boolean; reason?: string }> {
+  if (!diagramOp(q, null)) return { ok: false, reason: "no flowchart in the answer" };
+  return postDraft(q, canvas, f, (a) => diagramOp(q, a)!);
 }

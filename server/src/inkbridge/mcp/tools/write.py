@@ -12,6 +12,13 @@ from inkbridge.mcp.app import _anchor_info, _dump, get_client, mcp
 from inkbridge.mcp.client import ApiClient, ApiError, Conflict, NotFound
 
 
+def _question_link(question_id: str | None, relation: str | None) -> dict:
+    return {
+        **({"question_id": question_id} if question_id else {}),
+        **({"relation": relation} if relation else {}),
+    }
+
+
 @mcp.tool()
 def write_text(
     text: Annotated[str, Field(min_length=1, max_length=10_000, description="Plain text to add")],
@@ -26,6 +33,17 @@ def write_text(
     size: Annotated[
         Literal["small", "normal", "large"] | None,
         Field(description="Text size relative to the handwriting on the page; default matches it"),
+    ] = None,
+    question_id: Annotated[
+        str | None,
+        Field(
+            description="Question this draft answers (from list_questions); links the draft to its "
+            "thread"
+        ),
+    ] = None,
+    relation: Annotated[
+        Literal["answer", "diagram", "relates"] | None,
+        Field(description="How the draft relates to the question; default answer when question_id is given"),
     ] = None,
     document_id: Annotated[
         str | None, Field(description="Defaults to the configured document")
@@ -51,6 +69,7 @@ def write_text(
         **({"anchor": anchor} if anchor else {}),
         **({"size": size} if size else {}),
         **({"task_id": task_id} if task_id else {}),
+        **_question_link(question_id, relation),
     }
     try:
         op = client.create_op(document_id or client.default_document, "write_text", payload)
@@ -106,6 +125,17 @@ def draw_diagram(
             "before anchoring. Omit for free space below"
         ),
     ] = None,
+    question_id: Annotated[
+        str | None,
+        Field(
+            description="Question this draft answers (from list_questions); links the draft to its "
+            "thread"
+        ),
+    ] = None,
+    relation: Annotated[
+        Literal["answer", "diagram", "relates"] | None,
+        Field(description="How the draft relates to the question; default answer when question_id is given"),
+    ] = None,
     document_id: Annotated[
         str | None, Field(description="Defaults to the configured document")
     ] = None,
@@ -131,6 +161,7 @@ def draw_diagram(
         "mermaid": mermaid,
         **({"anchor": anchor} if anchor else {}),
         **({"task_id": task_id} if task_id else {}),
+        **_question_link(question_id, relation),
     }
     try:
         op = client.create_op(doc, "draw_diagram", payload)

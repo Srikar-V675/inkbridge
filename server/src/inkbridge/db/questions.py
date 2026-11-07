@@ -72,6 +72,15 @@ def create_question(
     return get_question(conn, qid)
 
 
+def question_in_document(conn: sqlite3.Connection, question_id: str, document_id: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM questions WHERE id = ? AND document_id = ?", (question_id, document_id)
+        ).fetchone()
+        is not None
+    )
+
+
 def get_question(conn: sqlite3.Connection, question_id: str) -> dict:
     row = conn.execute("SELECT * FROM questions WHERE id = ?", (question_id,)).fetchone()
     if row is None:
@@ -96,13 +105,18 @@ def list_questions(
 
 
 def answer_question(
-    conn: sqlite3.Connection, question_id: str, answer_md: str, sources: list[dict]
+    conn: sqlite3.Connection,
+    question_id: str,
+    answer_md: str,
+    sources: list[dict],
+    canvas_text: str | None = None,
 ) -> dict:
     # The status guard is in the UPDATE itself, so two racing answers cannot both win.
     cur = conn.execute(
-        "UPDATE questions SET status = 'answered', answer_md = ?, sources_json = ?"
+        "UPDATE questions SET status = 'answered', answer_md = ?, sources_json = ?,"
+        " canvas_text = ?"
         " WHERE id = ? AND status = 'pending'",
-        (answer_md, json.dumps(sources), question_id),
+        (answer_md, json.dumps(sources), canvas_text, question_id),
     )
     if cur.rowcount:  # same transaction as the answer, so the index never lags (INK-136)
         conn.execute("DELETE FROM answer_fts WHERE question_id = ?", (question_id,))
@@ -180,6 +194,7 @@ def _full(conn: sqlite3.Connection, row: sqlite3.Row, chunks: list[tuple[str, se
         "focus_chunk_ids": [cid for cid, ids in chunks if ids & wanted],
         "status": row["status"],
         "answer_md": row["answer_md"],
+        "canvas_text": row["canvas_text"],
         "sources": json.loads(row["sources_json"]) if row["sources_json"] else [],
         "history": _history(conn, row),
         "runner_status": row["runner_status"],

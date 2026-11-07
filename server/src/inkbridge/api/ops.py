@@ -4,7 +4,7 @@ import json
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from inkbridge import db
 from inkbridge.agent import mermaid
@@ -12,6 +12,7 @@ from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import ops as ops_db
+from inkbridge.db import questions as q_db
 from inkbridge.db import tasks as tasks_db
 from inkbridge.timing import timed
 
@@ -30,6 +31,7 @@ class OpOut(Out):
     elements: list[dict] | None = None
     box: dict | None = None
     resolved_at: str | None = None
+    question_id: str | None = None
 
 
 class OpList(Out):
@@ -47,13 +49,27 @@ class _Strict(BaseModel):
 SizeHint = Literal["small", "normal", "large"]
 
 
-class WriteTextPayload(_Strict):
+Relation = Literal["answer", "diagram", "relates"]
+
+
+class _QuestionLink(_Strict):
+    question_id: str | None = Field(default=None, max_length=64)  # the thread this draft belongs to
+    relation: Relation | None = None
+
+    @model_validator(mode="after")
+    def _relation(self):
+        if self.relation and not self.question_id:
+            raise ValueError("relation needs question_id")
+        return self
+
+
+class WriteTextPayload(_QuestionLink):
     text: str = Field(min_length=1, max_length=10_000)
     anchor: str | None = None  # chunk (region) id to place beside
     size: SizeHint | None = None  # hint only; the server computes the pixel font_size
 
 
-class DrawDiagramPayload(_Strict):
+class DrawDiagramPayload(_QuestionLink):
     mermaid: str = Field(min_length=1, max_length=20_000)  # flowchart only
     anchor: str | None = None
 
@@ -123,6 +139,17 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
                 "start the source with `flowchart TD` or `graph LR`",
             },
         )
+    if payload.question_id:
+        if not q_db.question_in_document(conn, payload.question_id, document_id):
+            raise HTTPException(
+                422,
+                {
+                    "code": "question_not_found",
+                    "question_id": payload.question_id,
+                    "msg": "question_id is not a question on this canvas",
+                },
+            )
+        payload.relation = payload.relation or "answer"
     swept: list[dict] = []
     try:
         with timed("ops.create", fields=len(body.payload)):  # includes server-side placement

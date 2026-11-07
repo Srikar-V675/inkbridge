@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-  applyQuestionUpdate, fileName, focusIds, keepOnCanvas, keepOp, plainText, publishQuestion, runnerLine,
+  applyQuestionUpdate, diagramOp, fileName, mermaidBlock, noteUrl, focusIds, keepOnCanvas, keepOp, plainText, publishQuestion, runnerLine,
   subscribeQuestions, type Question,
 } from "../src/ask/ask.ts";
 
 const q = (over: Partial<Question> = {}): Question => ({
   id: "abc123", document_id: "c", parent_id: null, text: "t", focus_element_ids: [], focus_chunk_ids: [],
-  status: "answered", answer_md: "Hello **world**", sources: [], created_at: "",
+  status: "answered", answer_md: "Hello **world**", canvas_text: null, sources: [], created_at: "",
   runner_status: "pending", runner_error: null, ...over,
 });
 
@@ -48,8 +48,43 @@ describe("keepOp", () => {
   it("shape and idempotent id", () => {
     const op = keepOp(q(), null);
     assert.equal(op.op_id, "keep-abc123");
-    assert.deepEqual(Object.keys(op.payload), ["text"]);
-    assert.deepEqual(Object.keys(keepOp(q(), "k1").payload).sort(), ["anchor", "text"]);
+    assert.deepEqual(Object.keys(op.payload).sort(), ["question_id", "relation", "text"]);
+    assert.deepEqual(Object.keys(keepOp(q(), "k1").payload).sort(), ["anchor", "question_id", "relation", "text"]);
+    assert.equal(op.payload.question_id, "abc123");
+    assert.equal(op.payload.relation, "answer");
+  });
+  it("uses canvas_text, stripped of markup, instead of the long answer", () => {
+    assert.equal(keepOp(q({ canvas_text: "Short" }), null).payload.text, "Short");
+    assert.equal(keepOp(q({ canvas_text: "**Bold** <b>x</b> [l](http://e)" }), null).payload.text, "Bold x l");
+  });
+  it("falls back to the first paragraph capped at 300", () => {
+    const md = `${"a".repeat(400)}\n\nsecond`;
+    assert.equal(keepOp(q({ answer_md: md }), null).payload.text, "a".repeat(300));
+    assert.equal(keepOp(q({ answer_md: "one\n\ntwo" }), null).payload.text, "one");
+  });
+});
+
+describe("diagram helpers", () => {
+  it("mermaidBlock returns the first flowchart block", () => {
+    const md = "x\n```mermaid\nsequenceDiagram\nA->>B: hi\n```\n```mermaid\nflowchart TD\n A-->B\n```";
+    assert.equal(mermaidBlock(md), "flowchart TD\n A-->B");
+    assert.equal(mermaidBlock("```mermaid\ngraph LR\nA-->B\n```"), "graph LR\nA-->B");
+    assert.equal(mermaidBlock("no diagram"), null);
+    assert.equal(mermaidBlock("```mermaid\nsequenceDiagram\nA->>B: hi\n```"), null);
+  });
+  it("diagramOp shape", () => {
+    const op = diagramOp(q({ answer_md: "```mermaid\nflowchart TD\nA-->B\n```" }), "k1");
+    assert.deepEqual(op, {
+      type: "draw_diagram", op_id: "diagram-abc123",
+      payload: { mermaid: "flowchart TD\nA-->B", question_id: "abc123", relation: "diagram", anchor: "k1" },
+    });
+    assert.equal("anchor" in diagramOp(q({ answer_md: "```mermaid\nflowchart TD\nA-->B\n```" }), null)!.payload, false);
+    assert.equal(diagramOp(q(), null), null);
+  });
+  it("noteUrl names the note only", () => {
+    const u = noteUrl("private/secret dir/My Note.md");
+    assert.equal(u, "obsidian://open?file=My%20Note");
+    assert.ok(!u.includes("secret") && !u.includes("private"));
   });
 });
 

@@ -268,12 +268,13 @@ class ApiClient:
             "questions"
         ]
 
-    def answer_question(self, question_id: str, answer_md: str, sources: list[dict]) -> dict:
-        return self._send(
-            "POST",
-            f"/questions/{quote(question_id, safe='')}/answer",
-            {"answer_md": answer_md, "sources": sources},
-        )
+    def answer_question(
+        self, question_id: str, answer_md: str, sources: list[dict], canvas_text: str | None = None
+    ) -> dict:
+        body = {"answer_md": answer_md, "sources": sources}
+        if canvas_text is not None:
+            body["canvas_text"] = canvas_text
+        return self._send("POST", f"/questions/{quote(question_id, safe='')}/answer", body)
 
     def get_op(self, op_id: str) -> dict:
         return self._json(self._get(f"/ops/{quote(op_id, safe='')}"))

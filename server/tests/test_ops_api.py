@@ -39,7 +39,8 @@ def seed(client, elements=(USER_A, USER_B)):
 
 
 def write(client, text="hello", **extra):
-    return client.post(OPS, json={"type": "write_text", "payload": {"text": text}, **extra})
+    extra.setdefault("payload", {"text": text})
+    return client.post(OPS, json={"type": "write_text", **extra})
 
 
 def own(op_id, n="1"):
@@ -768,6 +769,55 @@ def test_too_many_open_is_informative(client, monkeypatch):
     assert detail["since"] == first["created_at"]
     assert "since" in detail["msg"] and first["created_at"] in detail["msg"]
     assert "24 h" in detail["msg"]
+
+
+def _question(client, doc="default"):
+    r = client.post(f"/documents/{doc}/questions", json={"text": "why?"})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_op_with_question_id_and_relation(client):
+    seed(client)
+    q = _question(client)
+    r = write(client, payload={"text": "x", "question_id": q, "relation": "answer"})
+    assert r.status_code == 201, r.text
+    op = r.json()
+    assert op["payload"]["question_id"] == q and op["question_id"] == q
+    assert op["payload"]["relation"] == "answer"
+    conn = db.connect()
+    try:
+        assert ops_db.get_op(conn, op["id"])["question_id"] == q
+        row = conn.execute("SELECT question_id FROM agent_ops WHERE id = ?", (op["id"],)).fetchone()
+        assert row["question_id"] == q
+    finally:
+        conn.close()
+    # relation defaults to answer when only question_id is given
+    d = write(client, payload={"text": "y", "question_id": q}).json()
+    assert d["payload"]["relation"] == "answer"
+
+
+def test_op_unknown_question_422(client):
+    seed(client)
+    other = client.post("/documents", json={"title": "o"}).json()["id"]
+    foreign = _question(client, other)
+    for qid in (foreign, "nope"):
+        r = write(client, payload={"text": "x", "question_id": qid})
+        assert r.status_code == 422 and r.json()["detail"]["code"] == "question_not_found"
+
+
+def test_relation_needs_question_id(client):
+    seed(client)
+    assert write(client, payload={"text": "x", "relation": "answer"}).status_code == 422
+    q = _question(client)
+    assert write(client, payload={"text": "x", "question_id": q, "relation": "bad"}).status_code == 422
+
+
+def test_question_fields_do_not_bypass_ink_guard(client):
+    seed(client)
+    q = _question(client)
+    r = write(client, payload={"text": "x", "question_id": q, "elements": [{"id": USER_A["id"]}]})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "existing_element_id"
 
 
 # --- INK-116: font from line pitch, wrap from the view, placement search ---------------------

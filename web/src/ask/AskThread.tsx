@@ -23,7 +23,7 @@ export function AskThread(props: {
     <>
       <div className="ink-ask__head">
         <div className="ink-ask__titlebox">
-          <Button variant="quiet" className="ink-ask__back" aria-label="Back to earlier questions" onClick={onBack}><BackIcon />Back</Button>
+          <Button variant="quiet" className="ink-ask__back" aria-label="Back to earlier questions" onClick={onBack}><BackIcon />All threads</Button>
           <h2 className="ink-ask__title">{threadTitle(thread)}</h2>
           <p className="ink-ask__meta">{messageCount(thread)} messages</p>
         </div>

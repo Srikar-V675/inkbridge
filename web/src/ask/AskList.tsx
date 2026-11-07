@@ -1,5 +1,6 @@
 // Ask panel list view: the question form and earlier threads (INK-161, docs/decisions/0067).
 import { useEffect, useMemo, useState } from "react";
+import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { CloseIcon, ScopeIcon, SendIcon } from "./askIcons";
@@ -7,9 +8,9 @@ import { canSend, relativeTime, replyTarget, scopeLine, threadLine, threadTitle,
 
 export function AskList(props: {
   threads: Thread[]; text: string; setText: (t: string) => void; selected: number; raw: number;
-  busy: boolean; error: string; onSend: () => void; onOpen: (id: string) => void; onClose: () => void;
+  waiting: ReadonlySet<string>; busy: boolean; error: string; onSend: () => void; onOpen: (id: string) => void; onClose: () => void;
 }) {
-  const { threads, text, setText, selected, raw, busy, error, onSend, onOpen, onClose } = props;
+  const { threads, text, setText, selected, raw, waiting, busy, error, onSend, onOpen, onClose } = props;
   const ok = canSend({ text, busy, selected, followUp: false });
   const lines = useMemo(() => threads.map(threadLine), [threads]);
   const [now, setNow] = useState(() => Date.now());
@@ -44,6 +45,7 @@ export function AskList(props: {
             <Button key={t.id} variant="quiet" className="ink-ask__row" onClick={() => onOpen(t.id)}>
               <span className="ink-ask__row-main">
                 <span className="ink-ask__row-title">{threadTitle(t)}</span>
+                {waiting.has(t.id) && <span className="ink-ask__row-tag"><Badge>Draft waiting</Badge></span>}
                 <span className={`ink-ask__row-line${line.failed ? " ink-ask__row-line--failed" : ""}`}>{line.text}</span>
                 <span className="ink-ask__row-time">{relativeTime(replyTarget(t).created_at, now)}</span>
               </span>
