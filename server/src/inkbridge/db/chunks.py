@@ -9,23 +9,26 @@ from datetime import datetime, timedelta
 from inkbridge import config
 from inkbridge.canvas.chunker import (
     ChunkerConfig,
+    LinkRow,
     agent_op,
     chunk_scene,
     connector_ids,
     kind_hint,
     match_chunks,
     pin_groups,
+    stroke_connector_ids,
 )
 from inkbridge.canvas.hashes import (
     bbox_of,
     content_hash,
     stroke_hash,
 )
+from inkbridge.canvas.strokes import analyse
 
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 
 from inkbridge.db.common import AUTO, _now
-from inkbridge.db.documents import get_scene
+from inkbridge.db.documents import get_chunker, get_scene
 from inkbridge.db.recognitions import _put_recognition, _reindex_region
 from inkbridge.db.regions import get_region
 
@@ -66,6 +69,23 @@ def _gc_orphans(conn: sqlite3.Connection, document_id: str, now: str) -> list[st
     return [r["png_path"] for r in doomed if r["png_path"]]
 
 
+def _resolve_config(
+    conn: sqlite3.Connection, document_id: str, given: ChunkerConfig | None
+) -> ChunkerConfig:
+    """The config for a save: an explicit one (tests), else the canvas's chunker, else the env."""
+    if given is not None:
+        return given
+    kw = {"match_containment": config.chunk_containment()}
+    if get_chunker(conn, document_id) == "v2":
+        return ChunkerConfig.v2(**kw)
+    return ChunkerConfig(**kw)
+
+
+def _pin_exclude(cfg: ChunkerConfig, elements: list[dict]) -> set[str]:
+    """Ids a pin must drop: with v2, pen connectors and heads are never chunk members."""
+    return stroke_connector_ids(analyse(elements)) if cfg.version == "v2" else set()
+
+
 def _sync_chunks(
     conn: sqlite3.Connection,
     document_id: str,
@@ -82,7 +102,7 @@ def _sync_chunks(
     is skipped without hashing. Chunks that lose their id become orphaned, keep their last
     element ids and hashes, and point successor_of at the cluster that took most of their ink.
     """
-    cfg = chunker_config or ChunkerConfig(match_containment=config.chunk_containment())
+    cfg = _resolve_config(conn, document_id, chunker_config)
     rows = {
         r["id"]: r
         for r in conn.execute(
@@ -106,13 +126,14 @@ def _sync_chunks(
         tops=[b["y"] for b in boxes],
         active={rid for rid, r in rows.items() if r["status"] == "active"},
         threshold=cfg.match_threshold,
-        ignore=connector_ids(elements),
+        ignore=connector_ids(elements) | _pin_exclude(cfg, elements),
         containment=cfg.match_containment,
     )
     ids = [rid or uuid.uuid4().hex[:12] for rid in matching.assigned]
 
-    for rid, kept, members, box, pinned in zip(
-        ids, matching.assigned, clusters, boxes, chunking.pinned, strict=True
+    flags = chunking.connector or [False] * len(clusters)
+    for rid, kept, members, box, pinned, is_connector in zip(
+        ids, matching.assigned, clusters, boxes, chunking.pinned, flags, strict=True
     ):
         row = rows.get(kept) if kept else None
         # Kept, still active and holding exactly the same elements as before. (Its pin state cannot
@@ -123,9 +144,24 @@ def _sync_chunks(
         chunk = [by_id[i] for i in members]
         new_stroke, new_content = stroke_hash(chunk), content_hash(chunk)
         if row is None:
-            _insert_chunk(conn, document_id, rid, members, by_id, now, pinned)
+            _insert_chunk(
+                conn,
+                document_id,
+                rid,
+                members,
+                by_id,
+                now,
+                pinned,
+                "connector" if is_connector else None,
+            )
             continue
-        if same and new_stroke == row["stroke_hash"] and new_content == row["content_hash"]:
+        kind = "connector" if is_connector else None
+        if (
+            same
+            and new_stroke == row["stroke_hash"]
+            and new_content == row["content_hash"]
+            and (kind or row["kind"]) == row["kind"]
+        ):
             continue  # only volatile fields moved
         content_changed = new_content != row["content_hash"]
         conn.execute(
@@ -138,7 +174,7 @@ def _sync_chunks(
                 json.dumps(box),
                 new_stroke,
                 new_content,
-                kind_hint(chunk) if content_changed else row["kind"],
+                kind or (kind_hint(chunk) if content_changed else row["kind"]),
                 int(pinned),
                 now,
                 new_stroke,
@@ -156,10 +192,13 @@ def _sync_chunks(
         )
 
     # Links are derived state: rebuilt from scratch, so they only ever name current chunks.
-    conn.execute("DELETE FROM links WHERE document_id = ?", (document_id,))
+    # Only the chunker's own rows (source 'stroke'); agent and user links are not derived from ink.
+    conn.execute("DELETE FROM links WHERE document_id = ? AND source = 'stroke'", (document_id,))
+    rows_ = chunking.link_rows or [LinkRow(a, b) for a, b in chunking.links]
     conn.executemany(
-        "INSERT INTO links (document_id, from_region, to_region, kind) VALUES (?, ?, ?, 'arrow')",
-        [(document_id, ids[a], ids[b]) for a, b in chunking.links],
+        "INSERT OR IGNORE INTO links (document_id, from_region, to_region, kind, source,"
+        " element_id, label, confidence) VALUES (?, ?, ?, 'arrow', 'stroke', ?, ?, ?)",
+        [(document_id, ids[r.a], ids[r.b], r.element_id, r.label, r.confidence) for r in rows_],
     )
 
     # Chunks made only of accepted agent ink are read from their own text: no crop, no model call.
@@ -189,6 +228,7 @@ def _insert_chunk(
     by_id: dict[str, dict],
     now: str,
     pinned: bool,
+    kind: str | None = None,
 ) -> None:
     """A new active chunk row: hashes and bbox from the scene, crop still to be rendered."""
     chunk = [by_id[i] for i in members]
@@ -201,7 +241,7 @@ def _insert_chunk(
             document_id,
             json.dumps(members),
             json.dumps(bbox_of(chunk)),
-            kind_hint(chunk),
+            kind or kind_hint(chunk),
             AUTO,
             stroke_hash(chunk),
             content_hash(chunk),
@@ -237,10 +277,10 @@ def merge_chunks(
     if len(set(chunk_ids)) != len(chunk_ids) or len(chunk_ids) < 2:
         raise InvalidOverride("merge needs at least two different chunk ids")
 
-    def groups(rows: list[sqlite3.Row], elements: list[dict]) -> list[list[str]]:
+    def groups(rows: list[sqlite3.Row], elements: list[dict], skip: set[str]) -> list[list[str]]:
         # A chunk of nothing but arrows or lines cannot be pinned: connectors follow their ends.
         for r in rows:
-            if not pin_groups(elements, [json.loads(r["element_ids_json"])]):
+            if not pin_groups(elements, [json.loads(r["element_ids_json"])], exclude=skip):
                 raise InvalidOverride(
                     f"chunk {r['id']} holds only arrows or lines, which follow the chunks they "
                     "connect; merge the chunks at their ends instead"
@@ -263,7 +303,7 @@ def split_chunk(
     if not element_ids:
         raise InvalidOverride("element_ids is empty: select the ink to split off")
 
-    def groups(rows: list[sqlite3.Row], _: list[dict]) -> list[list[str]]:
+    def groups(rows: list[sqlite3.Row], _: list[dict], __: set[str]) -> list[list[str]]:
         members = json.loads(rows[0]["element_ids_json"])
         outside = sorted(set(element_ids) - set(members))
         if outside:
@@ -297,8 +337,10 @@ def _override(conn, document_id, chunk_ids, make_groups, chunker_config):
                 raise ChunkNotActive(cid)
             rows.append(r)
         elements = json.loads(scene_json)
-        wanted = make_groups(rows, elements)
-        groups = pin_groups(elements, wanted)
+        cfg = _resolve_config(conn, document_id, chunker_config)
+        skip = _pin_exclude(cfg, elements)
+        wanted = make_groups(rows, elements, skip)
+        groups = pin_groups(elements, wanted, exclude=skip)
         # A group with no ink of its own (only connectors, or nothing left after a split) vanishes.
         if len(groups) != len(wanted):
             raise InvalidOverride(
@@ -309,7 +351,7 @@ def _override(conn, document_id, chunk_ids, make_groups, chunker_config):
         new_ids = [uuid.uuid4().hex[:12] for _ in groups]
         for rid, members in zip(new_ids, groups, strict=True):
             _insert_chunk(conn, document_id, rid, members, by_id, now, pinned=True)
-        _sync_chunks(conn, document_id, elements, by_id, set(), now, chunker_config)
+        _sync_chunks(conn, document_id, elements, by_id, set(), now, cfg)
         new = [get_region(conn, rid) for rid in new_ids]
         old = [get_region(conn, r["id"]) for r in rows]
         # The matcher must have kept the new ids and replaced the originals; anything else is a bug.
@@ -322,3 +364,25 @@ def _override(conn, document_id, chunk_ids, make_groups, chunker_config):
         conn.rollback()
         raise
     return new, [r["id"] for r in rows]
+
+
+def set_chunker(conn: sqlite3.Connection, document_id: str, version: str | None) -> None:
+    """Choose the chunker for one canvas ('v1', 'v2', or None to follow INKBRIDGE_CHUNKER) and
+    re-chunk at once, in the same lock as a scene save (INK-122, decision 0081).
+
+    Orphan collection is left to the next save. documents.updated_at is not touched: it means the
+    last ink edit.
+    """
+    if version not in (None, "v1", "v2"):
+        raise ValueError(f"chunker must be v1, v2 or None, got {version!r}")
+    now = _now()
+    conn.execute("BEGIN IMMEDIATE")  # same lock as a scene save
+    try:
+        _, scene_json = get_scene(conn, document_id)  # raises DocumentNotFound
+        conn.execute("UPDATE documents SET chunker = ? WHERE id = ?", (version, document_id))
+        elements = json.loads(scene_json)
+        _sync_chunks(conn, document_id, elements, {e["id"]: e for e in elements}, set(), now, None)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise

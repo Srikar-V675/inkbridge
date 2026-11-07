@@ -118,7 +118,7 @@ def recognition_candidates(
     rows = conn.execute(
         "SELECT r.id, r.content_hash, r.png_path, r.bbox, r.element_ids_json FROM regions r"
         f" WHERE r.document_id = ? AND r.status = 'active'{fresh}"
-        " AND r.content_hash IS NOT NULL"
+        " AND r.content_hash IS NOT NULL AND COALESCE(r.kind, '') != 'connector'"
         " AND NOT EXISTS (SELECT 1 FROM recognitions c"
         "  WHERE c.region_id = r.id AND c.content_hash = r.content_hash)"
         " ORDER BY r.updated_at, r.id",

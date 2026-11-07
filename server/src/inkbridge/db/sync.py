@@ -68,6 +68,7 @@ def needs_reading(resolved: list[tuple]) -> list[str]:
         live = live or successor
         if (
             live is not None
+            and live.get("kind") != "connector"  # a free-ended arrow is not read (INK-122)
             and not live["source"]
             and (config.crop_source() == "server" or not live["png_stale"])
             and imaging.unreadable_reason(live["bounds"], live["stroke_count"]) is None

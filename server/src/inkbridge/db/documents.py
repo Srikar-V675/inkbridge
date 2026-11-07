@@ -3,6 +3,8 @@
 import logging
 import sqlite3
 
+from inkbridge import config
+
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 
 from inkbridge.db.common import DEFAULT_DOCUMENT_ID, DocumentNotFound, _now
@@ -76,7 +78,7 @@ def document_updated_at(conn: sqlite3.Connection, document_id: str) -> str | Non
 # INK-118 (decision 0069): one row per canvas for the home screen. element_count is stored by
 # put_scene, so a list never parses a scene; the other counts are indexed lookups.
 _SUMMARY = """
-SELECT d.id, d.title, d.updated_at, d.pinned, d.archived_at, d.last_opened_at,
+SELECT d.id, d.title, d.updated_at, d.pinned, d.archived_at, d.last_opened_at, d.chunker,
        COALESCE(s.version, 0) AS version,
        COALESCE(s.element_count, 0) AS element_count,
        (SELECT COUNT(*) FROM regions r WHERE r.document_id = d.id
@@ -104,6 +106,7 @@ def _summary(r: sqlite3.Row) -> dict:
         "chunk_count": r["chunk_count"],
         "open_offers": r["open_offers"],
         "last_opened_at": r["last_opened_at"],
+        "chunker": r["chunker"] or config.chunker(),
     }
 
 
@@ -146,6 +149,14 @@ def patch_document(
         conn.execute("UPDATE documents SET archived_at = NULL WHERE id = ?", (document_id,))
     conn.commit()
     return document_summary(conn, document_id)
+
+
+def get_chunker(conn: sqlite3.Connection, document_id: str) -> str:
+    """'v1' or 'v2' for a canvas: its own setting, else INKBRIDGE_CHUNKER, else v1 (INK-122)."""
+    row = conn.execute("SELECT chunker FROM documents WHERE id = ?", (document_id,)).fetchone()
+    if row is None:
+        raise DocumentNotFound(document_id)
+    return row["chunker"] or config.chunker()
 
 
 def mark_opened(conn: sqlite3.Connection, document_id: str) -> None:

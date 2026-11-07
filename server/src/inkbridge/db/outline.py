@@ -81,7 +81,7 @@ def chunk_outline(
     }
     links: dict[str, list[dict]] = {}
     for r in conn.execute(
-        "SELECT from_region, to_region, kind FROM links WHERE document_id = ?"
+        "SELECT DISTINCT from_region, to_region, kind FROM links WHERE document_id = ?"
         " ORDER BY from_region, to_region, kind",
         (document_id,),
     ):

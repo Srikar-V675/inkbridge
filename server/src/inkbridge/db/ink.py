@@ -15,7 +15,7 @@ def list_links(conn: sqlite3.Connection, document_id: str) -> list[dict]:
     return [
         {"from": r["from_region"], "to": r["to_region"], "kind": r["kind"]}
         for r in conn.execute(
-            "SELECT from_region, to_region, kind FROM links WHERE document_id = ?"
+            "SELECT DISTINCT from_region, to_region, kind FROM links WHERE document_id = ?"
             " ORDER BY from_region, to_region, kind",
             (document_id,),
         )

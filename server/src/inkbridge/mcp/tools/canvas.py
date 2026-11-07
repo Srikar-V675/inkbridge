@@ -189,7 +189,8 @@ def get_subgraph(
 ) -> str:
     """Chunks connected to one chunk by arrows, or the shortest arrow path between two chunks.
 
-    Read-only; only long arrows between chunks count as links (short ones merge chunks). Each
+    Read-only; only long arrows between chunks count as links (short ones merge chunks; with
+    the v2 chunker pen and native connectors are links at any length above a tick). Each
     node has id, order, kind, a text preview, distance and a deep_link. An orphaned (replaced)
     chunk id is followed to its live successor: see anchor_used and note. A deleted chunk is
     refused; call read_canvas. omitted_nodes / omitted_edges say what the caps cut. mermaid

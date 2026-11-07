@@ -28,17 +28,22 @@ from inkbridge.canvas.chunker.config import (
     clustering_elements,
     connector_ids,
     is_draft,
+    stroke_connector_ids,
 )
+from inkbridge.canvas.chunker.connectors import EndIndex
+from inkbridge.canvas.chunker.lines import cluster_lines
 from inkbridge.canvas.chunker.matching import Matching, match_chunks
 from inkbridge.canvas.chunker.order import kind_hint, reading_order
 from inkbridge.canvas.chunker.scene import (
     Chunking,
+    LinkRow,
     _box_distance,
     _path_length,
     agent_groups,
     chunk_scene,
     pin_groups,
 )
+from inkbridge.canvas.chunker.scene_v2 import chunk_scene_v2
 
 __all__ = [
     "_CONNECTORS",
@@ -47,6 +52,8 @@ __all__ = [
     "_SHAPES",
     "ChunkerConfig",
     "Chunking",
+    "EndIndex",
+    "LinkRow",
     "Matching",
     "_UnionFind",
     "_box",
@@ -61,7 +68,9 @@ __all__ = [
     "agent_groups",
     "agent_op",
     "chunk_scene",
+    "chunk_scene_v2",
     "cluster",
+    "cluster_lines",
     "clustering_elements",
     "connector_ids",
     "is_draft",
@@ -70,4 +79,5 @@ __all__ = [
     "pin_groups",
     "proximity_threshold",
     "reading_order",
+    "stroke_connector_ids",
 ]

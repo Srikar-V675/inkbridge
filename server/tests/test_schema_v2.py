@@ -26,7 +26,16 @@ def test_v2_tables_and_columns(tmp_path):
         "text_hash",
         "created_at",
     }
-    assert cols(conn, "links") == {"document_id", "from_region", "to_region", "kind"}
+    assert cols(conn, "links") == {
+        "document_id",
+        "from_region",
+        "to_region",
+        "kind",
+        "source",
+        "label",
+        "confidence",
+        "element_id",
+    }
     assert cols(conn, "questions") == {
         "id",
         "document_id",

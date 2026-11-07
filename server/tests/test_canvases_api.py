@@ -9,7 +9,7 @@ from tests.test_chunk_persistence import row
 
 HOME_KEYS = {
     "id", "title", "updated_at", "version", "url", "pinned", "archived", "element_count",
-    "chunk_count", "open_offers", "last_opened_at",
+    "chunk_count", "open_offers", "last_opened_at", "chunker",
 }  # fmt: skip
 
 

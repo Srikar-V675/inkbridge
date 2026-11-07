@@ -3,7 +3,7 @@
 import itertools
 import math
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from inkbridge.canvas.chunker.clustering import _MAX_CELLS, _proximity, _UnionFind
@@ -18,20 +18,38 @@ from inkbridge.canvas.hashes import bbox_of
 
 
 @dataclass(frozen=True)
+class LinkRow:
+    """One v2 link: chunk indices, the connector that makes it and how sure the chunker is."""
+
+    a: int
+    b: int
+    element_id: str = ""
+    confidence: float | None = None
+    label: str | None = None
+
+
+@dataclass(frozen=True)
 class Chunking:
     chunks: list[list[str]]  # sorted element ids per chunk, ordered by their smallest id
     links: list[tuple[int, int]]  # arrow links (from, to) as indices into chunks, sorted, unique
     pinned: list[bool]  # per chunk: built from a pin (a manual merge or split, INK-059)
+    # v2 only (INK-122): which chunks are a free-ended connector, and one row per linking connector
+    connector: list[bool] = field(default_factory=list)
+    link_rows: list[LinkRow] = field(default_factory=list)
 
 
-def pin_groups(elements: list[dict[str, Any]], pins: Sequence[Collection[str]]) -> list[list[str]]:
+def pin_groups(
+    elements: list[dict[str, Any]],
+    pins: Sequence[Collection[str]],
+    exclude: Collection[str] = (),
+) -> list[list[str]]:
     """The pins reduced to ink that clusters, made disjoint (an earlier pin keeps a shared id).
 
     Ids that are deleted, drafts, connectors or unknown are dropped (connectors attach by the arrow
     rules instead); bound text and its container always go together (picking either picks both);
     empty pins vanish.
     """
-    live = {str(e["id"]): e for e in clustering_elements(elements)}
+    live = {str(e["id"]): e for e in clustering_elements(elements) if str(e["id"]) not in exclude}
     # A container and its bound text are one unit, keyed by the container id.
     unit: dict[str, str] = {}
     for eid, e in live.items():
@@ -90,6 +108,11 @@ def chunk_scene(
     ink (see `pin_groups`), nothing joins it by proximity or by an arrow merge (such an arrow
     links instead), and connectors still attach to it.
     """
+    if config and config.version == "v2":
+        # Local import: scene_v2 imports pin_groups, agent_groups, Chunking and the helpers above.
+        from inkbridge.canvas.chunker.scene_v2 import chunk_scene_v2
+
+        return chunk_scene_v2(elements, config, pins)
     config = config or ChunkerConfig()
     manual = pin_groups(elements, pins)
     taken = {i for g in manual for i in g}

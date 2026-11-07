@@ -6,6 +6,7 @@ import os
 import re
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -23,6 +24,8 @@ class DocumentPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     pinned: bool | None = None
     archived: bool | None = None
+    # INK-122: which chunker reads this canvas; "default" clears the override (env decides).
+    chunker: Literal["v1", "v2", "default"] | None = None
 
     @field_validator("title")
     @classmethod
@@ -33,8 +36,13 @@ class DocumentPatch(BaseModel):
 
     @model_validator(mode="after")
     def _something(self) -> "DocumentPatch":
-        if self.title is None and self.pinned is None and self.archived is None:
-            raise ValueError("send at least one of title, pinned, archived")
+        if (
+            self.title is None
+            and self.pinned is None
+            and self.archived is None
+            and self.chunker is None
+        ):
+            raise ValueError("send at least one of title, pinned, archived, chunker")
         return self
 
 
@@ -54,6 +62,9 @@ def patch_document(document_id: str, body: DocumentPatch, conn: Conn) -> dict:
         doc = db.patch_document(
             conn, document_id, title=body.title, pinned=body.pinned, archived=body.archived
         )
+        if body.chunker is not None:  # re-chunks now, in one transaction (decision 0081)
+            db.set_chunker(conn, document_id, None if body.chunker == "default" else body.chunker)
+            doc = db.document_summary(conn, document_id)
     except db.DocumentNotFound:
         raise HTTPException(404, NOT_FOUND) from None
     return {**doc, "url": deep_link(doc["id"])}

@@ -65,6 +65,7 @@ class DocumentOut(Out):
     chunk_count: int
     open_offers: int
     last_opened_at: str | None
+    chunker: str
 
 
 NOT_FOUND = "document not found; GET /documents lists the canvases"
