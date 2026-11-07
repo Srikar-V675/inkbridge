@@ -52,14 +52,23 @@ def answer_question(
         list[Source],
         Field(description="What the answer rests on: {type:'chunk', id} or {type:'note', path}"),
     ] = [],  # noqa: B006 - never mutated
+    canvas_text: Annotated[
+        str | None,
+        Field(
+            max_length=600,
+            description="A 1 to 3 sentence summary (about 300 characters) drawn beside the ink; "
+            "the full answer stays in the thread",
+        ),
+    ] = None,
 ) -> str:
     """Answer a pending question. Stores the text only; it changes no ink and writes no note.
 
+    canvas_text is the answer for the canvas card; omit and the first paragraph is used.
     Fails if the question is already answered or cancelled.
     """
     try:
         q = get_client().answer_question(
-            question_id, answer_md, [s.model_dump(exclude_none=True) for s in sources]
+            question_id, answer_md, [s.model_dump(exclude_none=True) for s in sources], canvas_text
         )
     except (NotFound, Conflict) as e:
         raise ToolError(f"{e} {_NEXT_STEP}") from e

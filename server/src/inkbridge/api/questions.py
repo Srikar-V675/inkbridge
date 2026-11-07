@@ -45,6 +45,7 @@ class QuestionIn(_Strict):
 class AnswerIn(_Strict):
     answer_md: str = Field(min_length=1, max_length=20_000)  # untrusted markdown, stored as is
     sources: list[Source] = Field(default_factory=list, max_length=50)
+    canvas_text: str | None = Field(default=None, min_length=1, max_length=600)
 
 
 class HistoryItem(Out):
@@ -63,6 +64,7 @@ class QuestionOut(Out):
     focus_chunk_ids: list[str]
     status: str
     answer_md: str | None
+    canvas_text: str | None
     sources: list[dict]
     history: list[HistoryItem]
     runner_status: str
@@ -129,7 +131,9 @@ def get_question(question_id: str, conn: Conn) -> dict:
 @router.post("/questions/{question_id}/answer", response_model=QuestionOut)
 def answer_question(question_id: str, body: AnswerIn, conn: Conn) -> dict:
     sources = [s.model_dump(exclude_none=True) for s in body.sources]
-    return _transition(q_db.answer_question, conn, question_id, body.answer_md, sources)
+    return _transition(
+        q_db.answer_question, conn, question_id, body.answer_md, sources, body.canvas_text
+    )
 
 
 @router.post("/questions/{question_id}/cancel", response_model=QuestionOut)

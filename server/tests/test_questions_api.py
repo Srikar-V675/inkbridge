@@ -182,3 +182,18 @@ def test_follow_up_with_its_own_focus_keeps_it_and_a_root_stays_empty(client):
     q2 = ask(client, "second", parent_id=q1["id"], focus_element_ids=["user-b"])
     assert q2["focus_element_ids"] == ["user-b"]
     assert ask(client, "alone")["focus_element_ids"] == []
+
+
+def test_answer_stores_canvas_text(client):
+    seed(client)
+    qid = ask(client)["id"]
+    r = client.post(f"/questions/{qid}/answer", json={"answer_md": "long", "canvas_text": "short"})
+    assert r.status_code == 200 and r.json()["canvas_text"] == "short"
+    assert client.get(f"/questions/{qid}").json()["canvas_text"] == "short"
+    assert client.get(Q + "?status=answered").json()["questions"][0]["canvas_text"] == "short"
+    plain = ask(client)["id"]
+    assert answer(client, plain).json()["canvas_text"] is None
+    too_long = client.post(
+        f"/questions/{ask(client)['id']}/answer", json={"answer_md": "a", "canvas_text": "x" * 601}
+    )
+    assert too_long.status_code == 422
