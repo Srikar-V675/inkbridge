@@ -177,3 +177,10 @@ describe("uiScale.css mirrors the design tokens", () => {
     for (const name of decls.keys()) assert.ok(!name.startsWith("--radius-"), name);
   });
 });
+
+describe("the setting is wired in", () => {
+  it("TopBar renders the control and Shell sets --ui-scale", () => {
+    assert.match(read("../src/app/TopBar.tsx"), /UiSizeControl/);
+    assert.match(read("../src/app/Shell.tsx"), /--ui-scale/);
+  });
+});

@@ -15,14 +15,14 @@
   color: var(--color-paper);
 }
 
-/* Properties card: 280 px, right of the rail (16 + 60 + 16). Layer 6 like the chunk overlays but later in the DOM, so
+/* Properties card: 280 px, right of the rail (2 x space-md + rail width, 92 px at Large). Layer 6 like the chunk overlays but later in the DOM, so
    it is above their chips; under the top bar (7) and the Ask panel (8); the flyout (7) paints over it. */
 .ink-props.ink-card {
   position: absolute;
-  left: 92px;
+  left: calc(2 * var(--space-md) + var(--component-tool-rail-width));
   top: var(--ink-rail-top, 88px);
   z-index: 6;
-  width: 280px;
+  width: calc(280px * var(--ui-scale, 1));
   max-height: calc(100dvh - var(--ink-rail-top, 88px) - var(--space-md));
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -132,7 +132,7 @@
   background: var(--color-charcoal);
 }
 .ink-props__value {
-  min-width: 48px;
+  min-width: calc(48px * var(--ui-scale, 1));
   text-align: right;
   font: var(--type-note-weight) var(--type-note-size)/1 var(--type-note-family);
   color: var(--color-soft-ink);

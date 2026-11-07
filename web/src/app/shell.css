@@ -1,6 +1,6 @@
 /* App shell (INK-117). Tokens only; the paper layer is the one gradient outside ui/. */
 .ink-shell {
-  --ink-rail-top: 88px;
+  --ink-rail-top: calc(88px * var(--ui-scale, 1));
   position: relative;
   height: 100dvh;
   overflow: hidden;
@@ -106,7 +106,7 @@
 .ink-topbar__back {
   text-decoration: none;
   gap: var(--space-xs);
-  padding: 0 10px 0 var(--space-xs);
+  padding: 0 calc(10px * var(--ui-scale, 1)) 0 var(--space-xs);
 }
 .ink-topbar__title {
   margin: 0;
@@ -140,7 +140,7 @@
   align-items: center;
 }
 .ink-rail__gap {
-  height: 12px;
+  height: calc(12px * var(--ui-scale, 1));
 }
 .ink-rail .ink-icon-button[aria-pressed="true"] {
   background: var(--color-charcoal);
@@ -162,10 +162,10 @@
 
 .ink-zoom {
   position: absolute;
-  right: 20px;
-  bottom: 20px;
+  right: calc(20px * var(--ui-scale, 1));
+  bottom: calc(20px * var(--ui-scale, 1));
   z-index: 5;
-  height: 36px;
+  height: calc(36px * var(--ui-scale, 1));
   padding: 0 var(--space-xs);
   border-radius: var(--radius-pill);
   background: var(--color-panel);
@@ -177,35 +177,35 @@
 }
 .ink-zoom .ink-icon-button {
   position: relative;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
+  width: calc(32px * var(--ui-scale, 1));
+  min-width: calc(32px * var(--ui-scale, 1));
+  height: calc(32px * var(--ui-scale, 1));
+  min-height: calc(32px * var(--ui-scale, 1));
   color: var(--color-soft-ink);
 }
 .ink-zoom .ink-icon-button::after { /* 44 px hit area around the 32 px button */
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: min(0px, calc((32px * var(--ui-scale, 1) - var(--space-touch)) / 2));
 }
 .ink-zoom__value {
-  min-width: 40px;
+  min-width: calc(40px * var(--ui-scale, 1));
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 /* Short screens (tablet landscape with browser chrome is about 600 to 700 px): the rail packs tighter. Touch targets stay 44 px. */
 @media (max-height: 720px) {
-  .ink-shell { --ink-rail-top: 72px; }
+  .ink-shell { --ink-rail-top: calc(72px * var(--ui-scale, 1)); }
   .ink-rail { gap: 0; padding-block: var(--space-xs); }
-  .ink-rail__gap { height: 6px; }
+  .ink-rail__gap { height: calc(6px * var(--ui-scale, 1)); }
 }
 
 /* Tablet density (INK-170): smaller type and tighter spacing; touch targets stay 44 px. */
 @media (pointer: coarse), (max-width: 1300px) {
   .ink-topbar { gap: var(--space-sm); }
-  .ink-topbar__title { font-size: 18px; }
-  .ink-topbar__status { font-size: 13px; }
-  .ink-shell { --ink-rail-top: 72px; }
+  .ink-topbar__title { font-size: max(12px, calc(18px * var(--ui-scale, 1))); }
+  .ink-topbar__status { font-size: max(12px, calc(13px * var(--ui-scale, 1))); }
+  .ink-shell { --ink-rail-top: calc(72px * var(--ui-scale, 1)); }
   .ink-rail { left: var(--space-sm); }
 }
