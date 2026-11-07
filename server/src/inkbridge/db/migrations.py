@@ -2,11 +2,13 @@
 
 import json
 import logging
+import random
 import re
 import sqlite3
 from pathlib import Path
 
 from inkbridge.canvas.hashes import (
+    bbox_of,
     content_hash,
     legacy_content_hash,
     text_hash,
@@ -64,6 +66,8 @@ def _migrate_locked(conn: sqlite3.Connection) -> list[int]:
         applied.append(version)
     if 8 in applied:
         _backfill_scene_rows(conn)  # before the version-4 heals, which read the rows
+    if 11 in applied:
+        _move_drafts_out_of_scene(conn)
     # Version 4 needs a data backfill. Checking for unfilled rows (rather than "4 was just
     # applied") also heals a database whose backfill was interrupted before this lock existed.
     if (
@@ -74,6 +78,66 @@ def _migrate_locked(conn: sqlite3.Connection) -> list[int]:
     if 4 in done | set(applied):
         _rekey_integral_hashes(conn, rows=8 in done | set(applied))  # under the migration lock, committed with it
     return applied
+
+
+def _move_drafts_out_of_scene(conn: sqlite3.Connection) -> None:
+    """Migration 0011 (INK-114, decision 0086): drafts leave scene_elements. Pure SQL plus json.
+
+    Draft rows of accepted ops become plain agent ink; rows of `applied` ops move into the op as
+    `placed`; any other draft row is soft-deleted; `applied` ops left without elements expire.
+    """
+    ops = {r["id"]: r["status"] for r in conn.execute("SELECT id, status FROM agent_ops")}
+    for doc in [r[0] for r in conn.execute("SELECT DISTINCT document_id FROM scene_elements")]:
+        rows = conn.execute(
+            "SELECT id, pos, json FROM scene_elements WHERE document_id = ?"
+            " AND json_extract(json, '$.customData.draft') IS NOT NULL"
+            " AND json_extract(json, '$.customData.draft') != 0 AND json_extract(json, '$.type') IS NOT NULL",
+            (doc,),
+        ).fetchall()
+        if not rows:
+            continue
+        head = conn.execute(
+            "UPDATE scenes SET version = version + 1 WHERE document_id = ? RETURNING version", (doc,)
+        ).fetchone()[0]
+        moved: dict[str, list[dict]] = {}
+        for r in rows:
+            e = json.loads(r["json"])
+            op_id = (e.get("customData") or {}).get("op_id") or r["id"].split(":", 1)[0]
+            status = ops.get(op_id)
+            if status == "applied":
+                e["customData"] = {**e["customData"], "op_id": op_id}
+                moved.setdefault(op_id, []).append(e)
+                conn.execute(
+                    "DELETE FROM scene_elements WHERE document_id = ? AND id = ?", (doc, r["id"])
+                )
+                continue
+            if status == "accepted":
+                e["customData"] = {k: v for k, v in e["customData"].items() if k != "draft"}
+            else:
+                e["isDeleted"] = True
+                log.info("INK-114: dropped orphan draft %s", r["id"])
+            e["version"] = _int(e.get("version")) + 1
+            e["versionNonce"] = random.getrandbits(31) or 1
+            conn.execute(
+                "UPDATE scene_elements SET json = ?, version = ?, nonce = ?, is_deleted = ?, seq = ?"
+                " WHERE document_id = ? AND id = ?",
+                (
+                    row_json(e),
+                    e["version"],
+                    e["versionNonce"],
+                    int(bool(e.get("isDeleted"))),
+                    head,
+                    doc,
+                    r["id"],
+                ),
+            )
+        for op_id, els in moved.items():
+            conn.execute(
+                "UPDATE agent_ops SET status = 'placed', elements_json = ?, box_json = ? WHERE id = ?",
+                (json.dumps(els), json.dumps(bbox_of(els)), op_id),
+            )
+            ops[op_id] = "placed"
+    conn.execute("UPDATE agent_ops SET status = 'expired' WHERE status = 'applied'")
 
 
 def _backfill_scene_rows(conn: sqlite3.Connection) -> None:

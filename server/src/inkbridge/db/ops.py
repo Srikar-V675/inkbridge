@@ -2,13 +2,12 @@
 
 Two checks hold invariant N1 here, not in the client:
 - an op payload may not name any element id that exists in the stored scene (ExistingElementIds);
-- the ids the browser reports for an applied op must be new ids issued for this op: each starts
-  with the op's `id_prefix`, which no element had when the op was enqueued. Reject removes exactly
-  an op's recorded ids, so a user element recorded here would be deleted by a Reject. A prefix
-  (rather than trusting customData tags, which any client can write) means a user element can
-  only be claimed if the client renamed it, which is a client bug, not an agent capability.
+- the elements the browser measured for an op must carry new ids issued for this op: each starts
+  with the op's `id_prefix` (db/drafts.py). Drafts live in the op row until Accept, so a Reject
+  never touches the scene.
 
-Lifecycle: pending -> delivered -> applied -> accepted | rejected, plus failed and expired.
+Lifecycle: pending | delivered -> placed -> accepted | rejected, accepted -> placed (unaccept),
+plus failed and expired. `placed`, `accepted` and the unaccept return are set only by db/drafts.py.
 """
 
 import json
@@ -24,14 +23,16 @@ from inkbridge.db.common import DocumentNotFound, _now
 from inkbridge.db.documents import document_exists, get_scene
 
 OP_TYPES = ("write_text", "draw_diagram")
-STATUSES = ("pending", "delivered", "applied", "accepted", "rejected", "failed", "expired")
+STATUSES = ("pending", "delivered", "placed", "accepted", "rejected", "failed", "expired")
 # Ops whose elements may not be in the stored scene yet still reserve their spot.
-_RESERVING = ("pending", "delivered", "applied")
+_RESERVING = ("pending", "delivered", "placed")
 _TRANSITIONS = {
-    "pending": {"delivered", "applied", "failed", "expired"},
-    "delivered": {"applied", "failed", "expired"},
-    "applied": {"accepted", "rejected"},
+    "pending": {"delivered", "failed", "expired"},
+    "delivered": {"failed", "expired"},
+    "placed": {"accepted", "rejected"},
+    "accepted": {"placed"},
 }
+_DRAFTS_ONLY = ("placed", "accepted")  # reachable through db/drafts.py, never through update_status
 
 
 class ExistingElementIds(Exception):
@@ -110,6 +111,10 @@ def _row_dict(row: sqlite3.Row) -> dict:
         "result": json.loads(row["result_json"]) if row["result_json"] else None,
         "error": row["error"],
         "created_at": row["created_at"],
+        "elements": json.loads(row["elements_json"]) if row["elements_json"] else None,
+        "box": json.loads(row["box_json"]) if row["box_json"] else None,
+        "resolved_at": row["resolved_at"],
+        **{k: row[k] for k in ("question_id", "task_id", "offer_id", "revises", "diagram_id")},
     }
 
 
@@ -154,7 +159,7 @@ def create_op(
 def _expire_stale(conn: sqlite3.Connection, document_id: str) -> list[dict]:
     """Caller owns the transaction. Returns the ops it just expired (id, document_id, status, error).
 
-    Applied ops are kept: their drafts are on the canvas awaiting Accept or Reject. The db layer
+    Placed ops are kept: their drafts are held in the op awaiting Accept or Reject. The db layer
     only reports; the API layer pushes `op.updated` for each (it must not import the hub).
     """
     cutoff = (datetime.now(UTC) - timedelta(seconds=OP_TTL_S)).isoformat()
@@ -217,6 +222,35 @@ def _resolve_anchor(conn, document_id, region_id):
     raise AnchorGone(region_id)  # successor cycle
 
 
+def reserved_boxes(
+    conn: sqlite3.Connection, document_id: str, exclude_op: str | None = None
+) -> tuple[list[placement.Box], placement.Box | None]:
+    """Spots held by other open drafts: (boxes to avoid, the most recent one).
+
+    pending/delivered ops reserve their estimate; placed ops their real measured box.
+    """
+    occupied: list[placement.Box] = []
+    recent: placement.Box | None = None
+    for row in conn.execute(
+        "SELECT id, type, payload_json, status, box_json FROM agent_ops WHERE document_id = ?"
+        f" AND status IN ({','.join('?' * len(_RESERVING))}) ORDER BY created_at, rowid",
+        (document_id, *_RESERVING),
+    ):
+        if row["id"] == exclude_op:
+            continue
+        other = json.loads(row["payload_json"])
+        if row["status"] == "placed" and row["box_json"]:
+            box: placement.Box = json.loads(row["box_json"])
+        elif "placement" in other:
+            w, h = placement.estimate_size(row["type"], other)
+            box = {**other["placement"], "width": w, "height": h}
+        else:
+            continue
+        occupied.append(box)
+        recent = box
+    return occupied, recent
+
+
 def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
     payload = {k: v for k, v in payload.items() if k != "anchor_resolved"}  # server-set only
     if not document_exists(conn, document_id):
@@ -269,28 +303,8 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None):
         for e in elements
         if not e.get("isDeleted")
     ]
-    recent: placement.Box | None = None
-    for row in conn.execute(
-        "SELECT id, type, payload_json, status FROM agent_ops WHERE document_id = ?"
-        f" AND status IN ({','.join('?' * len(_RESERVING))}) ORDER BY created_at, rowid",
-        (document_id, *_RESERVING),
-    ):
-        other = json.loads(row["payload_json"])
-        if "placement" not in other:
-            continue
-        w, h = placement.estimate_size(row["type"], other)
-        box: placement.Box = {**other["placement"], "width": w, "height": h}
-        if row["status"] == "applied":
-            # real elements are already in `occupied`; use their real box, not the estimate
-            prefix = id_prefix(row["id"])
-            real = [e for e in elements if e["id"].startswith(prefix) and not e.get("isDeleted")]
-            if real:
-                box = bbox_of(real)
-            else:  # ack raced the autosave: keep the estimate reserved
-                occupied.append(box)
-        else:
-            occupied.append(box)
-        recent = box
+    extra, recent = reserved_boxes(conn, document_id)
+    occupied += extra
     clear = proximity_threshold(elements)
     spot = placement.place(
         occupied, placement.estimate_size(op_type, payload), anchor, fs, clear, recent
@@ -354,51 +368,39 @@ def update_status(
     conn: sqlite3.Connection,
     op_id: str,
     status: str,
-    element_ids: list[str] | None = None,
     error: str | None = None,
 ) -> dict:
-    """Move an op along its lifecycle. Repeating the current status is a no-op."""
+    """Move an op to failed or expired. Repeating the current status is a no-op.
+
+    placed and accepted are refused here (InvalidTransition): see db/drafts.py.
+    """
     conn.execute("BEGIN IMMEDIATE")
     try:
-        return _update_status(conn, op_id, status, element_ids, error)
+        return _update_status(conn, op_id, status, error)
     except BaseException:
         conn.rollback()
         raise
 
 
-def _update_status(conn, op_id, status, element_ids, error):
+def _update_status(conn, op_id, status, error):
     op = get_op(conn, op_id)
     current = op["status"]
     if status == current:
-        if status == "applied" and set(op["result"]["element_ids"]) != set(element_ids or []):
-            raise InvalidTransition(current, status)
         conn.rollback()
         return op
-    if status not in _TRANSITIONS.get(current, set()):
+    if status in _DRAFTS_ONLY or status not in _TRANSITIONS.get(current, set()):
         raise InvalidTransition(current, status)
-    result_json = None
-    if status == "applied":
-        _check_new_ids(op, element_ids or [])
-        result_json = json.dumps({"element_ids": element_ids})
     conn.execute(
-        "UPDATE agent_ops SET status = ?, result_json = COALESCE(?, result_json),"
-        " error = COALESCE(?, error) WHERE id = ?",
-        (status, result_json, error if status == "failed" else None, op_id),
+        "UPDATE agent_ops SET status = ?, error = COALESCE(?, error) WHERE id = ?",
+        (status, error if status == "failed" else None, op_id),
     )
     conn.commit()
     return get_op(conn, op_id)
 
 
-def _check_new_ids(op: dict, ids: list[str]) -> None:
-    """Every acked id must be one issued for this op. Its own drafts may already be autosaved."""
-    taken = sorted(i for i in ids if not i.startswith(op["payload"]["id_prefix"]))
-    if taken:
-        raise ExistingElementIds(taken)
-
-
 def mark_delivered(conn: sqlite3.Connection, op_id: str) -> bool:
     """Called when the op was pushed to a browser. Only a pending op moves; True if this call
-    moved it (False if it was already delivered, applied or resolved)."""
+    moved it (False if it was already delivered, placed or resolved)."""
     conn.execute("BEGIN IMMEDIATE")
     try:
         cur = conn.execute(

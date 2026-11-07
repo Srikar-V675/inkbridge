@@ -25,6 +25,9 @@ class OpOut(Out):
     result: dict[str, Any] | None
     error: str | None
     created_at: str
+    elements: list[dict] | None = None
+    box: dict | None = None
+    resolved_at: str | None = None
 
 
 class OpList(Out):
@@ -33,7 +36,6 @@ class OpList(Out):
 
 OpType = Literal["write_text", "draw_diagram"]
 OpId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
-ElementId = Annotated[str, Field(min_length=1, max_length=256)]
 
 
 class _Strict(BaseModel):
@@ -71,8 +73,7 @@ class OpInWithDocument(OpIn):
 
 
 class OpPatch(_Strict):
-    status: Literal["applied", "failed", "expired", "accepted", "rejected"]
-    element_ids: list[ElementId] | None = Field(default=None, max_length=10_000)
+    status: Literal["failed", "expired"]
     error: str | None = Field(default=None, max_length=2_000)
 
 
@@ -202,20 +203,112 @@ def get_op(op_id: str, conn: Conn) -> dict:
 
 @router.patch("/ops/{op_id}", response_model=OpOut)
 def patch_op(op_id: str, body: OpPatch, conn: Conn) -> dict:
-    """Browser: applied (with the new element ids) or failed. User: accepted or rejected."""
-    if body.status == "applied" and not body.element_ids:
-        raise HTTPException(422, "applied needs the element_ids the browser created")
-    ids = list(dict.fromkeys(body.element_ids or []))
+    """Browser or MCP: failed or expired. Placing and resolving go through measure/accept/reject."""
     error = body.error or ("unknown error" if body.status == "failed" else None)
     try:
-        op = ops_db.update_status(conn, op_id, body.status, ids or None, error)
+        op = ops_db.update_status(conn, op_id, body.status, error)
     except ops_db.OpNotFound:
         raise HTTPException(404, "op not found") from None
-    except ops_db.ExistingElementIds as e:
-        raise _existing(e.ids) from None
     except ops_db.InvalidTransition as e:
         raise HTTPException(
             409, {"code": "invalid_transition", "status": e.current, "wanted": body.status}
         ) from None
     hub.publish(op["document_id"], updated_message(op))
     return op
+
+
+class AcceptIn(_Strict):
+    dx: float = Field(default=0, allow_inf_nan=False)
+    dy: float = Field(default=0, allow_inf_nan=False)
+
+
+class AcceptOut(Out):
+    op: OpOut
+    seq: int
+
+
+class UnacceptOut(Out):
+    op: OpOut
+    removed: list[str]
+    kept: list[str]
+
+
+class DraftList(Out):
+    drafts: list[OpOut]
+
+
+def _conflict(e: Exception, wanted: str) -> HTTPException:
+    if isinstance(e, db.IdCollision):
+        return HTTPException(409, {"code": "id_collision", "ids": e.ids})
+    if isinstance(e, db.BadPrefix):
+        return HTTPException(409, {"code": "bad_prefix", "id": e.id})
+    if isinstance(e, db.WindowClosed):
+        return HTTPException(409, {"code": "window_closed"})
+    if isinstance(e, ops_db.InvalidTransition):
+        return HTTPException(
+            409, {"code": "invalid_transition", "status": e.current, "wanted": wanted}
+        )
+    return HTTPException(404, "op not found")
+
+
+_RESOLVE_ERRORS = (
+    ops_db.OpNotFound,
+    ops_db.InvalidTransition,
+    db.IdCollision,
+    db.BadPrefix,
+    db.WindowClosed,
+)
+
+
+def _publish_scene_change(conn, op: dict, seq: int) -> None:
+    # scene.delta is wired once INK-112 lands; chunks.updated makes tabs refetch meanwhile.
+    doc = op["document_id"]
+    hub.publish(doc, updated_message(op))
+    hub.publish(
+        doc, {"type": "chunks.updated", "version": seq, "stale_crops": db.stale_crop_ids(conn, doc)}
+    )
+
+
+@router.post("/ops/{op_id}/accept", response_model=AcceptOut)
+def accept_op(op_id: str, body: AcceptIn, conn: Conn) -> dict:
+    if abs(body.dx) > db.drafts.MAX_OFFSET or abs(body.dy) > db.drafts.MAX_OFFSET:
+        raise HTTPException(422, "offset out of range")
+    try:
+        before = ops_db.get_op(conn, op_id)["status"]
+        op, seq = db.accept_op(conn, op_id, body.dx, body.dy)
+    except _RESOLVE_ERRORS as e:
+        raise _conflict(e, "accepted") from None
+    if before != "accepted":
+        _publish_scene_change(conn, op, seq)
+    return {"op": op, "seq": seq}
+
+
+@router.post("/ops/{op_id}/reject", response_model=OpOut)
+def reject_op(op_id: str, conn: Conn) -> dict:
+    try:
+        op, changed = db.reject_op(conn, op_id)
+    except _RESOLVE_ERRORS as e:
+        raise _conflict(e, "rejected") from None
+    if changed:
+        hub.publish(op["document_id"], updated_message(op))
+    return op
+
+
+@router.post("/ops/{op_id}/unaccept", response_model=UnacceptOut)
+def unaccept_op(op_id: str, conn: Conn) -> dict:
+    try:
+        op, removed, kept = db.unaccept_op(conn, op_id)
+    except _RESOLVE_ERRORS as e:
+        raise _conflict(e, "placed") from None
+    _publish_scene_change(conn, op, db.scene_version(conn, op["document_id"]))
+    return {"op": op, "removed": removed, "kept": kept}
+
+
+@router.get("/documents/{document_id}/drafts", response_model=DraftList)
+def get_drafts(document_id: str, conn: Conn) -> dict:
+    if not db.document_exists(conn, document_id):
+        raise HTTPException(404, "document not found")
+    swept: list[dict] = []
+    drafts = db.list_drafts(conn, document_id, swept)
+    _publish_expired(swept)
+    return {"drafts": drafts}
