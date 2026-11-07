@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, mock } from "node:test";
-import { SceneSync, applyNewer, deltaFor, mergeScenes, type SaveState, type SceneElement } from "../src/sync/sceneSync.ts";
+import { SceneSync, applyNewer, deltaFor, type SaveState, type SceneElement } from "../src/sync/sceneSync.ts";
+import { MemoryJournal, entryKey, type Journal } from "../src/sync/journal.ts";
+import { RISK_LABEL } from "../src/lib/status.ts";
 import { setTimingSink, type TimingRecord } from "../src/lib/timing.ts";
 
 const el = (id: string, version = 1, extra: Record<string, unknown> = {}): SceneElement => ({
@@ -11,37 +13,60 @@ const el = (id: string, version = 1, extra: Record<string, unknown> = {}): Scene
 const settle = () => new Promise((r) => setImmediate(r));
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const DOC = "default";
 
-type Call = { url: string; method: string; key?: string; raw?: string; signal?: AbortSignal | null; body?: { base_version: number; elements: SceneElement[] } };
+type Call = { url: string; method: string; key?: string; keepalive?: boolean; signal?: AbortSignal | null; body?: { base_version: number; elements: SceneElement[]; delta?: boolean } };
 
-function harness(responses: Array<Response | Error | (() => Response)>) {
+function harness(
+  responses: Array<Response | Error | (() => Response)>,
+  opts: { journal?: Journal | null; offline?: boolean; onFetch?: (c: Call) => void } = {},
+) {
   const calls: Call[] = [];
   const states: SaveState[] = [];
   const details: Array<string | undefined> = [];
   const reloads: SceneElement[][] = [];
-  const stored: Record<string, string> = {};
+  const journal = opts.journal === undefined ? new MemoryJournal() : opts.journal;
+  const time = { now: 0 };
+  const net = { down: opts.offline ?? false };
   const fetchFn = (async (url: string, init?: RequestInit) => {
-    calls.push({
+    const c: Call = {
       url,
       method: init?.method ?? "GET",
       key: (init?.headers as Record<string, string> | undefined)?.["x-inkbridge-save"],
-      raw: init?.body as string | undefined,
+      keepalive: init?.keepalive,
       signal: init?.signal,
       body: init?.body ? JSON.parse(init.body as string) : undefined,
-    });
+    };
+    calls.push(c);
+    opts.onFetch?.(c);
+    if (net.down) throw new Error("offline");
     const next = responses.shift();
     if (!next) throw new Error("unexpected request " + url);
     if (next instanceof Error) throw next;
     return typeof next === "function" ? next() : next;
   }) as unknown as typeof fetch;
   const sync = new SceneSync({
-    documentId: "default",
+    documentId: DOC,
     fetchFn,
-    storage: { setItem: (k, v) => void (stored[k] = v) },
+    journal,
+    now: () => time.now,
     onState: (s, d) => (states.push(s), details.push(d)),
     onReload: (e) => reloads.push(e),
   });
-  return { sync, calls, states, details, reloads, stored };
+  const puts = () => calls.filter((c) => c.method === "PUT");
+  /** A change, journaled after the 50 ms trailing wait. */
+  const edit = async (els: SceneElement[]) => {
+    const changed = sync.notify(els);
+    mock.timers.tick(50);
+    await settle();
+    return changed;
+  };
+  /** One sender tick, and let the request settle. */
+  const send = async () => {
+    sync.sender.tick();
+    await settle();
+  };
+  return { net, sync, calls, states, details, reloads, journal: journal as MemoryJournal, time, puts, edit, send };
 }
 
 // A response the test releases by hand, to act while a request is in flight.
@@ -52,6 +77,9 @@ function deferred() {
 }
 
 describe("SceneSync", () => {
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
+  afterEach(() => mock.timers.reset());
+
   it("reports the save time in the saved badge detail", async () => {
     const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
     await h.sync.load();
@@ -77,41 +105,18 @@ describe("SceneSync", () => {
     assert.deepEqual(Object.keys(save ?? {}).sort(), ["counts", "ms", "name"]);
   });
 
-  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
-  afterEach(() => mock.timers.reset());
-
   it("loads the scene and remembers its version", async () => {
     const h = harness([json(200, { version: 7, elements: [el("a")] })]);
     assert.deepEqual(await h.sync.load(), [el("a")]);
     assert.equal(h.calls[0].url, "/documents/default/scene");
+    assert.equal(h.sync.loadedSeq, 7);
     assert.equal(h.states.at(-1), "saved");
   });
 
-  it("hasSaved is true only once the server confirmed the elements", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [el("a")] }),
-      new Error("offline"),
-      json(200, { version: 2 }),
-    ]);
-    await h.sync.load();
-    assert.equal(h.sync.hasSaved(["a"]), true);
-    h.sync.notify([el("a"), el("op:1")]);
-    await h.sync.flushNow(); // the save fails: flushNow resolves anyway
-    assert.equal(h.sync.hasSaved(["op:1"]), false);
-    await h.sync.flushNow();
-    assert.equal(h.sync.hasSaved(["a", "op:1"]), true);
-  });
-
-  it("reports an unknown canvas as an error", async () => {
-    const h = harness([json(404, { detail: "no" })]);
-    assert.equal(await h.sync.load(), null);
-    assert.equal(h.states.at(-1), "error");
-  });
-
-  it("tells an unknown canvas (404) from a failed load", async () => {
+  it("reports an unknown canvas as an error, and tells it (404) from a failed load", async () => {
     const h404 = harness([json(404, { detail: "no" })]);
-    assert.equal(h404.sync.notFound, false);
-    await h404.sync.load();
+    assert.equal(await h404.sync.load(), null);
+    assert.equal(h404.states.at(-1), "error");
     assert.equal(h404.sync.notFound, true);
     const h500 = harness([json(500, { detail: "boom" })]);
     await h500.sync.load();
@@ -119,641 +124,327 @@ describe("SceneSync", () => {
     const hDown = harness([new Error("down")]);
     await hDown.sync.load();
     assert.equal(hDown.sync.notFound, false);
+    assert.equal(hDown.states.at(-1), "error");
   });
 
-  it("never saves or backs up before the scene is loaded", async () => {
+  it("never journals or saves before the scene is loaded", async () => {
     const h = harness([]);
-    assert.equal(h.sync.notify([el("a", 1)]), false);
+    assert.equal(h.sync.notify([el("a")]), false);
     mock.timers.tick(5000);
     await settle();
-    await h.sync.flushNow();
-    await h.sync.close();
     assert.equal(h.calls.length, 0);
-    assert.deepEqual(h.stored, {});
+    assert.equal((await h.journal.unacked(DOC)).length, 0);
   });
 
   it("ignores onChange calls that did not change any element", async () => {
-    const h = harness([json(200, { version: 1, elements: [el("a", 3)] })]);
+    const h = harness([json(200, { version: 1, elements: [el("a")] })]);
     await h.sync.load();
-    h.sync.notify([el("a", 3)]);
-    mock.timers.tick(5000);
-    await settle();
-    assert.equal(h.calls.length, 1);
+    assert.equal(h.sync.notify([el("a")]), false);
+    assert.equal(h.states.filter((s) => s === "dirty").length, 0);
   });
 
-  it("saves once after the debounce, sending base_version, and adopts the new version", async () => {
-    const h = harness([
-      json(200, { version: 4, elements: [] }),
-      json(200, { version: 5 }),
-      json(200, { version: 6 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    h.sync.notify([el("a", 2)]);
-    assert.equal(h.states.at(-1), "dirty");
-    mock.timers.tick(1499);
-    await settle();
-    assert.equal(h.calls.length, 1);
-    mock.timers.tick(1);
-    await settle();
-    assert.equal(h.calls.length, 2);
-    assert.deepEqual(h.calls[1].body, { base_version: 4, elements: [el("a", 2)] });
-    assert.equal(h.states.at(-1), "saved");
-    h.sync.notify([el("a", 3)]);
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(h.calls[2].body?.base_version, 5);
-  });
-
-  it("does not restart the debounce or re-emit state for an unchanged pending edit", async () => {
-    const h = harness([json(200, { version: 1, elements: [] }), json(200, { version: 2 })]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    const emitted = h.states.length;
-    mock.timers.tick(1000);
-    h.sync.notify([el("a", 1)]); // Excalidraw re-fires onChange after every re-render
-    h.sync.notify([el("a", 1)]);
-    assert.equal(h.states.length, emitted);
-    mock.timers.tick(500); // 1500 ms after the FIRST notify: the save must not have moved
-    await settle();
-    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 1);
-  });
-
-  it("keeps pressures and simulatePressure=false in the saved body", async () => {
-    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
-    await h.sync.load();
-    const stroke = el("s", 1, { type: "freedraw", pressures: [0.3, 0.9], simulatePressure: false });
-    h.sync.notify([stroke]);
-    mock.timers.tick(1500);
-    await settle();
-    assert.deepEqual(h.calls[1].body?.elements[0], stroke);
-  });
-
-  it("saves edits made during a save afterwards, with the new base_version", async () => {
-    let release!: (r: Response) => void;
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      () => {
-        throw new Error("replaced below");
-      },
-    ]);
-    // second response is a deferred promise: wrap fetch
-    const pending = new Promise<Response>((r) => (release = r));
-    const original = (h.sync as unknown as { fetchFn: typeof fetch }).fetchFn;
-    let n = 0;
-    (h.sync as unknown as { fetchFn: typeof fetch }).fetchFn = ((u: string, i?: RequestInit) =>
-      ++n === 2 ? (h.calls.push({ url: u, method: "PUT", body: JSON.parse(i!.body as string) }), pending) : original(u, i)) as typeof fetch;
-    await h.sync.load();
-    n = 1;
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(h.states.at(-1), "saving");
-    h.sync.notify([el("a", 2)]); // edit while the first PUT is in flight
-    mock.timers.tick(1500); // its debounce fires while the PUT is still in flight, so it is skipped
-    await settle();
-    release(json(200, { version: 2 }));
-    await settle();
-    mock.timers.tick(1500);
-    await settle();
-    const puts = h.calls.filter((c) => c.method === "PUT");
-    assert.equal(puts.length, 2);
-    assert.equal(puts[1].body?.base_version, 2);
-    assert.deepEqual(puts[1].body?.elements, [el("a", 2)]);
-  });
-
-  it("on 409 merges the server scene with ALL local edits, including ones made mid-save", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      json(409, { detail: { current_version: 9 } }),
-      json(200, { version: 9, elements: [el("server", 4)] }),
-      json(200, { version: 10 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("s1", 1)]);
-    mock.timers.tick(1500);
-    h.sync.notify([el("s1", 1), el("s2", 1)]); // drawn while the PUT is in flight
-    await settle();
-    assert.deepEqual(h.reloads.at(-1)?.map((e) => e.id).sort(), ["s1", "s2", "server"]);
-    assert.equal(h.states.includes("conflict"), true);
-    const backup = Object.entries(h.stored).find(([k]) => k.includes("conflict"));
-    assert.deepEqual(JSON.parse(backup![1]).map((e: SceneElement) => e.id), ["s1", "s2"]);
-    mock.timers.tick(1500); // the merged scene is saved against the reloaded version
-    await settle();
-    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
-    assert.equal(put.body?.base_version, 9);
-    // the server element is already stored at the reloaded version: only our strokes travel
-    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2"]);
-  });
-
-  it("a 409 reload asks for deleted elements too, the first load does not", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      json(409, { detail: {} }),
-      json(200, { version: 2, elements: [] }),
-      json(200, { version: 3 }),
-    ]);
-    await h.sync.load();
-    assert.equal(h.calls[0].url, "/documents/default/scene");
-    h.sync.notify([el("s1", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    const gets = h.calls.filter((c) => c.method === "GET");
-    assert.equal(gets[1].url, "/documents/default/scene?deleted=true");
-  });
-
-  it("a stroke another device deleted stays deleted after the conflict reload", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [el("x", 2)] }),
-      json(409, { detail: {} }),
-      json(200, { version: 5, elements: [el("x", 5, { isDeleted: true })] }),
-      json(200, { version: 6 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("x", 2), el("y", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    const merged = h.reloads.at(-1)!;
-    assert.equal(merged.find((e) => e.id === "x")?.isDeleted, true);
-  });
-
-  it("mergeScenes keeps the newer version of an element and never drops a local one", () => {
-    const merged = mergeScenes(
-      [el("a", 2, { from: "server" }), el("b", 1)],
-      [el("a", 3, { from: "local" }), el("c", 1)],
-    );
-    assert.deepEqual(merged.map((e) => [e.id, e.from ?? null]), [["a", "local"], ["b", null], ["c", null]]);
-    assert.equal(mergeScenes([el("a", 5, { from: "server" })], [el("a", 5, { from: "local" })])[0].from, "server");
-  });
-
-  it("mergeScenes breaks version ties by versionNonce the same way on both tabs", () => {
-    const a = el("x", 5, { versionNonce: 10, from: "A" });
-    const b = el("x", 5, { versionNonce: 20, from: "B" });
-    assert.equal(mergeScenes([b], [a])[0].from, "A"); // tab A: server holds B, lower nonce wins
-    assert.equal(mergeScenes([a], [b])[0].from, "A"); // tab B: server holds A, A still wins
-    assert.equal(mergeScenes([{ ...a, from: "S" }], [a])[0].from, "S"); // same nonce: server copy
-  });
-
-  it("keeps edits in memory after a 4xx and says they are unsaved", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      json(422, { detail: [] }),
-      json(200, { version: 2 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(h.states.at(-1), "error");
-    assert.match(h.details.at(-1) ?? "", /not saved/i);
-    h.sync.notify([el("a", 1), el("b", 1)]); // next real edit tries again with everything
-    mock.timers.tick(1500);
-    await settle();
-    assert.deepEqual(h.calls.at(-1)?.body?.elements.map((e) => e.id), ["a", "b"]);
-  });
-
-  it("flushNow waits for an in-flight save and then sends newer edits", async () => {
-    let release!: (r: Response) => void;
-    const h = harness([json(200, { version: 1, elements: [] })]);
-    const gate = new Promise<Response>((r) => (release = r));
-    let n = 0;
-    const base = (h.sync as unknown as { fetchFn: typeof fetch }).fetchFn;
-    (h.sync as unknown as { fetchFn: typeof fetch }).fetchFn = ((u: string, i?: RequestInit) => {
-      if (i?.method === "PUT") {
-        h.calls.push({ url: u, method: "PUT", body: JSON.parse(i.body as string) });
-        return ++n === 1 ? gate : Promise.resolve(json(200, { version: 3 }));
-      }
-      return base(u, i);
-    }) as typeof fetch;
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    h.sync.notify([el("a", 1), el("b", 1)]);
-    const flushed = h.sync.flushNow();
-    release(json(200, { version: 2 }));
-    await flushed;
-    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 2);
-    assert.equal(h.calls.at(-1)?.body?.base_version, 2);
-  });
-
-  it("retries a network failure with backoff and then saves", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      new TypeError("fetch failed"),
-      json(200, { version: 2 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(h.states.at(-1), "retry");
-    mock.timers.tick(2000);
-    await settle();
-    assert.equal(h.states.at(-1), "saved");
-    assert.equal(h.calls.length, 3);
-  });
-
-  it("does not retry a 422 (it would loop forever)", async () => {
-    const h = harness([json(200, { version: 1, elements: [] }), json(422, { detail: [] })]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    mock.timers.tick(60000);
-    await settle();
-    assert.equal(h.states.at(-1), "error");
-    assert.equal(h.calls.length, 2);
-  });
-
-  it("keeps strokes drawn while the conflict reload is in flight", async () => {
-    const reload = deferred();
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      json(409, { detail: {} }),
-      reload.next,
-      json(200, { version: 10 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("s1", 1)]);
-    mock.timers.tick(1500);
-    await settle(); // the PUT got a 409 and the reload GET is now in flight
-    h.sync.notify([el("s1", 1), el("s2", 1)]);
-    reload.release(json(200, { version: 9, elements: [el("server", 4)] }));
-    await settle();
-    assert.deepEqual(h.reloads.at(-1)?.map((e) => e.id).sort(), ["s1", "s2", "server"]);
-    mock.timers.tick(1500);
-    await settle();
-    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
-    // the server element is already stored at the reloaded version: only our strokes travel
-    assert.deepEqual(put.body?.elements.map((e) => e.id).sort(), ["s1", "s2"]);
-  });
-
-  it("an element mutated in place during a save is saved again", async () => {
-    const put = deferred();
-    const h = harness([json(200, { version: 1, elements: [] }), put.next, json(200, { version: 3 })]);
-    await h.sync.load();
-    const a = el("a", 1);
-    const scene = [a];
-    h.sync.notify(scene);
-    mock.timers.tick(1500);
-    await settle();
-    a.version = 2; // Excalidraw's mutateElement changes the same object
-    h.sync.notify(scene);
-    put.release(json(200, { version: 2 }));
-    await settle();
-    assert.notEqual(h.states.at(-1), "saved");
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 2);
-    assert.equal(h.states.at(-1), "saved");
-  });
-
-  it("returning to the saved scene while a save is in flight is saved too", async () => {
-    const put = deferred();
-    const h = harness([json(200, { version: 1, elements: [] }), put.next, json(200, { version: 3 })]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    h.sync.notify([]); // back to what the server last confirmed, before [a] lands
-    put.release(json(200, { version: 2 }));
-    await settle();
-    mock.timers.tick(1500);
-    await settle();
-    const puts = h.calls.filter((c) => c.method === "PUT");
-    assert.equal(puts.length, 2);
-    assert.deepEqual(puts[1].body?.elements, []);
-  });
-
-  it("retries when the conflict reload fails instead of waiting for the next edit", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      json(409, { detail: {} }),
-      new TypeError("fetch failed"),
-      json(409, { detail: {} }),
-      json(200, { version: 9, elements: [] }),
-      json(200, { version: 10 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(h.states.at(-1), "retry");
-    mock.timers.tick(2000);
-    await settle();
-    mock.timers.tick(1500);
-    await settle();
-    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
-    assert.equal(put.body?.base_version, 9);
-    assert.deepEqual(put.body?.elements, [el("a", 1)]);
-  });
-
-  it("flushNow asks for keepalive for a small body; debounced saves do not", async () => {
-    const inits: RequestInit[] = [];
-    const sync = new SceneSync({
-      documentId: "d",
-      fetchFn: (async (_u: string, i?: RequestInit) => {
-        inits.push(i ?? {});
-        return i?.method === "PUT" ? json(200, { version: 2 }) : json(200, { version: 1, elements: [] });
-      }) as unknown as typeof fetch,
-      onState: () => {},
-      onReload: () => {},
-    });
-    await sync.load();
-    sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(inits[1].keepalive, false);
-    sync.notify([el("a", 2)]);
-    await sync.flushNow();
-    assert.equal(inits[2].keepalive, true);
-  });
-
-  it("a disposed instance no longer reports state", async () => {
-    const h = harness([json(200, { version: 1, elements: [] })]);
-    const p = h.sync.load();
-    const before = h.states.length;
-    h.sync.dispose();
-    await p;
-    assert.equal(h.states.length, before);
-  });
-  it("close() flushes a pending edit, then disposes", async () => {
-    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
-    await h.sync.load();
-    h.sync.notify([el("a")]);
-    await h.sync.close();
-    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 1);
-    assert.equal(h.sync.settledVersion(), null, "disposed");
-  });
-
-  it("close() backs the unsaved edits up when the final flush fails", async () => {
-    const h = harness([json(200, { version: 0, elements: [] }), new Error("offline")]);
-    await h.sync.load();
-    h.sync.notify([el("a"), el("b")]);
-    await h.sync.close();
-    const kept = JSON.parse(h.stored["inkbridge-conflict-backup-default"] ?? "null");
-    assert.deepEqual(kept.map((e: SceneElement) => e.id), ["a", "b"]);
-    assert.equal(h.sync.settledVersion(), null, "disposed");
-  });
-
-  it("close() backs the edits up on a server error and a rejection too", async () => {
-    for (const status of [503, 422]) {
-      const h = harness([json(200, { version: 0, elements: [] }), json(status, {})]);
-      await h.sync.load();
-      h.sync.notify([el("a")]);
-      await h.sync.close();
-      assert.ok(h.stored["inkbridge-conflict-backup-default"], `status ${status}`);
-    }
-  });
-
-  it("close() after a 409 keeps the local ink backup", async () => {
-    const h = harness([
-      json(200, { version: 0, elements: [] }),
-      json(409, { detail: { current_version: 5 } }),
-      json(200, { version: 5, elements: [el("theirs")] }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("mine")]);
-    await h.sync.close();
-    const kept = JSON.parse(h.stored["inkbridge-conflict-backup-default"] ?? "null");
-    assert.deepEqual(kept.map((e: SceneElement) => e.id), ["mine"], "the backup is the local scene, not the merge");
-  });
-
-  it("close() writes no backup when the flush lands", async () => {
-    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
-    await h.sync.load();
-    h.sync.notify([el("a")]);
-    await h.sync.close();
-    assert.equal(h.stored["inkbridge-conflict-backup-default"], undefined);
-  });
-
-  it("close() with nothing pending sends nothing", async () => {
+  it("journals a change after 50 ms, before any request", async () => {
     const h = harness([json(200, { version: 0, elements: [] })]);
     await h.sync.load();
-    await h.sync.close();
-    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 0);
+    h.sync.notify([el("a")]);
+    assert.equal((await h.journal.unacked(DOC)).length, 0); // trailing: nothing mid-stroke
+    mock.timers.tick(50);
+    await settle();
+    assert.deepEqual((await h.journal.unacked(DOC)).map((e) => e.id), ["a"]);
+    assert.equal(h.puts().length, 0);
+  });
+
+  it("a hung PUT blocks neither the journal nor the next batch, and the bar stays quiet", async () => {
+    const d = deferred();
+    const h = harness([json(200, { version: 0, elements: [] }), d.next, json(200, { version: 2 })]);
+    await h.sync.load();
+    await h.edit([el("a", 1)]);
+    await h.send(); // request 1 never answered
+    await h.edit([el("a", 2), el("b", 1)]);
+    assert.deepEqual((await h.journal.unacked(DOC)).map((e) => e.k.split("\0")[2]).sort(), ["1", "2"]);
+    await h.send();
+    assert.equal(h.puts().length, 2);
+    assert.deepEqual(h.puts()[1].body?.elements.map((e) => `${e.id}@${e.version}`), ["a@2", "b@1"]);
+    assert.ok(!h.states.includes("saving") && !h.states.includes("dirty"));
+    assert.equal(h.states.at(-1), "saved");
     assert.equal(h.sync.settledVersion(), null);
   });
 
-  it("settledVersion is the saved version only when nothing is pending or in flight", async () => {
-    const save = deferred();
-    const h = harness([json(200, { version: 3, elements: [el("a")] }), save.next]);
-    assert.equal(h.sync.settledVersion(), null, "not loaded yet");
+  it("an ack marks the entries and settles the scene; an answer with newer elements reaches onReload", async () => {
+    const h = harness([
+      json(200, { version: 1, elements: [el("x", 1)] }),
+      json(200, { version: 3, newer: [el("x", 5, { type: "rect" })] }),
+    ]);
+    await h.sync.load();
+    await h.edit([el("x", 2)]);
+    assert.equal(h.sync.settledVersion(), null);
+    await h.send();
+    assert.equal((await h.journal.unacked(DOC)).length, 0);
+    assert.equal(h.sync.settledVersion(), 3);
+    assert.equal(h.sync.hasSaved(["x"]), true);
+    assert.equal(h.reloads.length, 1);
+    assert.equal(h.reloads[0].find((e) => e.id === "x")?.version, 5);
+    assert.equal(h.sync.notify(h.reloads[0]), false); // the merged list is what the canvas shows now
+    mock.timers.tick(5000);
+    await settle();
+    await h.send();
+    assert.equal(h.puts().length, 1);
+  });
+
+  it("hasSaved is true only once the server acknowledged the elements", async () => {
+    const h = harness([json(200, { version: 1, elements: [el("a")] }), new Error("offline"), new Error("offline"), json(200, { version: 2 })]);
+    await h.sync.load();
+    assert.equal(h.sync.hasSaved(["a"]), true);
+    h.sync.notify([el("a"), el("op:1")]);
+    await h.sync.flushNow(); // the send fails: flushNow resolves anyway
+    assert.equal(h.sync.hasSaved(["op:1"]), false);
+    await h.sync.flushNow();
+    assert.equal(h.sync.hasSaved(["a", "op:1"]), true);
+  });
+
+  it("opens offline from the device copy: merged elements, an unsent stroke included, state saved", async () => {
+    const j = new MemoryJournal();
+    await j.saveSnapshot(DOC, 9, [el("a", 1), el("b", 1)], 0);
+    await j.put(DOC, [el("a", 2), el("c", 1)], 1);
+    await j.markAcked([entryKey(DOC, "a", 2)]);
+    const h = harness([], { journal: j, offline: true });
+    const got = await h.sync.load();
+    assert.deepEqual(got?.map((e) => `${e.id}@${e.version}`), ["a@2", "b@1", "c@1"]);
+    assert.equal(h.states.at(-1), "saved");
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.sync.loadedSeq, 9);
+    assert.equal(h.sync.hasSaved(["b"]), true);
+    assert.equal(h.sync.hasSaved(["c"]), false); // c is still unsent
+    await h.send(); // offline: the send fails quietly
+    assert.equal(h.states.at(-1), "saved");
+  });
+
+  it("opening from the device copy makes no scene request", async () => {
+    const j = new MemoryJournal();
+    await j.saveSnapshot(DOC, 4, [el("a")], 0);
+    const h = harness([], { journal: j });
+    await h.sync.load();
+    assert.equal(h.calls.length, 0);
+  });
+
+  it("with no device copy it fetches the scene, then writes the snapshot", async () => {
+    const h = harness([json(200, { version: 5, elements: [el("a", 3)] })]);
+    await h.sync.load();
+    assert.equal(h.calls.length, 1);
+    const kept = await h.journal.load(DOC);
+    assert.equal(kept?.seq, 5);
+    assert.deepEqual(kept?.elements.map((e) => e.version), [3]);
+  });
+
+  it("snapshot() rewrites the device copy with the seq it is given", async () => {
+    const h = harness([json(200, { version: 5, elements: [el("a")] })]);
+    await h.sync.load();
+    await h.sync.snapshot(8);
+    assert.equal((await h.journal.load(DOC))?.seq, 8);
+  });
+
+  it("turns grey (retry) only once the oldest unsent entry is 60 s old and sends keep failing", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    h.net.down = true;
+    await h.edit([el("a")]);
+    await h.send();
+    assert.equal(h.states.at(-1), "saved");
+    h.time.now = 59_000;
+    h.sync.sender.kick();
+    await settle();
+    assert.equal(h.states.at(-1), "saved");
+    h.time.now = 61_000;
+    h.sync.sender.kick();
+    await settle();
+    assert.equal(h.states.at(-1), "retry");
+  });
+
+  it("a journal write that fails is the risk line, and journalOk says so", async () => {
+    const j = new MemoryJournal();
+    j.put = async () => {
+      throw new Error("quota");
+    };
+    const h = harness([json(200, { version: 0, elements: [] })], { journal: j });
+    await h.sync.load();
+    assert.equal(h.sync.journalOk, true);
+    await h.edit([el("a")]);
+    assert.equal(h.sync.journalOk, false);
+    assert.equal(h.states.at(-1), "error");
+    assert.equal(h.details.at(-1), RISK_LABEL);
+  });
+
+  it("without a journal the states are dirty, saving and retry", async () => {
+    const d = deferred();
+    const h = harness([json(200, { version: 0, elements: [] }), d.next, new Error("offline")], { journal: null });
+    await h.sync.load();
+    assert.equal(h.sync.journalOk, false);
+    h.sync.notify([el("a")]);
+    assert.equal(h.states.at(-1), "dirty");
+    mock.timers.tick(50);
+    await settle();
+    await h.send();
+    assert.equal(h.states.at(-1), "saving");
+    d.release(json(500, {}));
+    await settle();
+    assert.equal(h.states.at(-1), "retry");
+  });
+
+  it("sends only the changed elements as a delta, under a new key each time", async () => {
+    const h = harness([json(200, { version: 1, elements: [el("a"), el("b")] }), json(200, { version: 2 }), json(200, { version: 3 })]);
+    await h.sync.load();
+    await h.edit([el("a"), el("b", 2), el("c")]);
+    await h.send();
+    const [p] = h.puts();
+    assert.equal(p.body?.delta, true);
+    assert.equal(p.body?.base_version, 1);
+    assert.deepEqual(p.body?.elements.map((e) => e.id), ["b", "c"]);
+    await h.edit([el("a"), el("b", 2), el("c", 2)]);
+    await h.send();
+    assert.notEqual(h.puts()[1].key, p.key);
+    assert.equal(h.puts()[1].key?.split(":")[0], p.key?.split(":")[0]);
+    assert.equal(h.puts()[1].body?.base_version, 2);
+  });
+
+  it("keeps pressures and simulatePressure=false in the sent body", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
+    await h.sync.load();
+    await h.edit([el("s", 1, { type: "freedraw", pressures: [0.2, 0.5], simulatePressure: false })]);
+    await h.send();
+    const sent = h.puts()[0].body?.elements[0];
+    assert.deepEqual(sent?.pressures, [0.2, 0.5]);
+    assert.equal(sent?.simulatePressure, false);
+  });
+
+  it("an element mutated in place is journaled as a copy of that version", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    const a = el("a", 1, { x: 1 });
+    await h.edit([a]);
+    a.version = 2;
+    a.x = 9;
+    const [e] = await h.journal.unacked(DOC);
+    assert.equal(e.el.version, 1);
+    assert.equal(e.el.x, 1);
+  });
+
+  it("does not retry a 422 and says so; the journal keeps the ink unsent", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(422, { detail: "bad" })]);
+    await h.sync.load();
+    await h.edit([el("a")]);
+    await h.send();
+    assert.equal(h.states.at(-1), "error");
+    assert.equal(h.details.at(-1), "Save rejected (422); changes are not saved yet");
+    h.sync.sender.kick();
+    await settle();
+    assert.equal(h.puts().length, 1);
+    assert.equal((await h.journal.unacked(DOC)).length, 1);
+  });
+
+  it("a 500 is retried after the backoff", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(500, {}), json(200, { version: 1 })]);
+    await h.sync.load();
+    await h.edit([el("a")]);
+    await h.send();
+    h.time.now = 500;
+    await h.send();
+    assert.equal(h.puts().length, 1); // inside the 1 s backoff
+    h.time.now = 1000;
+    await h.send();
+    assert.equal(h.puts().length, 2);
+    assert.equal(h.sync.settledVersion(), 1);
+  });
+
+  it("flushNow asks for keepalive for a small body; the interval tick does not", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 }), json(200, { version: 2 })]);
+    await h.sync.load();
+    await h.edit([el("a")]);
+    await h.send();
+    h.sync.notify([el("a"), el("b")]);
+    await h.sync.flushNow();
+    assert.equal(h.puts()[0].keepalive, false);
+    assert.equal(h.puts()[1].keepalive, true);
+  });
+
+  it("flushNow journals pending edits at once, without waiting for the 50 ms", async () => {
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })]);
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    await h.sync.flushNow();
+    assert.equal(h.puts().length, 1);
+  });
+
+  it("a disposed instance no longer reports state", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    h.sync.dispose();
+    const n = h.states.length;
+    h.sync.notify([el("a")]);
+    assert.equal(h.states.length, n);
+  });
+
+  it("close() sends from memory without waiting for the journal write, with keepalive, then disposes", async () => {
+    const j = new MemoryJournal();
+    j.put = () => new Promise(() => {}); // IndexedDB that never answers
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1 })], { journal: j });
+    await h.sync.load();
+    h.sync.notify([el("a")]);
+    void h.sync.close();
+    await settle();
+    assert.equal(h.puts().length, 1);
+    assert.equal(h.puts()[0].keepalive, true);
+  });
+
+  it("a continuous stroke is journaled at least every 500 ms", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    for (let v = 1; v <= 12; v++) {
+      h.sync.notify([el("s", v)]); // a point every 60 ms: the 50 ms trailing timer never fires
+      mock.timers.tick(60);
+    }
+    await settle();
+    assert.ok((await h.journal.unacked(DOC)).length > 0);
+  });
+
+  it("close() with nothing to send sends nothing", async () => {
+    const h = harness([json(200, { version: 1, elements: [] })]);
+    await h.sync.load();
+    await h.sync.close();
+    assert.equal(h.puts().length, 0);
+  });
+
+  it("close() while offline leaves the ink in the journal", async () => {
+    const h = harness([json(200, { version: 0, elements: [] })]);
+    await h.sync.load();
+    h.net.down = true;
+    h.sync.notify([el("a")]);
+    await h.sync.close();
+    assert.equal((await h.journal.unacked(DOC)).length, 1);
+  });
+
+  it("settledVersion is the saved version only when nothing is unsent or in flight", async () => {
+    const d = deferred();
+    const h = harness([json(200, { version: 3, elements: [] }), d.next]);
     await h.sync.load();
     assert.equal(h.sync.settledVersion(), 3);
-    assert.equal(h.sync.notify([el("a")]), false, "unchanged scene");
-    assert.equal(h.sync.notify([el("a", 2)]), true);
-    assert.equal(h.sync.settledVersion(), null, "edit not saved yet");
-    mock.timers.tick(1500);
-    await settle();
-    assert.equal(h.sync.settledVersion(), null, "save in flight");
-    save.release(json(200, { version: 4 }));
-    await settle();
+    await h.edit([el("a")]);
+    assert.equal(h.sync.settledVersion(), null);
+    await h.send();
+    assert.equal(h.sync.settledVersion(), null); // in flight
+    d.release(json(200, { version: 4 }));
     await settle();
     assert.equal(h.sync.settledVersion(), 4);
   });
 });
 
-describe("delta saves (INK-075)", () => {
-  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
-  afterEach(() => mock.timers.reset());
-
-  it("sends only the changed and new elements after a load", async () => {
-    const h = harness([
-      json(200, { version: 3, elements: [el("a"), el("b")] }),
-      json(200, { version: 4 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a"), el("b", 2), el("c")]);
-    await h.sync.flushNow();
-    assert.deepEqual(h.calls[1].body, {
-      base_version: 3,
-      elements: [el("b", 2), el("c")],
-      delta: true,
-    });
-  });
-
-  it("diffs against the last confirmed save, and resends a failed save unchanged (INK-083)", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [el("a"), el("b")] }),
-      new Error("offline"),
-      json(200, { version: 2 }),
-      json(200, { version: 3 }),
-      json(200, { version: 4 }),
-      json(200, { version: 5 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a", 2), el("b")]);
-    await h.sync.flushNow(); // fails
-    h.sync.notify([el("a", 2), el("b", 2)]);
-    await h.sync.flushNow(); // the failed request is resent as it was
-    assert.deepEqual(h.calls[2].body?.elements, [el("a", 2)]);
-    await h.sync.flushNow(); // the newer edit follows, diffed against the confirmed save
-    assert.deepEqual(h.calls[3].body?.elements, [el("b", 2)]);
-    h.sync.notify([el("a", 2), el("b", 3)]);
-    await h.sync.flushNow();
-    assert.deepEqual(h.calls[4].body?.elements, [el("b", 3)]);
-  });
-
-  it("does a full save when an element the server holds is no longer in the list", () => {
+describe("deltaFor (INK-075)", () => {
+  it("sends the changed and new elements, or null for a full save", () => {
     const base = new Map([["a", 1], ["b", 1]]);
-    assert.equal(deltaFor(base, [el("a", 2)]), null);
+    assert.deepEqual(deltaFor(base, [el("a"), el("b", 2), el("c")]), [el("b", 2), el("c")]);
+    assert.equal(deltaFor(base, [el("a")]), null); // an element the server holds is gone
     assert.equal(deltaFor(null, [el("a")]), null);
-    assert.equal(deltaFor(base, [el("a", 2), el("b", 2)]), null); // nothing smaller to send
+    assert.equal(deltaFor(base, [el("a", 2), el("b", 2)]), null); // nothing saved by sending less
   });
-
-  it("after a conflict reload the next save is diffed against the reloaded scene", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [el("a")] }),
-      json(409, { detail: { current_version: 5 } }),
-      json(200, { version: 5, elements: [el("a"), el("s")] }),
-      json(200, { version: 6 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a"), el("m")]);
-    await h.sync.flushNow(); // 409, reload, merge schedules a save
-    mock.timers.tick(2000);
-    await settle();
-    const last = h.calls.at(-1)!;
-    assert.equal(last.body?.base_version, 5);
-    assert.deepEqual(last.body?.elements, [el("m")]);
-    assert.equal((last.body as { delta?: boolean }).delta, true);
-  });
-
-  // Both tabs bumped x to version 6 from 5; the server copy (nonce 20) is the other tab's edit.
-  const tieHarness = () =>
-    harness([
-      json(200, { version: 5, elements: [el("x", 5, { versionNonce: 20 })] }),
-      json(409, { detail: { current_version: 6 } }),
-      json(200, { version: 6, elements: [el("x", 6, { versionNonce: 20, x: 100 })] }),
-      json(200, { version: 7 }),
-    ]);
-
-  it("a local delete that wins a version tie is saved", async () => {
-    const h = tieHarness();
-    await h.sync.load();
-    h.sync.notify([el("x", 6, { versionNonce: 10, isDeleted: true })]);
-    await h.sync.flushNow(); // 409, reload: the tie is won locally, so a save must follow
-    mock.timers.tick(2000);
-    await settle();
-    const put = h.calls.filter((c) => c.method === "PUT").at(-1)!;
-    assert.equal(put.body?.base_version, 6);
-    assert.equal(put.body?.elements.find((e) => e.id === "x")?.isDeleted, true);
-  });
-
-  it("a local edit that loses a tie is reported, and the server copy is kept", async () => {
-    const h = tieHarness();
-    await h.sync.load();
-    h.sync.notify([el("x", 6, { versionNonce: 30, isDeleted: true })]);
-    await h.sync.flushNow();
-    assert.match(h.details.at(-1) ?? "", /1 of your edits/);
-    assert.equal(h.reloads.at(-1)?.find((e) => e.id === "x")?.x, 100);
-  });
-});
-
-describe("SceneSync idempotent saves (INK-083)", () => {
-  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
-  afterEach(() => mock.timers.reset());
-  const puts = (h: ReturnType<typeof harness>) => h.calls.filter((c) => c.method === "PUT");
-
-  it("resends the identical request under the same key after a network error", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      new TypeError("fetch failed"),
-      json(200, { version: 2 }),
-      json(200, { version: 3 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    h.sync.notify([el("a", 1), el("b", 1)]); // newer edit between attempts
-    mock.timers.tick(2000);
-    await settle();
-    const [first, retry] = puts(h);
-    assert.ok(first.key);
-    assert.equal(retry.key, first.key);
-    assert.equal(retry.raw, first.raw);
-    mock.timers.tick(1500);
-    await settle();
-    const third = puts(h)[2];
-    assert.notEqual(third.key, first.key);
-    assert.equal(third.body?.base_version, 2);
-  });
-
-  it("uses a new seq for each new save, same tab prefix", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [] }),
-      json(200, { version: 2 }),
-      json(200, { version: 3 }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    await h.sync.flushNow();
-    h.sync.notify([el("a", 2)]);
-    await h.sync.flushNow();
-    const [p1, p2] = puts(h);
-    assert.notEqual(p1.key, p2.key);
-    assert.equal(p1.key!.split(":")[0], p2.key!.split(":")[0]);
-  });
-
-  it("treats a 200 replay as saved, not a conflict", async () => {
-    const h = harness([json(200, { version: 1, elements: [] }), new TypeError("x"), json(200, { version: 2 })]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    mock.timers.tick(2000);
-    await settle();
-    assert.equal(h.states.at(-1), "saved");
-    assert.ok(!h.states.includes("conflict"));
-  });
-
-  it("sends no second PUT while one is in flight", async () => {
-    const d = deferred();
-    const h = harness([json(200, { version: 1, elements: [] }), d.next, json(200, { version: 3 })]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    mock.timers.tick(1500);
-    await settle();
-    h.sync.notify([el("a", 2)]);
-    mock.timers.tick(5000);
-    void h.sync.flushNow();
-    await settle();
-    assert.equal(puts(h).length, 1);
-    d.release(json(200, { version: 2 }));
-    await settle();
-    await settle();
-    assert.equal(puts(h).length, 2);
-  });
-
-  it("gives every PUT a timeout signal", async () => {
-    const h = harness([json(200, { version: 1, elements: [] }), json(200, { version: 2 })]);
-    await h.sync.load();
-    h.sync.notify([el("a", 1)]);
-    await h.sync.flushNow();
-    assert.ok(puts(h)[0].signal);
-  });
-
-  for (const [lw, text] of [
-    [{ tab: "x", same_ip: false }, /^Another device saved first/],
-    [{ tab: "x", same_ip: true }, /^Another tab saved first/],
-    [undefined, /^Another tab saved first/],
-  ] as const) {
-    it(`words the 409 notice for last_writer ${JSON.stringify(lw)}`, async () => {
-      const h = harness([
-        json(200, { version: 1, elements: [] }),
-        json(409, { detail: { current_version: 2, last_writer: lw } }),
-        json(200, { version: 2, elements: [el("z", 1)] }),
-      ]);
-      await h.sync.load();
-      h.sync.notify([el("a", 1)]);
-      await h.sync.flushNow();
-      assert.match(h.details.filter((d) => d?.includes("saved first")).at(0) ?? "", text);
-      assert.match(h.details.at(-1) ?? "", text);
-    });
-  }
 });
 
 // INK-174 (decision 0073): notify runs on every Excalidraw onChange, so an unchanged scene must cost
@@ -772,12 +463,14 @@ describe("SceneSync.notify cost and exactness (INK-174)", () => {
     return h;
   };
 
-  it("an unchanged list is not a change and emits no second dirty", async () => {
+  it("an unchanged list is not a change and queues one journal write", async () => {
     const h = await loaded([]);
     const els = [el("a"), el("b")];
     assert.equal(h.sync.notify(els), true);
     assert.equal(h.sync.notify(els), false);
-    assert.equal(h.states.filter((s) => s === "dirty").length, 1);
+    mock.timers.tick(50);
+    await settle();
+    assert.equal((await h.journal.unacked(DOC)).length, 2);
   });
 
   it("a bumped version is a change, including in-place mutation of the same object", async () => {
@@ -787,18 +480,18 @@ describe("SceneSync.notify cost and exactness (INK-174)", () => {
     a.version = 2; // Excalidraw mutates the stroke it is drawing in place
     assert.equal(h.sync.notify([a]), true);
     a.version = 3;
-    assert.equal(h.sync.notify([a]), true); // while pending, compared with the newest known state
+    assert.equal(h.sync.notify([a]), true);
     await h.sync.flushNow();
-    a.version = 4; // after a save
+    a.version = 4;
     assert.equal(h.sync.notify([a]), true);
   });
 
-  it("a NaN version equals itself: an unchanged list never counts as a change (no re-save loop)", async () => {
+  it("a NaN version equals itself: an unchanged list never counts as a change (no re-journal loop)", async () => {
     const h = await loaded([]);
     const els = [el("a", Number.NaN)];
     assert.equal(h.sync.notify(els), true);
     assert.equal(h.sync.notify(els), false);
-    await h.sync.flushNow(); // sameSig(pending, sent) must also hold, or the save would stay pending
+    await h.sync.flushNow();
     assert.equal(h.sync.notify(els), false);
     assert.equal(h.sync.settledVersion(), 2);
   });
@@ -810,13 +503,13 @@ describe("SceneSync.notify cost and exactness (INK-174)", () => {
     assert.equal(h2.sync.notify([el("a"), el("c")]), true);
   });
 
-  it("going back to the last saved scene while a save is pending is a change", async () => {
+  it("going back to the loaded scene after an edit is a change", async () => {
     const h = await loaded([el("a", 1)]);
     assert.equal(h.sync.notify([el("a", 2)]), true);
-    assert.equal(h.sync.notify([el("a", 1)]), true); // an undo of an unsaved edit still has to be saved
+    assert.equal(h.sync.notify([el("a", 1)]), true);
   });
 
-  it("is not settled while a change is pending", async () => {
+  it("is not settled while a change is queued", async () => {
     const h = await loaded([el("a")]);
     assert.equal(h.sync.settledVersion(), 1);
     h.sync.notify([el("a"), el("m")]);
@@ -858,52 +551,27 @@ describe("save answers carry newer elements (INK-111, decision 0080)", () => {
     assert.deepEqual(out, local);
   });
 
-  it("a save answer with newer elements reloads the canvas with them", async () => {
-    const h = harness([
-      json(200, { version: 1, elements: [el("x", 1)] }),
-      json(200, { version: 3, newer: [el("x", 5, { type: "rect" })] }),
-    ]);
-    await h.sync.load();
-    h.sync.notify([el("x", 2)]);
-    await h.sync.flushNow();
-    assert.equal(h.reloads.length, 1);
-    assert.equal(h.reloads.at(-1)?.find((e) => e.id === "x")?.version, 5);
-    assert.equal(h.states.at(-1), "saved");
-    assert.notEqual(h.states.at(-1), "conflict");
-    assert.equal(h.sync.notify(h.reloads.at(-1)!), false); // the merged list is the saved baseline
-    mock.timers.tick(5000);
-    await settle();
-    assert.equal(h.calls.filter((c) => c.method === "PUT").length, 1);
-  });
-
   it("a save answer without newer does not call onReload", async () => {
-    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1, newer: [] }), json(200, { version: 2 })]);
+    const h = harness([json(200, { version: 0, elements: [] }), json(200, { version: 1, newer: [] })]);
     await h.sync.load();
-    h.sync.notify([el("a")]);
-    await h.sync.flushNow();
-    h.sync.notify([el("a", 2)]);
-    await h.sync.flushNow();
+    await h.edit([el("a")]);
+    await h.send();
     assert.equal(h.reloads.length, 0);
   });
 
-  it("edits made during the request survive the reload", async () => {
+  it("edits made during the request survive the reload and are sent next", async () => {
     const d = deferred();
     const h = harness([json(200, { version: 1, elements: [el("x", 1)] }), d.next, json(200, { version: 4 })]);
     await h.sync.load();
-    h.sync.notify([el("x", 2)]);
-    mock.timers.tick(1500);
-    await settle();
-    h.sync.notify([el("x", 3), el("y", 1)]); // drawn while the PUT is in flight
+    await h.edit([el("x", 2)]);
+    await h.send();
+    await h.edit([el("x", 3), el("y", 1)]); // drawn while the PUT is in flight
     d.release(json(200, { version: 3, newer: [el("x", 5, { type: "rect" })] }));
     await settle();
-    const shown = h.reloads.at(-1)!;
-    assert.deepEqual(shown.map((e) => [e.id, e.version]), [["x", 5], ["y", 1]]);
-    assert.equal(h.states.at(-1), "dirty"); // y is still unsaved
-    mock.timers.tick(1500);
-    await settle();
-    const puts = h.calls.filter((c) => c.method === "PUT");
-    assert.equal(puts.length, 2);
-    assert.deepEqual(puts[1].body?.elements, [el("y", 1)]); // x v5 is the baseline now: not resent
+    assert.deepEqual(h.reloads.at(-1)!.map((e) => [e.id, e.version]), [["x", 5], ["y", 1]]);
+    await h.send();
+    // x v3 lost to the server's v5 and is never worth sending again once x v5 is shown; y goes out
+    assert.ok(h.puts()[1].body?.elements.some((e) => e.id === "y"));
   });
 });
 
@@ -911,7 +579,7 @@ describe("SceneSync.applyRemote (INK-112, decision 0087)", () => {
   beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
   afterEach(() => mock.timers.reset());
   const loaded = async () => {
-    const h = harness([json(200, { version: 4, elements: [el("a", 1, { type: "rect" }), el("b", 1, { type: "rect" })] })]);
+    const h = harness([json(200, { version: 4, elements: [el("a", 1, { type: "rect" }), el("b", 1, { type: "rect" })] }), json(200, { version: 5 })]);
     await h.sync.load();
     return h;
   };
@@ -925,7 +593,9 @@ describe("SceneSync.applyRemote (INK-112, decision 0087)", () => {
     h.sync.notify(h.reloads[0]);
     mock.timers.tick(5000);
     await settle();
-    assert.equal(h.calls.filter((c) => c.method === "PUT" || c.method === "POST").length, 0);
+    await h.send();
+    assert.equal(h.puts().length, 0);
+    assert.equal((await h.journal.unacked(DOC)).length, 0);
   });
 
   it("applies a tombstone stub as a delete", async () => {
@@ -934,14 +604,15 @@ describe("SceneSync.applyRemote (INK-112, decision 0087)", () => {
     assert.equal(h.reloads[0].find((e) => e.id === "b")?.isDeleted, true);
   });
 
-  it("keeps an unsaved local edit pending", async () => {
+  it("keeps an unsaved local edit queued and sent", async () => {
     const h = await loaded();
     h.sync.notify([el("a", 2, { type: "rect" }), el("b", 1, { type: "rect" })]);
     h.sync.applyRemote([el("n", 1, { type: "rect" })]);
     assert.ok(h.reloads[0].some((e) => e.id === "a" && e.version === 2));
-    await h.sync.flushNow().catch(() => {});
-    const sent = h.calls.find((c) => c.method === "PUT" || c.method === "POST");
+    await h.sync.flushNow();
+    const sent = h.puts()[0];
     assert.ok(sent, "the local edit is still saved");
     assert.ok(JSON.stringify(sent.body).includes('"id":"a"'));
+    assert.ok(!JSON.stringify(sent.body).includes('"id":"n"'));
   });
 });

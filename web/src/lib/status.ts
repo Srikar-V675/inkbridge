@@ -5,6 +5,8 @@ import type { SaveState } from "../sync/sceneSync";
 export interface Status {
   state: SaveState;
   detail?: string;
+  /** Ink is kept on this device (the journal works): sending is no risk (INK-113). */
+  onDevice?: boolean;
 }
 
 export function createStatusStore() {
@@ -14,7 +16,12 @@ export function createStatusStore() {
     get: () => current,
     set(state: SaveState, detail?: string) {
       if (current.state === state && current.detail === detail) return;
-      current = { state, detail };
+      current = { state, detail, onDevice: current.onDevice };
+      listeners.forEach((l) => l());
+    },
+    setDevice(ok: boolean) {
+      if (current.onDevice === ok) return;
+      current = { ...current, onDevice: ok };
       listeners.forEach((l) => l());
     },
     subscribe(l: () => void) {
@@ -26,7 +33,7 @@ export function createStatusStore() {
 
 export const RISK_LABEL = "Ink only in memory: do not close this tab";
 
-export type StatusTone = "none" | "quiet" | "sending" | "notice" | "risk";
+export type StatusTone = "none" | "quiet" | "sending" | "risk";
 export interface StatusView {
   tone: StatusTone;
   label: string;
@@ -35,7 +42,7 @@ export interface StatusView {
   detail?: string;
 }
 
-/** What the top bar says for a save state. `onDevice` is false until ink is stored on the device (later ticket). */
+/** What the top bar says for a save state. `onDevice`: the device journal works, so unsent ink is not at risk. */
 export function statusView(s: Status, onDevice = false): StatusView {
   const title = s.detail ? { title: s.detail } : {};
   switch (s.state) {
@@ -45,12 +52,10 @@ export function statusView(s: Status, onDevice = false): StatusView {
       return { tone: "none", label: "Loading…" };
     case "dirty":
     case "saving":
-      return { tone: "sending", label: "Saving…" };
-    case "conflict": // the merge has already happened by the time a detail exists; it stays until the next save
-      return { tone: "notice", label: "Merged with another device", ...(s.detail ? { detail: s.detail } : {}) };
+      return onDevice ? { tone: "quiet", label: "Saved" } : { tone: "sending", label: "Saving…" };
     case "retry":
       return onDevice
-        ? { tone: "sending", label: "Kept on this device, sending when the network is back" }
+        ? { tone: "sending", label: "Kept on this tablet, sending when the network is back" }
         : { tone: "risk", label: RISK_LABEL };
     case "error":
       return { tone: "risk", label: s.detail || RISK_LABEL };

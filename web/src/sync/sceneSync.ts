@@ -1,12 +1,14 @@
 // Framework-free load/autosave for one canvas. App.tsx wires it to Excalidraw's onChange.
-// Rules (tech ref 9.1 / 10.1): never block drawing. The server merges every save element by element
-// (decision 0080) and answers with the `newer` elements that beat ours, which we show (applyNewer).
-// The 409 reload-and-merge path below is dead since INK-111 (the server never answers 409 now);
-// INK-113 removes it with the single-flight sender (docs/decisions/0008).
+// INK-113 (decision 0088): every changed element version goes to the device journal (IndexedDB) first,
+// then a sender ships the unacknowledged ones with overlapping requests. The server merges every save
+// element by element (decision 0080) and answers with the `newer` elements that beat ours (applyNewer).
 
 import type { LoadClock } from "./loadClock.ts";
 import { lastResource, netParts, record, serverParts } from "../lib/timing.ts";
+import { RISK_LABEL } from "../lib/status.ts";
+import { entryKey, type Entry, type Journal } from "./journal.ts";
 import { winsOver } from "./mergeRule.ts";
+import { Sender } from "./sender.ts";
 
 export interface SceneElement {
   id: string;
@@ -14,14 +16,17 @@ export interface SceneElement {
   [key: string]: unknown;
 }
 
-export type SaveState = "loading" | "saved" | "dirty" | "saving" | "retry" | "conflict" | "error";
+export type SaveState = "loading" | "saved" | "dirty" | "saving" | "retry" | "error";
 
 export interface SyncOptions {
   documentId: string;
-  debounceMs?: number;
+  /** Wait after the last change before it is written to the journal (default 50 ms). */
+  journalMs?: number;
   fetchFn?: typeof fetch;
   clock?: LoadClock;
-  storage?: Pick<Storage, "setItem">;
+  /** null: memory-only mode (no IndexedDB), the bar says so. */
+  journal: Journal | null;
+  now?: () => number;
   onState: (state: SaveState, detail?: string) => void;
   onReload: (elements: SceneElement[]) => void;
 }
@@ -43,23 +48,18 @@ export function deltaFor(
 }
 
 const KEEPALIVE_MAX = 60_000;
-const SAVE_TIMEOUT_MS = 30_000;
+const OLD_AFTER_MS = 60_000; // an unacknowledged entry this old turns the quiet bar grey
+const MAX_WAIT_MS = 500; // longest a change waits for the journal while edits keep coming
+const KEEP_ACKED_MS = 7 * 864e5;
 
-// An unsent-or-unanswered save, kept whole so a retry resends the same body under the same key (INK-083).
-interface SaveRequest {
-  key: string;
-  body: string;
-  sent: readonly SceneElement[];
-  sentSig: Sig;
-  sentVersions: Map<string, number>;
-  changed: SceneElement[] | null;
+/** A 4xx other than 429: the body would be rejected again, so it is not retried. */
+class Rejected extends Error {
+  status: number;
+  constructor(status: number) {
+    super(`Save rejected (${status})`);
+    this.status = status;
+  }
 }
-
-interface LastWriter {
-  tab?: string;
-  same_ip?: boolean;
-}
-const RETRY_MS = [2000, 4000, 8000, 16000, 30000];
 
 // Two element lists are "the same" if every element has the same id and version, in the same order.
 // notify() runs on every Excalidraw onChange (every pen point and pan frame), so the common answer
@@ -84,29 +84,6 @@ const sigMatches = (s: Sig, els: readonly SceneElement[]): boolean => {
   for (let i = 0; i < els.length; i++) if (!Object.is(els[i].version, s.vers[i]) || els[i].id !== s.ids[i]) return false; // Object.is: NaN equals itself
   return true;
 };
-const sameSig = (a: Sig, b: Sig) => a.ids.length === b.ids.length && a.ids.every((id, i) => id === b.ids[i] && Object.is(a.vers[i], b.vers[i]));
-
-// Excalidraw's undo and edits always bump `version` (never reuse an older number), so deltaFor stays safe.
-// Not verified against a real Excalidraw run (decision 0038). The rule lives in mergeRule.ts, shared with the server,
-// which now merges every save with it (decision 0080); mergeReport only serves the dead 409 path.
-
-/** Server scene plus every local element. The higher `version` wins; on a tie the lower
- *  `versionNonce` wins, the same rule Excalidraw's reconcile uses, so both tabs pick the same one.
- *  Equal nonces keep the server copy. `kept`: local won a tie. `taken`: the server copy replaced a local one. */
-export function mergeReport(server: readonly SceneElement[], local: readonly SceneElement[]) {
-  const byId = new Map(server.map((e) => [e.id, e]));
-  const kept: string[] = [];
-  const taken: string[] = [];
-  for (const e of local) {
-    const theirs = byId.get(e.id);
-    if (!theirs) byId.set(e.id, e);
-    else if (winsOver(e, theirs)) {
-      if (e.version === theirs.version) kept.push(e.id);
-      byId.set(e.id, e);
-    } else if (winsOver(theirs, e)) taken.push(e.id);
-  }
-  return { merged: [...byId.values()], kept, taken };
-}
 
 /** Show the elements a save answer says beat ours (decision 0080). A newer copy replaces the local one in
  *  place if it wins by the shared rule; an unknown id is appended; a tombstone stub (no `type`) only sets
@@ -125,66 +102,110 @@ export function applyNewer(local: readonly SceneElement[], newer: readonly Scene
   return [...local.map((e) => byId.get(e.id)!), ...added];
 }
 
-export const mergeScenes = (server: readonly SceneElement[], local: readonly SceneElement[]) =>
-  mergeReport(server, local).merged;
-
 function liveIds(elements: readonly SceneElement[]): Set<string> {
   return new Set(elements.filter((e) => !e.isDeleted).map((e) => e.id));
 }
 
 export class SceneSync {
   private readonly o: SyncOptions;
-  private fetchFn: typeof fetch;
+  private readonly fetchFn: typeof fetch;
   private version = 0;
+  private loadSeq = 0;
   private lastSig: Sig = EMPTY_SIG;
-  private pending: readonly SceneElement[] | null = null;
-  private pendingSig: Sig = EMPTY_SIG;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private saving = false;
-  private failures = 0;
   private disposed = false;
-  private backedUp = false; // a backup was written during this close()
   private loaded = false;
   /** The last load got a 404: no canvas has this id (a network error or a 5xx leaves it false). */
   notFound = false;
-  private inflight: Promise<void> | null = null;
-  // The most recent scene Excalidraw reported, so a conflict merge never misses newer strokes.
+  /** True when a journal is open and no write to it failed. */
+  journalOk: boolean;
+  private state: SaveState = "loading";
+  // The most recent scene Excalidraw reported (or the loaded one).
   private latest: readonly SceneElement[] | null = null;
-  // Ids of the live elements in the last scene the server confirmed (loaded or saved).
+  // Ids of the live elements the server holds; hasSaved also needs them out of `unacked`.
   private savedIds = new Set<string>();
-  // id -> version of every element in the scene the server confirmed (INK-075); null until known.
-  // Saves send only elements whose version differs, so a save costs the edit, not the page.
-  private baseline: Map<string, number> | null = null;
+  // id -> version of every element already queued for, or written to, the journal.
+  private journaled = new Map<string, number>();
+  private queue = new Map<string, SceneElement>(); // changed, not yet journaled
+  private unacked = new Map<string, Entry>(); // latest unacknowledged entry per id (mirror of the journal)
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private maxTimer: ReturnType<typeof setTimeout> | null = null;
+  private writing: Promise<void> = Promise.resolve();
+  private keepalive = false;
+  private lastMs = 0;
+  readonly sender: Sender;
   // LAN HTTP is not a secure context, so crypto.randomUUID may be missing.
   readonly tabId = Math.random().toString(36).slice(2, 10);
   private seq = 0;
-  private loadSeq = 0;
-  // Set while a PUT has no definite HTTP answer (network error or timeout); the next attempt reuses it.
-  private unsettled: SaveRequest | null = null;
 
   constructor(options: SyncOptions) {
     this.o = options;
+    this.journalOk = options.journal !== null;
     this.fetchFn = options.fetchFn ?? ((...a) => fetch(...a));
+    this.sender = new Sender({
+      unacked: () => [...this.unacked.values()],
+      send: (els, signal) => this.send(els, signal),
+      ack: (sent) => this.ack(sent),
+      fail: (err) => this.fail(err),
+      now: options.now,
+    });
+  }
+
+  private now() {
+    return (this.o.now ?? Date.now)();
   }
 
   // A disposed instance (React StrictMode runs effects twice) must not touch the shared badge.
   private emit(state: SaveState, detail?: string) {
+    this.state = state;
     if (!this.disposed) this.o.onState(state, detail);
   }
 
-  private url(includeDeleted = false) {
-    // The load leaves deleted elements out (INK-110); only the conflict reload asks for them, so
-    // the merge does not bring back a stroke another device deleted.
-    return `/documents/${encodeURIComponent(this.o.documentId)}/scene${includeDeleted ? "?deleted=true" : ""}`;
+  /** With a working journal ink is safe, so the bar stays quiet until an entry has waited too long. */
+  private refresh(checkAge = false) {
+    if (this.disposed) return;
+    const work = this.queue.size > 0 || this.unacked.size > 0 || this.timer !== null;
+    if (this.o.journal && this.journalOk) {
+      const oldest = checkAge ? this.sender.oldestUnackedAt() : null;
+      if (oldest !== null && this.now() - oldest > OLD_AFTER_MS) this.emit("retry", "Offline, retrying");
+      else if (this.state !== "saved") this.emit("saved");
+    } else if (this.sender.busy > 0) this.emit("saving");
+    else if (this.sender.failing && this.unacked.size > 0) this.emit("retry", "Offline, retrying");
+    else if (work) this.emit("dirty");
+    else if (this.state !== "saved") this.emit("saved");
   }
 
-  /** Fetch the saved scene; null (state "error") if the canvas does not exist or the API is down. */
-  async load(includeDeleted = false): Promise<SceneElement[] | null> {
+  private url() {
+    return `/documents/${encodeURIComponent(this.o.documentId)}/scene`;
+  }
+
+  /** The canvas to open: the device copy if there is one (no request), else the saved scene. null (state "error") if the canvas does not exist or the API is down. */
+  async load(): Promise<SceneElement[] | null> {
     this.emit("loading");
     this.notFound = false;
     const t0 = performance.now();
+    const j = this.o.journal;
+    const doc = this.o.documentId;
+    let local: Awaited<ReturnType<Journal["load"]>> = null;
+    if (j) {
+      try {
+        local = await j.load(doc);
+      } catch {
+        this.journalOk = false;
+      }
+    }
+    if (local && j) {
+      this.version = this.loadSeq = local.seq;
+      for (const e of await j.unacked(doc).catch(() => [])) this.unacked.set(e.id, e);
+      this.adopt(local.elements);
+      this.savedIds = new Set([...liveIds(local.elements)].filter((id) => !this.unacked.has(id)));
+      this.loaded = true;
+      record("scene.load", performance.now() - t0, { elements: local.elements.length, local: 1 });
+      this.emit("saved");
+      void j.prune(doc, this.now() - KEEP_ACKED_MS).catch(() => {});
+      return local.elements;
+    }
     try {
-      const r = await this.fetchFn(this.url(includeDeleted));
+      const r = await this.fetchFn(this.url());
       this.o.clock?.mark("fetch"); // time to the response headers
       if (!r.ok) {
         this.notFound = r.status === 404;
@@ -193,16 +214,12 @@ export class SceneSync {
       }
       const body = (await r.json()) as { version: number; elements: SceneElement[] };
       this.o.clock?.mark("parse", { elements: body.elements.length }); // body download + parse
-      this.version = body.version;
-      this.loadSeq = body.version;
-      this.lastSig = sigOf(body.elements);
+      this.version = this.loadSeq = body.version;
+      this.adopt(body.elements);
       this.savedIds = liveIds(body.elements);
-      this.baseline = versions(body.elements);
-      this.pending = null;
-      this.unsettled = null;
       this.loaded = true;
-      this.latest ??= body.elements; // a remote delta before the first onChange still needs the whole scene
       record("scene.load", performance.now() - t0, { elements: body.elements.length });
+      await this.writeSnapshot(body.version, body.elements);
       this.emit("saved");
       return body.elements;
     } catch {
@@ -211,242 +228,207 @@ export class SceneSync {
     }
   }
 
+  private adopt(elements: readonly SceneElement[]) {
+    this.lastSig = sigOf(elements);
+    this.journaled = versions(elements);
+    this.latest ??= elements; // a remote delta before the first onChange still needs the whole scene
+  }
+
+  private async writeSnapshot(seq: number, elements: readonly SceneElement[]) {
+    const j = this.o.journal;
+    if (!j || !this.journalOk) return;
+    try {
+      await j.saveSnapshot(this.o.documentId, seq, elements, this.now());
+      await j.prune(this.o.documentId, this.now() - KEEP_ACKED_MS);
+    } catch {
+      this.journalOk = false;
+    }
+  }
+
+  /** Rewrite the device snapshot from the canvas, with the newest seq the server confirmed to us (never the answer to our own save). */
+  async snapshot(seq: number) {
+    if (this.latest) await this.writeSnapshot(seq, this.latest);
+  }
+
   /** Call from onChange with every element including deleted ones. Cheap when nothing changed.
    *  Returns true if the elements really changed. */
   notify(elements: readonly SceneElement[]): boolean {
     // Before the scene is loaded the canvas is not the saved scene: saving it would overwrite it.
     if (this.disposed || !this.loaded) return false;
     this.latest = elements;
-    // Excalidraw re-fires onChange after every re-render: only a real change restarts the debounce.
-    // Compare with the newest known state: while a save is pending, going back to the last saved
-    // scene (an undo) is itself a change that must be saved.
-    if (sigMatches(this.pending ? this.pendingSig : this.lastSig, elements)) return false;
-    this.pending = elements;
-    this.pendingSig = sigOf(elements);
-    this.emit("dirty");
-    this.schedule(this.o.debounceMs ?? 1500);
+    if (sigMatches(this.lastSig, elements)) return false;
+    this.lastSig = sigOf(elements);
+    for (const e of elements) if (!Object.is(this.journaled.get(e.id), e.version)) this.queue.set(e.id, e);
+    if (this.queue.size > 0) {
+      this.refresh();
+      this.schedule();
+    }
     return true;
   }
 
   /** The stored scene version the canvas matches exactly; null before load or while edits are
    *  unsaved or being saved (crop sync renders only a saved scene, decision 0015). */
   settledVersion(): number | null {
-    return this.loaded && !this.disposed && !this.pending && !this.saving ? this.version : null;
+    const idle = this.queue.size === 0 && this.unacked.size === 0 && this.timer === null && this.maxTimer === null && this.sender.busy === 0;
+    return this.loaded && !this.disposed && idle ? this.version : null;
   }
 
-  /** Save now (page hidden). Resolves when the attempt finishes. */
+  /** Send now (keepalive for a small body) from the in-memory queue, journal in parallel, wait for the requests on the wire.
+   *  The send never waits for IndexedDB: on pagehide it may not get the time. */
   async flushNow() {
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    if (this.inflight) await this.inflight; // an in-flight save may leave newer edits pending
-    await this.save(true);
+    if (!this.loaded) return;
+    const written = this.enqueueWrite(true);
+    this.keepalive = true;
+    try {
+      this.sender.kick();
+      await written;
+      this.sender.kick(); // entries a timer write was still persisting
+    } finally {
+      this.keepalive = false;
+    }
+    await this.sender.drain();
   }
 
   /** True once the server holds every listed element (an op is acked only after its drafts are). */
   hasSaved(ids: readonly string[]): boolean {
-    return ids.every((id) => this.savedIds.has(id));
+    return ids.every((id) => this.savedIds.has(id) && !this.unacked.has(id));
   }
 
-  /** Leave the canvas: send what is still unsaved, then stop. dispose() alone would drop the last edit. */
+  /** Leave the canvas: journal and send what is still unsent, then stop. dispose() alone would drop the last edit. */
   async close() {
-    this.backedUp = false;
     try {
       await this.flushNow();
     } finally {
-      // Offline, a 5xx or a rejection leaves the edit only in memory, and a switch drops memory.
-      // A 409 already wrote the (better) local backup in resolveConflict.
-      if (this.pending && !this.backedUp) this.backup(this.pending);
       this.dispose();
-    }
-  }
-
-  /** Keep a copy of local ink in storage for manual recovery; storage may be unavailable. */
-  private backup(elements: readonly SceneElement[]) {
-    try {
-      this.o.storage?.setItem(`inkbridge-conflict-backup-${this.o.documentId}`, JSON.stringify(elements));
-      this.backedUp = true;
-    } catch {
-      // private mode: nothing more to do
     }
   }
 
   dispose() {
     this.disposed = true;
+    this.clearTimers();
+    this.sender.stop();
+  }
+
+  // Trailing 50 ms, but at least every MAX_WAIT_MS while edits keep coming: a long stroke is journaled in pieces.
+  private schedule() {
     if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => void this.enqueueWrite(), this.o.journalMs ?? 50);
+    this.maxTimer ??= setTimeout(() => void this.enqueueWrite(), MAX_WAIT_MS);
   }
 
-  private schedule(ms: number) {
+  private clearTimers() {
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.save();
-    }, ms);
+    if (this.maxTimer) clearTimeout(this.maxTimer);
+    this.timer = this.maxTimer = null;
   }
 
-  private save(flush = false): Promise<void> {
-    if (this.saving || !this.pending || this.disposed) return Promise.resolve();
-    this.inflight = this.doSave(flush).finally(() => (this.inflight = null));
-    return this.inflight;
+  /** Take the queue now. `early`: the entries go to the sender's mirror before the journal write finishes. */
+  private enqueueWrite(early = false): Promise<void> {
+    this.clearTimers();
+    if (this.queue.size === 0) return this.writing;
+    // Excalidraw mutates element objects in place: journal and send a copy of this version.
+    const els = [...this.queue.values()].map((e) => ({ ...e }));
+    this.queue.clear();
+    const at = this.now();
+    for (const e of els) this.journaled.set(e.id, e.version);
+    if (early) this.expose(els, at);
+    return (this.writing = this.writing.then(() => this.persist(els, at, early)));
   }
 
-  private buildRequest(sent: readonly SceneElement[]): SaveRequest {
-    // Excalidraw mutates element objects in place, so the signature of what was sent must be taken
-    // now: recomputed after the response it would include edits made during the request.
-    const changed = deltaFor(this.baseline, sent);
-    const body = JSON.stringify(
-      changed
-        ? { base_version: this.version, elements: changed, delta: true }
-        : { base_version: this.version, elements: sent },
-    );
-    return {
-      key: `${this.tabId}:${++this.seq}`,
-      body,
-      sent,
-      sentSig: sigOf(sent),
-      sentVersions: versions(sent),
-      changed,
-    };
-  }
-
-  private async doSave(flush: boolean) {
-    if (!this.pending) return;
-    const req = this.unsettled ?? this.buildRequest(this.pending);
-    const { body, sent, sentSig, sentVersions, changed } = req;
-    this.unsettled = req;
-    this.saving = true;
-    this.emit("saving");
-    const t0 = performance.now();
-    try {
-      const r = await this.fetchFn(this.url(), {
-        method: "PUT",
-        headers: { "content-type": "application/json", "x-inkbridge-save": req.key },
-        body,
-        signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
-        // On page hide, keepalive lets the save outlive the page; browsers cap it at 64 KiB.
-        keepalive: flush && body.length < KEEPALIVE_MAX,
-      });
-      this.unsettled = null; // any HTTP answer is definite
-      if (r.ok) {
-        const saved = (await r.json()) as { version: number; newer?: SceneElement[]; timing?: Record<string, number> };
-        this.version = saved.version;
-        this.saving = false; // before "saved" is emitted, so settledVersion() is right in the callback
-        this.lastSig = sentSig;
-        this.savedIds = liveIds(sent);
-        this.baseline = sentVersions;
-        this.failures = 0;
-        const ms = Math.round(performance.now() - t0);
-        record("scene.save", ms, {
-          elements: sent.length,
-          sent: changed?.length ?? sent.length,
-          bytes: body.length,
-          ...serverParts(saved.timing),
-          ...netParts(lastResource(this.url(), t0)),
-        });
-        const idle = sameSig(this.pendingSig, sentSig); // nothing was drawn while the request was in flight
-        if (saved.newer?.length) this.applyNewerAnswer(saved.newer, idle);
-        else if (idle) this.pending = null;
-        if (this.pending) {
-          this.emit("dirty");
-          this.schedule(this.o.debounceMs ?? 1500);
-        } else {
-          this.emit("saved", `${ms} ms`);
-        }
-      } else if (r.status === 409) {
-        const detail = (await r.json().catch(() => null))?.detail as
-          | { last_writer?: LastWriter }
-          | undefined;
-        await this.resolveConflict(sent, detail?.last_writer);
-      } else if (r.status >= 400 && r.status < 500) {
-        // A rejected body would be rejected again, so stop retrying until the next real edit, but
-        // keep the ink in memory: the next edit sends the whole scene again.
-        this.emit("error", `Save rejected (${r.status}); changes are not saved yet`);
-      } else {
-        this.retryLater();
-      }
-    } catch {
-      this.retryLater();
-    } finally {
-      this.saving = false;
+  private expose(els: readonly SceneElement[], at: number) {
+    for (const el of els) {
+      this.unacked.set(el.id, { k: entryKey(this.o.documentId, el.id, el.version), doc: this.o.documentId, id: el.id, version: el.version, el, acked: false, at });
     }
+  }
+
+  private async persist(els: readonly SceneElement[], at: number, early: boolean) {
+    let failed = false;
+    if (this.o.journal && this.journalOk) {
+      try {
+        await this.o.journal.put(this.o.documentId, els, at);
+      } catch {
+        failed = true;
+        this.journalOk = false;
+      }
+    }
+    if (!early) this.expose(els, at);
+    if (failed) this.emit("error", RISK_LABEL);
+    else this.refresh(true);
+  }
+
+  private async send(els: SceneElement[], signal: AbortSignal) {
+    const body = JSON.stringify({ base_version: this.version, elements: els, delta: true });
+    const t0 = performance.now();
+    this.refresh();
+    const r = await this.fetchFn(this.url(), {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-inkbridge-save": `${this.tabId}:${++this.seq}` },
+      body,
+      signal,
+      // On page hide, keepalive lets the save outlive the page; browsers cap it at 64 KiB.
+      keepalive: this.keepalive && body.length < KEEPALIVE_MAX,
+    });
+    if (!r.ok) {
+      if (r.status >= 400 && r.status < 500 && r.status !== 429) {
+        // Out of the mirror so it is not resent; the journal keeps it unacknowledged.
+        for (const e of els) if (this.unacked.get(e.id)?.version === e.version) this.unacked.delete(e.id);
+        throw new Rejected(r.status);
+      }
+      throw new Error(`save failed (${r.status})`);
+    }
+    const saved = (await r.json()) as { version: number; newer?: SceneElement[]; timing?: Record<string, number> };
+    this.version = Math.max(this.version, saved.version);
+    this.lastMs = Math.round(performance.now() - t0);
+    record("scene.save", this.lastMs, {
+      elements: this.latest?.length ?? els.length,
+      sent: els.length,
+      bytes: body.length,
+      ...serverParts(saved.timing),
+      ...netParts(lastResource(this.url(), t0)),
+    });
+    if (saved.newer?.length) this.applyNewerAnswer(saved.newer);
+  }
+
+  private ack(sent: Entry[]) {
+    for (const e of sent) {
+      if (this.unacked.get(e.id)?.k === e.k) this.unacked.delete(e.id);
+      if (e.el.isDeleted) this.savedIds.delete(e.id);
+      else this.savedIds.add(e.id);
+    }
+    void this.o.journal?.markAcked(sent.map((e) => e.k)).catch(() => {});
+    if (this.settledVersion() !== null) this.emit("saved", `${this.lastMs} ms`);
+    else this.refresh(true);
+  }
+
+  private fail(err: unknown) {
+    if (err instanceof Rejected) this.emit("error", `Save rejected (${err.status}); changes are not saved yet`);
+    else this.refresh(true);
   }
 
   get loadedSeq() {
     return this.loadSeq;
   }
 
-  /** Show elements another device wrote (scene.delta). Moves the save baseline so they are not saved back. */
+  /** Show elements another device wrote (scene.delta). They count as journaled, so they are not saved back. */
   applyRemote(remote: readonly SceneElement[]) {
     if (this.disposed || !this.loaded || remote.length === 0) return;
-    this.applyNewerAnswer(remote, !this.pending);
+    this.applyNewerAnswer(remote);
   }
 
   // The server kept elements that beat ours (another device's ink, or a higher version). Show them
-  // without a conflict: the canvas reloads with them, and what we have drawn since stays pending.
-  private applyNewerAnswer(newer: readonly SceneElement[], idle: boolean) {
-    const base = this.latest ?? this.pending ?? [];
+  // without a conflict: the canvas reloads with them, and what we have drawn since stays journaled.
+  private applyNewerAnswer(newer: readonly SceneElement[]) {
+    const base = this.latest ?? [];
     const mine = new Map(base.map((e) => [e.id, e]));
     const merged = applyNewer(base, newer);
     for (const n of newer) {
       const local = mine.get(n.id);
-      // The server holds `n`; a local copy that still beats it (a later edit, or a tie we win) must go out again.
-      const keepsLocal = local !== undefined && !winsOver(n, local);
-      this.baseline?.set(n.id, keepsLocal && local.version === n.version ? -1 : n.version);
+      if (!local || !winsOver(local, n)) this.journaled.set(n.id, n.version); // a local copy that still wins is already journaled
     }
     const shown = merged.length !== base.length || merged.some((e, i) => e !== base[i]);
-    if (shown && !this.disposed) this.o.onReload(merged);
-    if (idle) {
-      this.lastSig = sigOf(merged);
-      this.savedIds = liveIds(merged);
-      this.pending = null;
-    } else {
-      this.pending = merged;
-      this.pendingSig = sigOf(merged);
-    }
-  }
-
-  private retryLater() {
-    const ms = RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)];
-    this.emit("retry", "Offline, retrying");
-    this.schedule(ms);
-  }
-
-  // Another tab saved first. Reload the server scene, but keep the local edits in storage so a
-  // conflict never silently destroys work.
-  private async resolveConflict(sent: readonly SceneElement[], lastWriter?: LastWriter) {
-    // Everything the user has drawn locally, including edits made while this save was in flight.
-    const local = this.pending ?? sent;
-    this.backup(local); // storage may be unavailable; the merge below still keeps the ink
-    const who = lastWriter?.same_ip === false ? "device" : "tab";
-    const notice = (n: number) =>
-      n > 0
-        ? `Another ${who} saved first; merged its changes with yours (${n} of your edits were replaced by the other ${who}, backup kept)`
-        : `Another ${who} saved first; merged its changes with yours`;
-    // load() replaces the baseline, so keep the one from before: it tells which edits were ours.
-    const before = this.baseline;
-    this.pending = null;
-    this.pendingSig = EMPTY_SIG;
-    this.emit("conflict", notice(0));
-    const fresh = await this.load(true);
-    // The canvas stays live during the reload: merge whatever the user has drawn since, too.
-    const newest = this.latest ?? local;
-    if (!fresh) {
-      this.pending = newest; // could not reload: keep the ink in memory, nothing is discarded
-      this.pendingSig = sigOf(newest);
-      this.retryLater(); // the retry PUT conflicts again and so reloads again
-      return;
-    }
-    if (this.disposed) return;
-    const { merged, kept, taken } = mergeReport(fresh, newest);
-    const newestVersion = new Map(newest.map((e) => [e.id, e.version]));
-    const edited = taken.filter((id) => before?.get(id) !== newestVersion.get(id)).length;
+    if (!shown || this.disposed) return;
+    this.latest = merged;
+    this.lastSig = sigOf(merged);
     this.o.onReload(merged);
-    this.emit("conflict", notice(edited));
-    // A local tie win carries the same version the server holds: force it into the next delta.
-    for (const id of kept) this.baseline?.set(id, -1);
-    if (kept.length > 0 || !sigMatches(this.lastSig, merged)) {
-      this.pending = merged;
-      this.pendingSig = sigOf(merged);
-      this.schedule(this.o.debounceMs ?? 1500);
-    }
   }
 }
