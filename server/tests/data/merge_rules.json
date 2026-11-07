@@ -1,0 +1,13 @@
+[
+  {"name": "higher incoming version wins", "incoming": {"version": 6, "nonce": 9}, "current": {"version": 5, "nonce": 1}, "wins": true},
+  {"name": "lower incoming version loses", "incoming": {"version": 4, "nonce": 1}, "current": {"version": 5, "nonce": 9}, "wins": false},
+  {"name": "equal version, lower incoming nonce wins", "incoming": {"version": 5, "nonce": 10}, "current": {"version": 5, "nonce": 20}, "wins": true},
+  {"name": "equal version, higher incoming nonce loses", "incoming": {"version": 5, "nonce": 20}, "current": {"version": 5, "nonce": 10}, "wins": false},
+  {"name": "equal version and equal nonce keeps the stored row", "incoming": {"version": 5, "nonce": 10}, "current": {"version": 5, "nonce": 10}, "wins": false},
+  {"name": "missing nonce on both loses", "incoming": {"version": 5, "nonce": null}, "current": {"version": 5, "nonce": null}, "wins": false},
+  {"name": "missing incoming nonce beats nonce 5 on a tie", "incoming": {"version": 3, "nonce": null}, "current": {"version": 3, "nonce": 5}, "wins": true},
+  {"name": "incoming nonce 5 loses to a missing current nonce", "incoming": {"version": 3, "nonce": 5}, "current": {"version": 3, "nonce": null}, "wins": false},
+  {"name": "version 0 against a missing version, equal nonces, loses", "incoming": {"version": 0, "nonce": 7}, "current": {"version": null, "nonce": 7}, "wins": false},
+  {"name": "version 5 over 4 wins whatever the nonce", "incoming": {"version": 5, "nonce": 999}, "current": {"version": 4, "nonce": 1}, "wins": true},
+  {"name": "version 4 under 5 loses even with a smaller nonce", "incoming": {"version": 4, "nonce": 1}, "current": {"version": 5, "nonce": 999}, "wins": false}
+]

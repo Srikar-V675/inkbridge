@@ -3,6 +3,7 @@
 
 import type { LoadClock } from "./loadClock.ts";
 import { lastResource, netParts, record, serverParts } from "../lib/timing.ts";
+import { winsOver } from "./mergeRule.ts";
 
 export interface SceneElement {
   id: string;
@@ -82,11 +83,8 @@ const sigMatches = (s: Sig, els: readonly SceneElement[]): boolean => {
 };
 const sameSig = (a: Sig, b: Sig) => a.ids.length === b.ids.length && a.ids.every((id, i) => id === b.ids[i] && Object.is(a.vers[i], b.vers[i]));
 
-const nonce = (e: SceneElement) => (e.versionNonce as number | undefined) ?? 0;
 // Excalidraw's undo and edits always bump `version` (never reuse an older number), so deltaFor stays safe.
-// Not verified against a real Excalidraw run (decision 0038).
-const localWins = (l: SceneElement, s: SceneElement) =>
-  l.version > s.version || (l.version === s.version && nonce(l) < nonce(s));
+// Not verified against a real Excalidraw run (decision 0038). The rule lives in mergeRule.ts, shared with the server.
 
 /** Server scene plus every local element. The higher `version` wins; on a tie the lower
  *  `versionNonce` wins, the same rule Excalidraw's reconcile uses, so both tabs pick the same one.
@@ -98,10 +96,10 @@ export function mergeReport(server: readonly SceneElement[], local: readonly Sce
   for (const e of local) {
     const theirs = byId.get(e.id);
     if (!theirs) byId.set(e.id, e);
-    else if (localWins(e, theirs)) {
+    else if (winsOver(e, theirs)) {
       if (e.version === theirs.version) kept.push(e.id);
       byId.set(e.id, e);
-    } else if (e.version !== theirs.version || nonce(e) !== nonce(theirs)) taken.push(e.id);
+    } else if (winsOver(theirs, e)) taken.push(e.id);
   }
   return { merged: [...byId.values()], kept, taken };
 }
