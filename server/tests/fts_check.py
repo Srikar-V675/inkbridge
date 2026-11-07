@@ -25,4 +25,30 @@ def fts_problems(conn: sqlite3.Connection) -> list[str]:
         "SELECT region_id FROM region_fts GROUP BY region_id HAVING COUNT(*) > 1"
     ).fetchall()
     problems += [f"{d['region_id']}: duplicate fts rows" for d in dupes]
+    if "answer_fts" in {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}:
+        problems += answer_fts_problems(conn)
+    return problems
+
+
+def answer_fts_problems(conn: sqlite3.Connection) -> list[str]:
+    """Every answered question has exactly one matching answer_fts row, and nothing else is indexed."""
+    problems = []
+    rows: dict[str, list] = {}
+    for r in conn.execute("SELECT question_id, question, answer FROM answer_fts"):
+        rows.setdefault(r["question_id"], []).append(r)
+    answered = set()
+    for q in conn.execute("SELECT id, text, answer_md FROM questions WHERE status = 'answered'"):
+        answered.add(q["id"])
+        got = rows.get(q["id"], [])
+        if not got:
+            problems.append(f"{q['id']}: answered but no answer_fts row")
+        elif len(got) > 1:
+            problems.append(f"{q['id']}: duplicate answer_fts rows")
+        elif (got[0]["question"], got[0]["answer"]) != (q["text"], q["answer_md"] or ""):
+            problems.append(f"{q['id']}: answer_fts row is stale")
+    problems += [
+        f"{qid}: answer_fts row for a missing or unanswered question"
+        for qid in rows
+        if qid not in answered
+    ]
     return problems
