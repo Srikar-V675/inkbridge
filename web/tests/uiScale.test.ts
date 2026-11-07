@@ -13,6 +13,7 @@ import {
   sizeLabel,
   sizeShort,
 } from "../src/app/uiScale.ts";
+import { parseTokenCss } from "../src/ui/tokenTable.ts";
 
 function store(initial: Record<string, string> = {}) {
   const data = { ...initial };
@@ -119,5 +120,60 @@ describe("UI size setting (INK-177, decision 0083)", () => {
     assert.equal(sizeShort(0.9), "M");
     assert.equal(sizeShort(1), "L");
     assert.equal(sizeShort(0.7), "0.7");
+  });
+});
+
+const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+
+describe("uiScale.css mirrors the design tokens", () => {
+  const scaleCss = read("../src/app/uiScale.css");
+  const tokens = parseTokenCss(read("../src/styles/tokens.css"));
+  const body = [...scaleCss.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^}]*)\}/g)];
+  const decls = new Map<string, string>();
+  for (const [, , text] of body) for (const m of text.matchAll(/(--[\w-]+):\s*([^;]+);/g)) decls.set(m[1], m[2].trim());
+
+  const scaled = (value: string, name: string): string => {
+    const out = value
+      .split(/\s+/)
+      .map((part) => {
+        if (part === "0") return "0";
+        const m = /^(-?[\d.]+)px$/.exec(part);
+        assert.ok(m, `${name}: cannot scale ${part}`);
+        return `calc(${m[1]}px * var(--ui-scale, 1))`;
+      })
+      .join(" ");
+    return /^--type-(title|reading|control|button|note)-size$/.test(name) ? `max(12px, ${out})` : out;
+  };
+
+  it("is a single .ink-shell rule", () => {
+    assert.equal(body.length, 1);
+    assert.equal(body[0][1].trim(), ".ink-shell");
+  });
+
+  it("every override is the token value times --ui-scale", () => {
+    for (const [name, value] of decls) {
+      const t = tokens.find((x) => x.name === name);
+      assert.ok(t, `${name} exists in tokens.css`);
+      assert.equal(value, scaled(t.value, name), name);
+    }
+  });
+
+  it("overrides the sizes the shell reads", () => {
+    for (const name of [
+      "--space-xs", "--space-sm", "--space-md", "--space-lg", "--space-xl",
+      "--type-title-size", "--type-reading-size", "--type-control-size", "--type-button-size", "--type-note-size",
+      "--component-tool-rail-width", "--component-tool-rail-padding",
+      "--component-top-bar-height", "--component-top-bar-padding",
+      "--component-side-panel-width", "--component-side-panel-padding",
+      "--component-canvas-card-padding",
+      "--component-button-primary-padding", "--component-button-secondary-padding", "--component-button-quiet-padding",
+      "--component-draft-badge-padding",
+    ]) assert.ok(decls.has(name), name);
+  });
+
+  it("never scales the hit area, the corners or the 36 px chip", () => {
+    assert.ok(!decls.has("--space-touch"));
+    assert.ok(!decls.has("--component-offer-chip-height"));
+    for (const name of decls.keys()) assert.ok(!name.startsWith("--radius-"), name);
   });
 });

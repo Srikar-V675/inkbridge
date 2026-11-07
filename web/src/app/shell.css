@@ -150,6 +150,7 @@
   width: 20px;
   height: 20px;
   border-radius: 10px;
+  scale: var(--ui-scale, 1); /* the colour dot shrinks with the button face (INK-177) */
 }
 .ink-rail .ink-icon-button[aria-label^="Ink colour"][aria-pressed="true"] {
   background: transparent;

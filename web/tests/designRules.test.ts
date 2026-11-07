@@ -99,16 +99,40 @@ const uiFiles = (ext: string): [string, string][] =>
   Object.entries(sources()).filter(([n]) => n.startsWith("ui/") && n.endsWith(ext));
 
 describe("interactive primitives", () => {
-  it("buttons and icon buttons are 44 px or taller", () => {
+  // INK-177, decision 0083: the face scales with --ui-scale, an ::after box keeps the 44 px hit area.
+  const FACE = "calc(var(--space-touch) * var(--ui-scale, 1))";
+  const HIT_INSET = "min(0px, calc((var(--ui-scale, 1) - 1) * var(--space-touch) / 2))";
+
+  it("buttons and icon buttons have a 44 px hit area at every UI size", () => {
     const all = Object.assign({}, ...uiFiles(".css").map(([, text]) => rules(text)));
-    for (const sel of [".ink-button", ".ink-icon-button"]) {
-      const d = all[sel];
-      assert.ok(d, sel);
-      assert.ok(px(d["min-height"] ?? d["height"]) >= 44, `${sel} height`);
-    }
+    assert.equal(px("var(--space-touch)"), 44);
     const icon = all[".ink-icon-button"];
-    assert.ok(px(icon["width"] ?? icon["min-width"]) >= 44, "icon width");
-    assert.ok(px(icon["min-width"]) >= 44, "icon min-width");
+    assert.ok(icon, ".ink-icon-button");
+    for (const p of ["width", "min-width", "min-height"]) assert.equal(icon[p], FACE, `icon ${p}`);
+    assert.equal(icon["position"], "relative");
+    const iconAfter = all[".ink-icon-button::after"];
+    assert.ok(iconAfter, "icon ::after");
+    assert.equal(iconAfter["content"], '""');
+    assert.equal(iconAfter["position"], "absolute");
+    assert.equal(iconAfter["inset"], HIT_INSET);
+
+    const button = all[".ink-button"];
+    assert.ok(button, ".ink-button");
+    assert.equal(button["min-height"], FACE);
+    assert.equal(button["position"], "relative");
+    const buttonAfter = all[".ink-button::after"];
+    assert.ok(buttonAfter, "button ::after");
+    assert.equal(buttonAfter["content"], '""');
+    assert.equal(buttonAfter["position"], "absolute");
+    assert.equal(buttonAfter["inset"], `${HIT_INSET} 0`);
+  });
+
+  it("the hit area formula gives at least 44 px for every scale", () => {
+    for (const s of [0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2]) {
+      const visual = 44 * s;
+      const hit = visual + 2 * -Math.min(0, ((s - 1) * 44) / 2);
+      assert.ok(hit >= 44 - 1e-9, `scale ${s}: ${hit}`);
+    }
   });
 
   it("the chip is the one 36 px target", () => {
