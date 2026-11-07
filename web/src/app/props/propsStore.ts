@@ -3,12 +3,13 @@
 // field changes. It is hooked on api.onChange, so it must stay cheap: a pointer move reads only
 // appState, and the scene is read once after a gesture ends and only when the card can show.
 import {
-  applyFlag, applyStyle, applyText, layerKey, type LayerKind, controlsFor, sourceFor, stateValue, statePatch, title, unlockAll, valueOf,
-  type ControlId, type StyleEl, type ToolDefaults, type Value,
+  applyFlag, applyStyle, applyText, layerKey, type LayerKind, cardTool, controlsFor, OPEN_DEFAULT, sourceFor, stateValue, statePatch, title, unlockAll, valueOf,
+  type CardTool, type ControlId, type StyleEl, type ToolDefaults, type Value,
 } from "./propsLogic.ts";
 
 export interface PropsSnapshot {
   source: "tool" | "selection" | null;
+  tool: CardTool | null; // which tool card (source "tool" only)
   title: string;
   controls: ControlId[];
   values: Partial<Record<ControlId, Value>>;
@@ -27,6 +28,8 @@ export interface PropsEnv {
   nonce: () => number;
   now: () => number;
   measure: (line: string, fontSize: number, fontFamily: number) => number;
+  /** Pen or highlighter, remembered by the rail (opacity is editable now, so it cannot tell). */
+  freedrawKind: () => "pen" | "highlighter";
   loadFont: (fontFamily: number, fontSize: number) => Promise<void>;
 }
 
@@ -70,7 +73,7 @@ const shallow = (a: object, b: object) => {
   return ka.length === Object.keys(b).length && ka.every((k) => (a as never)[k] === (b as never)[k]);
 };
 const sameSnap = (a: PropsSnapshot, b: PropsSnapshot) =>
-  a.source === b.source && a.title === b.title && a.layers === b.layers && a.anyLocked === b.anyLocked &&
+  a.source === b.source && a.tool === b.tool && a.title === b.title && a.layers === b.layers && a.anyLocked === b.anyLocked &&
   a.collapsed === b.collapsed && a.controls.length === b.controls.length &&
   a.controls.every((c, i) => c === b.controls[i]) && shallow(a.values, b.values);
 
@@ -85,8 +88,9 @@ export function createPropsStore(api: PropsApi, env: PropsEnv) {
   let collapsed = false;
   let lastKey: unknown[] = [];
   let lastElements: readonly unknown[] | null = null;
+  const openBy: Partial<Record<CardTool, boolean>> = {}; // session only
 
-  const hidden = (): PropsSnapshot => ({ source: null, title: "", controls: [], values: {}, layers: false, anyLocked: false, collapsed });
+  const hidden = (): PropsSnapshot => ({ source: null, tool: null, title: "", controls: [], values: {}, layers: false, anyLocked: false, collapsed });
 
   const build = (): PropsSnapshot => {
     const a = api.getAppState();
@@ -98,7 +102,8 @@ export function createPropsStore(api: PropsApi, env: PropsEnv) {
       scene = api.getSceneElementsIncludingDeleted();
       selected = scene.filter((e) => ids.has(e.id) && !e.isDeleted);
     }
-    const { source, types } = sourceFor(a, selected);
+    const ct = cardTool(a, env.freedrawKind());
+    const { source, types } = sourceFor(a, selected, ct ? (openBy[ct] ?? OPEN_DEFAULT[ct]) : false);
     if (!source) return hidden();
     if (!ids.size) scene = api.getSceneElementsIncludingDeleted();
     const controls = controlsFor(types);
@@ -111,7 +116,8 @@ export function createPropsStore(api: PropsApi, env: PropsEnv) {
         break;
       }
     }
-    return { source, title: title(source, types, selected.length), controls, values, layers: source === "selection", anyLocked, collapsed };
+    const name = source === "tool" && ct === "shapes" ? "Shapes" : source === "tool" && ct === "pen" ? "Pen" : source === "tool" && ct === "highlighter" ? "Highlighter" : title(source, types, selected.length);
+    return { source, tool: source === "tool" ? ct : null, title: name, controls, values, layers: source === "selection", anyLocked, collapsed };
   };
 
   let snap = build();
@@ -173,6 +179,12 @@ export function createPropsStore(api: PropsApi, env: PropsEnv) {
     layer: (kind: Exclude<LayerKind, "duplicate" | "delete">) => key(kind),
     duplicate: () => key("duplicate"),
     remove: () => key("delete"),
+    toggleCard() {
+      const ct = cardTool(api.getAppState(), env.freedrawKind());
+      if (!ct) return;
+      openBy[ct] = !(openBy[ct] ?? OPEN_DEFAULT[ct]);
+      refresh();
+    },
     toggleCollapsed() {
       collapsed = !collapsed;
       refresh();
