@@ -8,7 +8,7 @@ from tests.test_search import recognise
 
 CHUNK_KEYS = {
     "id", "order", "kind", "bounds", "element_ids", "text", "latex", "source", "status",
-    "successor_of", "png_stale", "content_hash", "text_hash", "links", "deep_link",
+    "successor_of", "png_stale", "content_hash", "text_hash", "links", "group_id", "deep_link",
     "read_status", "read_note",
 }  # fmt: skip
 REGION_KEYS = {
@@ -67,7 +67,7 @@ def canvas(client):
 
 def test_chunk_shape(client, canvas):
     body = client.get("/documents/default/chunks").json()
-    assert set(body) == {"document", "version", "chunk_count", "chunks"}
+    assert set(body) == {"document", "version", "chunk_count", "chunks", "groups", "isolated"}
     (chunk,) = body["chunks"]
     assert set(chunk) == CHUNK_KEYS
     assert chunk["text"] == "hello" and chunk["links"] == []
@@ -86,7 +86,7 @@ def test_chunk_link_shape(client):
         x for ch in client.get("/documents/default/chunks").json()["chunks"] for x in ch["links"]
     ]
     for link in links:
-        assert set(link) == {"to", "kind"}
+        assert set(link) == {"to", "kind", "label", "confidence"}
 
 
 def test_region_shapes(client, canvas):

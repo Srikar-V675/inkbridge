@@ -138,6 +138,17 @@ def components(g, max_components=30, max_ids=20) -> dict:
     }
 
 
+def groups(g: nx.DiGraph) -> list[dict]:
+    """Connected components of 2+ chunks, largest first; id is the first chunk in reading order."""
+    comps = [
+        sorted(c, key=lambda n: _sort_key(g, n))
+        for c in nx.connected_components(g.to_undirected(as_view=True))
+        if len(c) > 1
+    ]
+    comps.sort(key=lambda ids: (-len(ids), _sort_key(g, ids[0])))
+    return [{"id": ids[0], "chunk_ids": ids} for ids in comps]
+
+
 _UNSAFE = re.compile(r"[\"\[\](){}<>|;#&`\\]")
 
 

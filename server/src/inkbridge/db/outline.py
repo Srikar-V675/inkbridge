@@ -5,6 +5,7 @@ import sqlite3
 import uuid
 
 from inkbridge import imaging
+from inkbridge.canvas import graph
 from inkbridge.canvas.chunker import reading_order
 from inkbridge.db.common import AUTO, DocumentNotFound, _now
 from inkbridge.db.documents import document_summary, get_scene
@@ -81,15 +82,33 @@ def chunk_outline(
     }
     links: dict[str, list[dict]] = {}
     for r in conn.execute(
-        "SELECT DISTINCT from_region, to_region, kind FROM links WHERE document_id = ?"
-        " ORDER BY from_region, to_region, kind",
+        "SELECT from_region, to_region, kind, MAX(label) AS label, MAX(confidence) AS confidence"
+        " FROM links WHERE document_id = ?"
+        " GROUP BY from_region, to_region, kind ORDER BY from_region, to_region, kind",
         (document_id,),
     ):
-        links.setdefault(r["from_region"], []).append({"to": r["to_region"], "kind": r["kind"]})
+        links.setdefault(r["from_region"], []).append(
+            {
+                "to": r["to_region"],
+                "kind": r["kind"],
+                "label": r["label"],
+                "confidence": r["confidence"],
+            }
+        )
 
     active = reading_order({i: c["bounds"] for i, c in chunks.items() if c["status"] == "active"})
     orphaned = sorted(i for i, c in chunks.items() if c["status"] != "active")
     order = {cid: n for n, cid in enumerate(active, start=1)}
+    # Groups come from active chunks only, before any filter, so a filtered list keeps its groups.
+    g = graph.build(
+        [
+            {"id": cid, "status": "active", "order": order[cid], "kind": chunks[cid]["kind"],
+             "text": chunks[cid]["text"], "links": links.get(cid, [])}
+            for cid in active
+        ]
+    )  # fmt: skip
+    grouped = graph.groups(g)
+    group_of = {n: gr["id"] for gr in grouped for n in gr["chunk_ids"]}
     out = []
     for cid in active + orphaned:
         c = chunks[cid]
@@ -114,11 +133,19 @@ def chunk_outline(
                 "content_hash": c["content_hash"],
                 "text_hash": c["text_hash"],
                 "links": links.get(cid, []),
+                "group_id": group_of.get(cid),
                 "read_status": "too_large" if why else "ok",
                 "read_note": why,
             }
         )
-    return {"document": document_id, "version": version, "chunk_count": len(out), "chunks": out}
+    return {
+        "document": document_id,
+        "version": version,
+        "chunk_count": len(out),
+        "chunks": out,
+        "groups": grouped,
+        "isolated": len(active) - len(group_of),
+    }
 
 
 def chunk_crops(conn: sqlite3.Connection, document_id: str) -> list[dict]:

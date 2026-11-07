@@ -24,6 +24,13 @@ class Out(BaseModel):
 class Link(Out):
     to: str
     kind: str
+    label: str | None
+    confidence: float | None
+
+
+class Group(Out):
+    id: str
+    chunk_ids: list[str]
 
 
 class ChunkOut(Out):
@@ -41,6 +48,7 @@ class ChunkOut(Out):
     content_hash: str | None
     text_hash: str | None
     links: list[Link]
+    group_id: str | None
     read_status: str
     read_note: str | None
     deep_link: str
@@ -51,6 +59,8 @@ class ChunkOutline(Out):
     version: int
     chunk_count: int
     chunks: list[ChunkOut]
+    groups: list[Group]
+    isolated: int
 
 
 class DocumentOut(Out):

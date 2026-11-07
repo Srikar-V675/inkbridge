@@ -97,7 +97,8 @@ def test_links_are_listed_on_the_chunk_they_leave(client):
     ]
     Canvas(client, els)
     a, b = outline(client)["chunks"]
-    assert a["links"] == [{"to": b["id"], "kind": "arrow"}] and b["links"] == []
+    link = {"to": b["id"], "kind": "arrow", "label": None, "confidence": None}
+    assert a["links"] == [link] and b["links"] == []
 
 
 def test_deep_links_use_the_configured_base(client, monkeypatch):
