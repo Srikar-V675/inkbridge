@@ -1,22 +1,12 @@
-/* Shapes flyout and properties card (INK-175, docs/decisions/0075). Tokens only. */
-.ink-flyout-wrap {
-  z-index: 7; /* above the card (6), clear of the top bar's controls */
-}
-.ink-flyout.ink-card {
-  padding: var(--space-sm);
-}
-.ink-flyout__row {
+/* Properties card, one per tool (INK-175, 0075; INK-178, 0098). Tokens only. */
+.ink-props__picker {
   display: flex;
   gap: var(--space-xs);
   touch-action: manipulation;
 }
-.ink-flyout .ink-icon-button[aria-pressed="true"] {
-  background: var(--color-charcoal);
-  color: var(--color-paper);
-}
 
 /* Properties card: 280 px, right of the rail (2 x space-md + rail width, 92 px at Large). Layer 6 like the chunk overlays but later in the DOM, so
-   it is above their chips; under the top bar (7) and the Ask panel (8); the flyout (7) paints over it. */
+   it is above their chips; under the top bar (7) and the Ask panel (8). */
 .ink-props.ink-card {
   position: absolute;
   left: calc(2 * var(--space-md) + var(--component-tool-rail-width));

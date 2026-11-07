@@ -1,4 +1,4 @@
-// Icons for the shapes flyout and the properties card (INK-175). Same style as ../icons.tsx.
+// Icons for the shapes picker and the properties card (INK-175). Same style as ../icons.tsx.
 import type { ReactNode } from "react";
 import type { ShapeTool } from "../shellLogic";
 

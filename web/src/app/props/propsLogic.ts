@@ -263,15 +263,27 @@ export function applyText(
   return changed ? out : (scene as StyleEl[]);
 }
 
-const TOOL_TYPES = ["rectangle", "diamond", "ellipse", "arrow", "line", "text"];
+const TOOL_TYPES = ["rectangle", "diamond", "ellipse", "arrow", "line", "text", "freedraw"];
+
+export type CardTool = "pen" | "highlighter" | "shapes" | "text";
+export const OPEN_DEFAULT: Record<CardTool, boolean> = { pen: false, highlighter: false, shapes: true, text: true };
+const SHAPE_TYPES = ["rectangle", "diamond", "ellipse", "arrow", "line"];
+
+/** Which per-tool open state the active tool uses; null for tools with no card. `kind` says pen or highlighter. */
+export function cardTool(a: { activeTool: { type: string } }, kind: "pen" | "highlighter"): CardTool | null {
+  const t = a.activeTool.type;
+  if (t === "freedraw") return kind;
+  if (SHAPE_TYPES.includes(t)) return "shapes";
+  return t === "text" ? "text" : null;
+}
 
 /** What the card edits: the selection, the tool defaults, or nothing (hidden). Drafts are the agent's: never shown. */
 export function sourceFor(
-  a: { activeTool: { type: string } }, selected: readonly StyleEl[],
+  a: { activeTool: { type: string } }, selected: readonly StyleEl[], open = true,
 ): { source: "selection" | "tool" | null; types: ElType[] } {
   if (selected.some((e) => e.customData?.draft)) return { source: null, types: [] };
   if (selected.length) return { source: "selection", types: [...new Set(selected.map((e) => typeOf(e.type)))] };
-  if (TOOL_TYPES.includes(a.activeTool.type)) return { source: "tool", types: [typeOf(a.activeTool.type)] };
+  if (open && TOOL_TYPES.includes(a.activeTool.type)) return { source: "tool", types: [typeOf(a.activeTool.type)] };
   return { source: null, types: [] };
 }
 

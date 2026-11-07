@@ -49,13 +49,14 @@ const MAX_WAIT_FRAMES = 300; // give up waiting for Excalidraw to finish loading
 export function createRailStore(api: RailApi, pens: readonly string[], env: RailEnv) {
   const listeners = new Set<() => void>();
   let lastShape: ShapeTool = "rectangle";
+  let kind: "pen" | "highlighter" | null = null; // set by the last pen or highlighter tap; opacity cannot tell them apart
   let lastPen = 0; // the rail's last chosen pen colour; pen and highlighter return to it (INK-175)
   const read = (): RailSnapshot => {
     const a = api.getAppState();
     const pi = penIndex(a.currentItemStrokeColor, pens);
     if (pi >= 0) lastPen = pi;
     if (isShape(a.activeTool.type)) lastShape = a.activeTool.type;
-    return { tool: railTool(a), pen: penIndex(a.currentItemStrokeColor, pens), zoom: a.zoom.value, shape: lastShape };
+    return { tool: railTool(a, kind ?? undefined), pen: penIndex(a.currentItemStrokeColor, pens), zoom: a.zoom.value, shape: lastShape };
   };
   const scene = (appState: Record<string, unknown>) => api.updateScene({ appState, captureUpdate: env.never });
 
@@ -80,6 +81,7 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
     // A deep link selects a chunk (maybe only after resolveChunk answers); picking the pen would clear it.
     const selected = Object.values(api.getAppState().selectedElementIds ?? {}).some(Boolean);
     if (!selected && !env.deepLink) api.setActiveTool({ type: "freedraw" });
+    if (!selected && !env.deepLink) kind = "pen";
     scene({ currentItemStrokeColor: pens[0] });
     refresh();
   };
@@ -94,6 +96,7 @@ export function createRailStore(api: RailApi, pens: readonly string[], env: Rail
       return () => void listeners.delete(l);
     },
     tap(tool: RailTool) {
+      if (tool === "pen" || tool === "highlighter") kind = tool;
       const { tool: t, patch: base } = toolTap(tool, api.getAppState().activeTool.type, lastShape);
       // A shape or text tool card may have set a background, fill or soft-ink stroke: freedraw copies all
       // three at the start of a stroke, so the pen and highlighter reset them.

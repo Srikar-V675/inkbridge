@@ -49,7 +49,7 @@ export function zoomAbout(v: { scrollX: number; scrollY: number; zoom: number; w
 }
 
 export type RailTool = "pen" | "highlighter" | "eraser" | "select" | "shapes" | "text";
-// Flyout order. The Shapes button picks the last chosen one (INK-175, docs/decisions/0075).
+// Picker order. The Shapes button picks the last chosen one (INK-175, docs/decisions/0075).
 export const SHAPES = ["rectangle", "diamond", "ellipse", "arrow", "line"] as const;
 export type ShapeTool = (typeof SHAPES)[number];
 export const isShape = (t: string): t is ShapeTool => (SHAPES as readonly string[]).includes(t);
@@ -57,10 +57,10 @@ export const HIGHLIGHTER = { opacity: 35, strokeWidth: 4 };
 export const PEN = { opacity: 100, strokeWidth: 2 };
 
 /** What the rail shows pressed, from an Excalidraw appState subset. null for tools the rail lacks (hand, laser...). */
-export function railTool(a: { activeTool: { type: string }; currentItemOpacity: number }): RailTool | null {
+export function railTool(a: { activeTool: { type: string }; currentItemOpacity: number }, kind?: "pen" | "highlighter"): RailTool | null {
   switch (a.activeTool.type) {
     case "freedraw":
-      return a.currentItemOpacity < 100 ? "highlighter" : "pen";
+      return kind ?? (a.currentItemOpacity < 100 ? "highlighter" : "pen");
     case "eraser":
       return "eraser";
     case "selection":
@@ -99,7 +99,7 @@ export function toolTap(tool: RailTool, currentType: string, lastShape: ShapeToo
   return { tool: { type: tool === "select" ? "selection" : tool }, patch: {} };
 }
 
-/** A pick from the shapes flyout: the shape, and the solid patch only when coming from a non-shape tool. */
+/** A pick from the shapes picker: the shape, and the solid patch only when coming from a non-shape tool. */
 export function pickShape(shape: ShapeTool, currentType: string): { tool: { type: string }; patch: Record<string, number> } {
   return { tool: { type: shape }, patch: isShape(currentType) ? {} : { currentItemOpacity: PEN.opacity, currentItemStrokeWidth: PEN.strokeWidth } };
 }
