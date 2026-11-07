@@ -18,7 +18,6 @@ MODES = {
     "brief": {"types": (), "limit": 0},
 }
 OFFER_MODE = {"sketch": "diagram", "dangling_arrow": "link", "related": "link"}
-MAX_ATTEMPTS = 3
 
 
 class TaskNotFound(Exception):
@@ -122,13 +121,12 @@ def finish(conn: sqlite3.Connection, task_id: str, status: str, error: str | Non
     return get_task(conn, task_id)
 
 
-def release(conn: sqlite3.Connection, task_id: str, error: str) -> dict:
-    """Runner failure: back to pending, or failed after MAX_ATTEMPTS."""
+def release(conn: sqlite3.Connection, task_id: str, error: str, give_up: bool = False) -> dict:
+    """Runner failure: back to pending, or failed when the worker gives up (it counts the tries)."""
     cur = conn.execute(
-        "UPDATE agent_tasks SET status = CASE WHEN attempts >= ? THEN 'failed' ELSE 'pending' END,"
-        " last_error=?, finished_at = CASE WHEN attempts >= ? THEN ? ELSE NULL END"
+        "UPDATE agent_tasks SET status = ?, last_error=?, finished_at = ?"
         " WHERE id=? AND status='running'",
-        (MAX_ATTEMPTS, error[:200], MAX_ATTEMPTS, _now(), task_id),
+        ("failed" if give_up else "pending", error[:200], _now() if give_up else None, task_id),
     )
     _guard(conn, cur, task_id)
     conn.commit()
@@ -170,6 +168,16 @@ def status_message(task: dict) -> str:
     if s == "failed":
         return f"Failed: {task['last_error']}" if task.get("last_error") else "Failed"
     return "Waiting" if s == "pending" else "Cancelled"
+
+
+def ws_message(task: dict) -> dict:
+    return {
+        "type": "task.status",
+        "task_id": task["id"],
+        "kind": task["kind"],
+        "status": task["status"],
+        "line": status_message(task),
+    }
 
 
 def op_budget(conn: sqlite3.Connection, task_id: str, document_id: str, op_type: str) -> None:

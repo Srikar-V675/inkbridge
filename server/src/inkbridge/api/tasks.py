@@ -29,16 +29,7 @@ class CompleteIn(_Strict):
 
 
 def publish(task: dict) -> dict:
-    hub.publish(
-        task["document_id"],
-        {
-            "type": "task.status",
-            "task_id": task["id"],
-            "kind": task["kind"],
-            "status": task["status"],
-            "line": tasks_db.status_message(task),
-        },
-    )
+    hub.publish(task["document_id"], tasks_db.ws_message(task))
     return task
 
 

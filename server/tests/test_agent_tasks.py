@@ -206,3 +206,15 @@ def test_complete_question_task_needs_answer(client):
     r = client.post(f"/tasks/{tid}/complete", json={"status": "done"})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "question_unanswered"
     assert tasks_of(client, status="running")[0]["question"]["id"] == q["id"]
+
+
+@pytest.mark.parametrize(
+    ("raw", "want"), [(None, 30), ("", 30), ("0", 0), ("5", 5), ("-1", 30), ("x", 30)]
+)
+def test_agent_daily_tasks_env(monkeypatch, raw, want):
+    from inkbridge import config
+
+    monkeypatch.delenv("INKBRIDGE_AGENT_DAILY_TASKS", raising=False)
+    if raw is not None:
+        monkeypatch.setenv("INKBRIDGE_AGENT_DAILY_TASKS", raw)
+    assert config.agent_daily_tasks() == want
