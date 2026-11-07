@@ -77,3 +77,12 @@ def test_quiet_s_config(monkeypatch):
     for bad in ("junk", "-1"):
         monkeypatch.setenv("INKBRIDGE_QUIET_S", bad)
         assert config.quiet_s() == 8.0
+
+
+def test_view_tick_while_up_does_not_reset():
+    c = Clock()
+    a = Attention(c)
+    a.update("d", pen=False)
+    c.t = 8
+    a.update("d", pen=False, view={"x": 1})
+    assert a.can_push("d") is True

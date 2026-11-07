@@ -12,7 +12,10 @@ class Attention:
 
     def update(self, doc, pen, view=None):
         # shortcut: scene saves do not count as strokes, upgrade if offers appear mid-write
-        self._s[doc] = [bool(pen), self.clock(), view]  # a pen-up is the end of a stroke
+        old = self._s.get(doc)
+        # a pen-down or the pen-up that follows it is a stroke moment; a view tick while up is not
+        last = old[1] if old and not old[0] and not pen else self.clock()
+        self._s[doc] = [bool(pen), last, view]
 
     def can_push(self, doc):
         s = self._s.get(doc)
