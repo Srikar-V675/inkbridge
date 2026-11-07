@@ -124,7 +124,7 @@ def _read(path: Path) -> bytes | None:
 
 @router.get("/documents/{document_id}/thumbnail")
 def thumbnail(document_id: str, conn: Conn, request: Request) -> Response:
-    """960x640 PNG of the whole canvas, cached per scene version beside the database."""
+    """960x640 PNG of the centre chunk of the canvas, cached per scene version beside the database."""
     if not _SAFE_ID.fullmatch(document_id):
         raise HTTPException(404, NOT_FOUND)
     try:
@@ -140,6 +140,6 @@ def thumbnail(document_id: str, conn: Conn, request: Request) -> Response:
             version, raw = db.get_scene(conn, document_id)
         except db.DocumentNotFound:
             raise HTTPException(404, NOT_FOUND) from None
-        png = render_thumbnail(json.loads(raw))
+        png = render_thumbnail(json.loads(raw), chunks=db.active_chunk_bounds(conn, document_id))
         _store(_thumb_path(document_id, version), png, document_id)
     return Response(png, media_type="image/png", headers=_headers(version))
