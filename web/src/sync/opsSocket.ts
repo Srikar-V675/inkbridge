@@ -1,10 +1,12 @@
 // Framework-free client for `WS /ws?document=<id>` (tech ref 7.3, server/src/inkbridge/api/ws.py).
 // Reconnects with backoff; the server replays pending and delivered ops on every connect. Ops are
 // handled one at a time, and an op already being handled is not started twice. question.update
-// (INK-104) is handed to onQuestionUpdate so the Ask panel needs no polling.
+// (INK-104) is handed to onQuestionUpdate so the Ask panel needs no polling. scene.delta (INK-112)
+// goes to onSceneDelta.
 
 import type { PendingOp } from "../drafts/drafts";
 import type { Question } from "../ask/ask";
+import type { SceneDelta } from "./liveDelta.ts";
 
 export interface ChunksUpdated {
   version: number;
@@ -32,6 +34,7 @@ export interface OpsSocketOptions {
   onChunksUpdated?: (msg: ChunksUpdated) => void; // crop sync hooks in here (INK-057)
   onOpUpdated?: (msg: OpUpdated) => void;
   onQuestionUpdate?: (question: Question) => void;
+  onSceneDelta?: (d: SceneDelta) => void;
   onOpError?: (msg: { op_id: string; code: string; detail?: unknown }) => void;
   onConnection?: (connected: boolean) => void;
   createSocket?: (url: string) => SocketLike;
@@ -111,6 +114,8 @@ export class OpsSocket {
         return this.o.onOpUpdated?.(msg as unknown as OpUpdated);
       case "op.error":
         return this.o.onOpError?.(msg as never);
+      case "scene.delta":
+        return this.o.onSceneDelta?.(msg as unknown as SceneDelta);
       case "question.update":
         return this.o.onQuestionUpdate?.((msg as { question: Question }).question);
     }

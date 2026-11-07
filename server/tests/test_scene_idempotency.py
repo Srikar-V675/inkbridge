@@ -57,7 +57,7 @@ def test_replay_does_not_publish(client, monkeypatch):
     put(client, "t1:1", 0)
     put(client, "t2:1", 1, els=[B])
     n = len(sent)
-    assert n == 2
+    assert n == 4  # a scene.delta and a chunks.updated per save
     put(client, "t1:1", 0)  # replay of the first save
     assert len(sent) == n
 

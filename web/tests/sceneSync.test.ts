@@ -906,3 +906,42 @@ describe("save answers carry newer elements (INK-111, decision 0080)", () => {
     assert.deepEqual(puts[1].body?.elements, [el("y", 1)]); // x v5 is the baseline now: not resent
   });
 });
+
+describe("SceneSync.applyRemote (INK-112, decision 0087)", () => {
+  beforeEach(() => mock.timers.enable({ apis: ["setTimeout"] }));
+  afterEach(() => mock.timers.reset());
+  const loaded = async () => {
+    const h = harness([json(200, { version: 4, elements: [el("a", 1, { type: "rect" }), el("b", 1, { type: "rect" })] })]);
+    await h.sync.load();
+    return h;
+  };
+
+  it("shows newer and new elements once, stays saved and never saves them back", async () => {
+    const h = await loaded();
+    h.sync.applyRemote([el("a", 3, { type: "rect", x: 7 }), el("n", 1, { type: "rect" })]);
+    assert.equal(h.reloads.length, 1);
+    assert.deepEqual(h.reloads[0].map((e) => [e.id, e.version]), [["a", 3], ["b", 1], ["n", 1]]);
+    assert.equal(h.states.at(-1), "saved");
+    h.sync.notify(h.reloads[0]);
+    mock.timers.tick(5000);
+    await settle();
+    assert.equal(h.calls.filter((c) => c.method === "PUT" || c.method === "POST").length, 0);
+  });
+
+  it("applies a tombstone stub as a delete", async () => {
+    const h = await loaded();
+    h.sync.applyRemote([{ id: "b", version: 5, versionNonce: 1, isDeleted: true }]);
+    assert.equal(h.reloads[0].find((e) => e.id === "b")?.isDeleted, true);
+  });
+
+  it("keeps an unsaved local edit pending", async () => {
+    const h = await loaded();
+    h.sync.notify([el("a", 2, { type: "rect" }), el("b", 1, { type: "rect" })]);
+    h.sync.applyRemote([el("n", 1, { type: "rect" })]);
+    assert.ok(h.reloads[0].some((e) => e.id === "a" && e.version === 2));
+    await h.sync.flushNow().catch(() => {});
+    const sent = h.calls.find((c) => c.method === "PUT" || c.method === "POST");
+    assert.ok(sent, "the local edit is still saved");
+    assert.ok(JSON.stringify(sent.body).includes('"id":"a"'));
+  });
+});
