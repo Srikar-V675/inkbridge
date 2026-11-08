@@ -3,18 +3,77 @@
 [![CI](https://github.com/Srikar-V675/inkbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Srikar-V675/inkbridge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status:** in development (build by 27 Oct 2026). Built: scenes, manual regions, MCP read tools,
-search, the content and reading hashes, a proximity chunker and a Gemini recognizer (neither wired to
-saves yet), and a web client that loads and autosaves the canvas. Chunk persistence, the vault loop,
-agent drawing and Ask AI follow the v3 plan.
+**Status:** v4 built, tablet and real-page checks pending (see [CLAUDE.md](CLAUDE.md) "Current state").
 
-A handwritten canvas wired into your markdown vault. The server groups ink into chunks; any MCP
-agent reads the whole canvas, writes a vault note whose sections trace back to the ink (and are
-flagged stale only when what you wrote changes), answers your doubts, and draws diagrams back as
-drafts you accept or reject. Full design: [Project spec v3](https://claude.ai/artifact/FkyFV1UySxqfC9oFEYb1P1)
-and [Technical reference v3](https://claude.ai/artifact/1uMmVHEyuvb2uS5Dgutaqy); the v1 draft is kept in
+A handwritten canvas wired into your markdown vault. You write with a pen in the browser (Excalidraw);
+the server groups the ink into chunks; any MCP agent reads the whole canvas, writes a vault note whose
+sections trace back to the ink (flagged stale only when what you wrote changes), answers your questions,
+and draws diagrams and text back as drafts you accept or reject. Design: [Project spec v4](https://claude.ai/artifact/TJdewTbXM4JPFpDceL8U5Q)
+and [Technical reference v4](https://claude.ai/artifact/GZDXFwCSeXwGZJBHtuuTJd); the v1 draft is kept in
 [docs/project-doc.html](docs/project-doc.html). Contributor and AI guidance: [CLAUDE.md](CLAUDE.md),
 [docs/mcp-tools.md](docs/mcp-tools.md), [docs/decisions/](docs/decisions/).
+
+## Architecture
+
+Three processes, one owner of state. The API owns scenes, chunks, drafts, questions and tasks; the MCP
+server is a thin HTTP client; the vault is written only by the export skill, under the agent's own file access.
+
+```mermaid
+flowchart LR
+  Tablet["Tablet browser<br/>web/ (Excalidraw)"] <-->|"HTTP + WebSocket<br/>scene.delta, op.placed, offers"| API["API: FastAPI + SQLite<br/>server/src/inkbridge"]
+  API --> Rec["Recognition worker<br/>(Gemini, opt-in per canvas)"]
+  API --> Run["Ask runner (optional)<br/>claude headless"]
+  MCP["MCP server (stdio)<br/>inkbridge-mcp"] -->|HTTP only| API
+  Agent["Claude Desktop / Code"] <--> MCP
+  Agent -->|"export skill writes notes"| Vault[("Markdown vault")]
+  Run --> MCP
+```
+
+Ink flows browser -> device journal -> API (per-element merge, chunker) -> chunks. Agent output flows the
+other way as drafts held in the op queue until you Accept, which writes them into the scene in one transaction.
+
+## Setup
+
+You need Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js with npm, and optionally the
+[Claude Code](https://claude.com/claude-code) CLI for the agent side.
+
+```bash
+git clone https://github.com/Srikar-V675/inkbridge && cd inkbridge
+make install                      # uv sync (server) + npm install (web)
+make serve                        # builds the web app, then API + app on :8000
+```
+
+Open `http://localhost:8000/` (canvases home) or `http://localhost:8000/?canvas=default` on the laptop.
+
+**Tablet.** Use the laptop's LAN name or IP: `http://<laptop>.local:8000/?canvas=default`, and set
+`INKBRIDGE_PUBLIC_URL=http://<laptop>.local:8000` so deep links in notes open there. One finger pans, two
+pinch-zoom, the pen draws. For every pen sample the browser needs a secure context, so for the best pen feel
+run `make serve-https` instead (port 4173; it makes a private CA in `data/tls/`, trust `data/tls/inkbridge-ca.crt`
+on the tablet once).
+
+**Agents.** Register the MCP server once, then any Claude session can read and draw on your canvas:
+
+```bash
+claude mcp add --scope user inkbridge -- uv run --directory "$PWD/server" inkbridge-mcp
+make install-skill                # link the export skill into ~/.claude/skills
+```
+
+Set `INKBRIDGE_VAULT` to your vault folder and ask Claude to "export my inkbridge canvas to the vault".
+Tools are listed in [docs/mcp-tools.md](docs/mcp-tools.md); the note format in [docs/vault-note-format.md](docs/vault-note-format.md).
+
+Settings are plain environment variables (the server does not read `.env`; `.env.example` lists them, so
+`set -a; . ./.env; set +a` before `make serve`). Optional features, all off until set: handwriting recognition (`GEMINI_API_KEY` plus
+`INKBRIDGE_RECOGNIZE_DOCUMENTS=<canvas ids>`; test pages only, the free tier may train on them), the Ask runner
+(`INKBRIDGE_RUNNER=claude`, see `.env.example`), and offers beside your ink (`INKBRIDGE_QUIET_S`).
+
+## Develop
+
+```bash
+make dev-server   # API on :8000 with reload
+make dev-web      # Vite on :5173 (proxies the API)
+make test         # server pytest + web tests
+make lint         # ruff, oxlint, tsc
+```
 
 ## Layout
 
@@ -23,23 +82,9 @@ and [Technical reference v3](https://claude.ai/artifact/1uMmVHEyuvb2uS5Dgutaqy);
 | `web/` | Vite + React + Excalidraw frontend |
 | `server/` | Python package `inkbridge`: `api/` (FastAPI), `db/`, `recognizer/`, `mcp/` |
 | `eval/` | Evaluation set, questions, scripts, results |
-| `docs/` | v1 project doc, MCP tool reference, decision notes |
+| `docs/` | MCP tool reference, vault note format, decision notes, v1 project doc |
+| `skills/` | The `inkbridge-export` skill |
 | `data/` | Runtime state, gitignored |
-
-## Run
-
-```bash
-make install
-make dev-server   # API on :8000
-make dev-web      # canvas on :5173
-make serve        # build web, then API + app on :8000 (tablet: http://<laptop>:8000/?canvas=default)
-make install-skill   # link the export skill into ~/.claude/skills (all sessions)
-make test
-```
-
-The tablet URL moves from 5173 to 8000 when you use `make serve`; `make dev-web` stays for development.
-Links default to `http://localhost:8000`. For the tablet set `INKBRIDGE_PUBLIC_URL=http://<laptop>.local:8000`
-(a LAN name survives an IP change). `make dev-web` users on :5173 set it to the 5173 URL.
 
 ## Privacy
 
