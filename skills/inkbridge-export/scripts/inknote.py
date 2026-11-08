@@ -13,6 +13,8 @@ the markers, and every block that did not change, stays byte-identical.
     inknote.py sync     NOTE [--api URL] [--wait S]             # POST check_sync, prints result
     inknote.py plan     NOTE SYNC_JSON                          # which blocks need new words
     inknote.py apply    NOTE SYNC_JSON CANVAS_JSON BODIES_JSON [--vault DIR] [--recreate] [--out NOTE]
+    inknote.py learn    NOTE --vault DIR     # record the user's edits, propose style rules (INK-142)
+    inknote.py rules    --vault DIR          # approved style rules as JSON (INK-142)
 
 BODIES_JSON maps chunk id -> markdown for the block (no markers). The API is never asked to
 write anything except check_sync's recognition cache; the note is written by this script, i.e.
@@ -27,6 +29,7 @@ import itertools
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -171,7 +174,7 @@ def _vault_errors(text: str) -> list[str]:
         errors.append("frontmatter needs a 'date: YYYY-MM-DD' line")
     for ln in lines:
         if ln.startswith("index:") and not re.fullmatch(r'index: "\[\[[^\]\n"]+\]\]"', ln):
-            errors.append(f"index must look like index: \"[[Name.base]]\", got {ln!r}")
+            errors.append(f'index must look like index: "[[Name.base]]", got {ln!r}')
     if not after.startswith("> [!info]- For future agent"):
         errors.append("the '> [!info]- For future agent' callout must follow the frontmatter")
     return errors
@@ -266,7 +269,9 @@ def _check_words(label: str, words: str) -> None:
     """Notes follow the vault's writing style (_CLAUDE.md): no em/en dashes, arrows or emoji."""
     for line in words.splitlines():
         if BANNED_RE.search(line):
-            raise NoteError(f"{label}: use '-', '->' and commas, not dashes, arrows or emoji: {line!r}")
+            raise NoteError(
+                f"{label}: use '-', '->' and commas, not dashes, arrows or emoji: {line!r}"
+            )
 
 
 def _check_markers(cid: str, words: str) -> None:
@@ -334,7 +339,11 @@ def _edited(text: str, note: Note, cid: str) -> bool:
 def _conflict_callout(cid: str, words: str) -> str:
     _check_words(f"chunk {cid}", words)
     _check_markers(cid, words)
-    head = [CONFLICT_HEAD, "> The new reading is below. Merge it by hand, then delete this callout.", ">"]
+    head = [
+        CONFLICT_HEAD,
+        "> The new reading is below. Merge it by hand, then delete this callout.",
+        ">",
+    ]
     quoted = [("> " + ln).rstrip() for ln in words.strip("\n").splitlines()]
     return "\n".join(head + quoted) + "\n\n"
 
@@ -540,7 +549,9 @@ def apply(
             c = chunk(item["id"], item)
             rendered = render_block(c, bodies[item["id"]], vault)
             edits.append((b.start, b.end, rendered))
-            e.update(hash=item["hash"], reading=item["reading"], body=_entry(c, None, rendered)["body"])
+            e.update(
+                hash=item["hash"], reading=item["reading"], body=_entry(c, None, rendered)["body"]
+            )
             changed_meta = True
     for item in sync.get("replaced", []):
         b, e = blocks.get(item["id"]), note.entry(item["id"])
@@ -674,6 +685,216 @@ def _load(path: str) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+# -- learning from edits (INK-142, decision 0103) ----------------------------------------------
+# Rules only ever affect the words the agent writes. Nothing here touches markers, `body`,
+# hashes or apply/validate, and the note itself is never written by `learn`.
+
+RULE_KINDS = ("heading_question", "heading_level", "crop_removed")
+PROPOSE_AT = 3
+PROFILE = "meta/Inkbridge Export Profile.md"
+OBSERVED = "## Observed edits"
+PROPOSALS = "## Proposals"
+SOURCE_INK = "> [!ink]- Source ink"
+OBSERVED_RE = re.compile(
+    r"^- (\d{4}-\d{2}-\d{2}) (\w+) (.+?)#([A-Za-z0-9_-]+) ([0-9a-f]{8})$", re.MULTILINE
+)
+PROPOSAL_RE = re.compile(r"^### (\d{4}-\d{2}-\d{2}) (\w+)[ \t]*$", re.MULTILINE)
+
+
+def _run_git(note: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(note.parent), *args],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _git_revisions(note: Path) -> list[str]:
+    out = _run_git(note, "log", "--format=%H", "--", note.name)
+    return out.split() if out else []
+
+
+def _git_show(note: Path, rev: str) -> str | None:
+    prefix = _run_git(note, "rev-parse", "--show-prefix")
+    if prefix is None:
+        return None
+    return _run_git(note, "show", f"{rev}:{prefix.strip()}{note.name}")
+
+
+def _old_interior(note: Path, cid: str, body_hash: str) -> str | None:
+    for rev in _git_revisions(note):
+        text = _git_show(note, rev)
+        if text is None:
+            continue
+        try:
+            n = parse(text)
+        except NoteError:
+            continue
+        b = n.block(cid)
+        if b and _body_hash(text[b.body_start : b.body_end]) == body_hash:
+            interior = text[b.body_start : b.body_end]
+            return interior[_managed_prefix_len(interior) :]
+    return None
+
+
+def _first_heading(text: str) -> str | None:
+    return next((ln.rstrip() for ln in text.splitlines() if HEADING_RE.match(ln)), None)
+
+
+def classify(old: str, new: str) -> list[dict]:
+    """Which known patterns the edit from `old` to `new` shows (closed set RULE_KINDS)."""
+    found = []
+    oh, nh = _first_heading(old), _first_heading(new)
+    if oh and nh and oh != nh:
+        o_title, n_title = HEADING_RE.match(oh)["title"], HEADING_RE.match(nh)["title"]
+        if not o_title.endswith("?") and n_title.endswith("?"):
+            found.append({"kind": "heading_question", "before": oh, "after": nh})
+        if len(oh) - len(oh.lstrip("#")) != len(nh) - len(nh.lstrip("#")):
+            found.append({"kind": "heading_level", "before": oh, "after": nh})
+    if SOURCE_INK in old.splitlines() and SOURCE_INK not in new.splitlines():
+        found.append({"kind": "crop_removed", "before": SOURCE_INK, "after": ""})
+    return found
+
+
+def find_edits(note: Path, with_missing: bool = False):
+    """Blocks the user edited since the skill wrote them: [{chunk, old, new}], old from vault git.
+    Blocks with no stored body hash or no matching git revision are skipped (and listed in
+    `missing` when asked for)."""
+    text = note.read_text(encoding="utf-8")
+    n = parse(text)
+    edits, missing = [], []
+    for e in n.meta["chunks"]:
+        b = n.block(e["id"])
+        if not (b and "body" in e):
+            continue
+        interior = text[b.body_start : b.body_end]
+        if _body_hash(interior) == e["body"]:
+            continue
+        old = _old_interior(note, e["id"], e["body"])
+        if old is None:
+            missing.append(e["id"])
+            continue
+        edits.append(
+            {"chunk": e["id"], "old": old, "new": interior[_managed_prefix_len(interior) :]}
+        )
+    return (edits, missing) if with_missing else edits
+
+
+def _append_to_section(text: str, heading: str, block: str) -> str:
+    """Insert `block` after the last non-blank line of the section, or add the section at the end.
+    Nothing else in `text` moves."""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if ln.rstrip() == heading), None)
+    if start is None:
+        sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
+        return f"{text}{sep}{heading}\n\n{block}"
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    last = end
+    while last > start + 1 and not lines[last - 1].strip():
+        last -= 1
+    if last == start + 1:  # empty section
+        return "".join(lines[: start + 1]) + "\n" + block + "".join(lines[start + 1 :])
+    prefix = "".join(lines[:last])
+    if not prefix.endswith("\n"):
+        prefix += "\n"
+    return prefix + block + "".join(lines[last:])
+
+
+def _profile_section(text: str, heading: str) -> str:
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, ln in enumerate(lines) if ln.rstrip() == heading), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "".join(lines[start + 1 : end])
+
+
+def _proposals(text: str) -> list[dict]:
+    body = _profile_section(text, PROPOSALS)
+    marks = list(PROPOSAL_RE.finditer(body))
+    out = []
+    for i, m in enumerate(marks):
+        chunk = body[m.end() : marks[i + 1].start() if i + 1 < len(marks) else len(body)]
+        field = {
+            k: (re.search(rf"^- {k}:[ \t]*(.*?)[ \t]*$", chunk, re.MULTILINE) or [None, ""])[1]
+            for k in ("Status", "Before", "After")
+        }
+        out.append({"kind": m[2], "status": field["Status"].lower(), **field})
+    return out
+
+
+def _confidence(n: int) -> str:
+    return "low" if n < 4 else "medium" if n < 6 else "high"
+
+
+def learn(note: Path, vault: Path, today: str | None = None) -> dict:
+    """Record the user's edits of this note in the profile and propose a rule once PROPOSE_AT
+    distinct blocks show the same pattern. Writes only the profile."""
+    today = today or datetime.now(UTC).date().isoformat()
+    note = Path(note)
+    profile = Path(vault) / PROFILE
+    text = profile.read_text(encoding="utf-8") if profile.is_file() else ""
+    edits, missing = find_edits(note, with_missing=True)
+    seen = {(m[2], m[4], m[5]) for m in OBSERVED_RE.finditer(text)}
+    lines, snippets = [], {}
+    for e in edits:
+        sha = hashlib.sha256(e["new"].encode()).hexdigest()[:8]
+        for c in classify(e["old"], e["new"]):
+            snippets.setdefault(c["kind"], c)
+            if (c["kind"], e["chunk"], sha) not in seen:
+                seen.add((c["kind"], e["chunk"], sha))
+                lines.append(f"- {today} {c['kind']} {note.stem}#{e['chunk']} {sha}\n")
+    if lines:
+        text = _append_to_section(text, OBSERVED, "".join(lines))
+    proposed, block = [], ""
+    known = {p["kind"] for p in _proposals(text)}
+    for kind in RULE_KINDS:
+        labels = {}
+        for m in OBSERVED_RE.finditer(text):
+            if m[2] == kind:
+                labels.setdefault(m[4], f"{m[3]}#{m[4]}")
+        if len(labels) < PROPOSE_AT or kind in known:
+            continue
+        snip = snippets.get(kind, {"before": "see the note", "after": "see the note"})
+        block += (
+            f"### {today} {kind}\n- Status: proposed\n- Before: {snip['before']}\n"
+            f"- After: {snip['after']}\n- Evidence: {len(labels)} edits ({', '.join(labels.values())})\n"
+            f"- Confidence: {_confidence(len(labels))}\n\n"
+        )
+        proposed.append(kind)
+    for heading in (OBSERVED, PROPOSALS):  # both sections exist once the profile does
+        if not any(ln.rstrip() == heading for ln in text.splitlines()) and (edits or text):
+            text = _append_to_section(text, heading, "")
+    if block:
+        text = _append_to_section(text, PROPOSALS, block)
+    if not text.endswith("\n") and text:
+        text += "\n"
+    if (text or proposed or lines) and (
+        not profile.is_file() or text != profile.read_text(encoding="utf-8")
+    ):
+        _atomic(profile, text.encode("utf-8"))
+    observed = len(OBSERVED_RE.findall(text))
+    return {"observed": observed, "new": len(lines), "proposed": proposed, "no_history": missing}
+
+
+def rules(vault: Path) -> list[dict]:
+    """Approved proposals of a known kind, for the agent to follow when writing words."""
+    profile = Path(vault) / PROFILE
+    if not profile.is_file():
+        return []
+    return [
+        {"kind": p["kind"], "before": p["Before"], "after": p["After"]}
+        for p in _proposals(profile.read_text(encoding="utf-8"))
+        if p["status"] == "approved" and p["kind"] in RULE_KINDS
+    ]
+
+
 def _read(path: str) -> str:
     with open(path, encoding="utf-8", newline="") as f:  # no newline translation
         return f.read()
@@ -735,6 +956,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--vault")
     s.add_argument("--recreate", action="store_true")
     s.add_argument("--out")
+    s = sub.add_parser("learn")
+    s.add_argument("note")
+    s.add_argument("--vault", required=True)
+    s = sub.add_parser("rules")
+    s.add_argument("--vault", required=True)
     a = p.parse_args(argv)
     try:
         if a.cmd == "canvas":
@@ -746,7 +972,9 @@ def main(argv: list[str] | None = None) -> int:
         elif a.cmd == "new":
             vault = Path(a.vault) if a.vault else None
             if a.out and Path(a.out).exists():
-                raise NoteError(f"{a.out} exists; use plan/apply to re-export it, or pick another title")
+                raise NoteError(
+                    f"{a.out} exists; use plan/apply to re-export it, or pick another title"
+                )
             note = new_note(_load(a.canvas), a.title, _load(a.bodies), vault, a.index, a.relates)
             _write(note, a.out)
         elif a.cmd == "validate":
@@ -768,6 +996,10 @@ def main(argv: list[str] | None = None) -> int:
             vault = Path(a.vault) if a.vault else None
             out = apply(text, _load(a.sync), _load(a.canvas), _load(a.bodies), vault, a.recreate)
             _write(out, a.out, a.note)
+        elif a.cmd == "learn":
+            print(json.dumps(learn(Path(a.note), Path(a.vault)), indent=2))
+        elif a.cmd == "rules":
+            print(json.dumps(rules(Path(a.vault)), indent=2))
     except NoteError as e:
         print(f"inknote: {e}", file=sys.stderr)
         return 2
