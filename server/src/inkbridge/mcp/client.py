@@ -149,6 +149,17 @@ class ApiClient:
     def get_image(self, region_id: str) -> bytes:
         return self._get(f"/regions/{quote(region_id, safe='')}/image").content
 
+    def get_markup(self, document_id: str, diagram_id: str) -> dict:
+        return self._json(self._get(self._markup_path(document_id, diagram_id)))
+
+    def get_markup_image(self, document_id: str, diagram_id: str) -> bytes:
+        return self._get(self._markup_path(document_id, diagram_id) + ".png").content
+
+    @staticmethod
+    def _markup_path(document_id: str, diagram_id: str) -> str:
+        doc, did = quote(document_id, safe=""), quote(diagram_id, safe="")
+        return f"/documents/{doc}/diagrams/{did}/markup"
+
     def get_ink(self, region_id: str) -> dict:
         return self._json(self._get(f"/regions/{quote(region_id, safe='')}/ink"))
 

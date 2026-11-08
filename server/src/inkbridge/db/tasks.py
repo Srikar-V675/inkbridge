@@ -16,10 +16,11 @@ CLAIM_TTL_S = 15 * 60  # a client that claimed and went silent loses the task (h
 MODES = {
     "question": {"types": ("write_text", "draw_diagram"), "limit": 3},
     "diagram": {"types": ("draw_diagram",), "limit": 2},
+    "markup": {"types": ("draw_diagram",), "limit": 1},
     "link": {"types": (), "limit": 0},
     "brief": {"types": (), "limit": 0},
 }
-OFFER_MODE = {"sketch": "diagram", "dangling_arrow": "link", "related": "link"}
+OFFER_MODE = {"sketch": "diagram", "markup": "markup", "dangling_arrow": "link", "related": "link"}
 
 
 class TaskNotFound(Exception):

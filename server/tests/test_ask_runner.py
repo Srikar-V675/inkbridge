@@ -530,3 +530,25 @@ def test_failure_clears_partial(client):
     row = client.get(f"/questions/{q['id']}").json()
     assert (row["partial_answer"], row["partial_seq"]) == (None, 0)
     assert seen[-1]["type"] == "question.update" and seen[-1]["question"]["partial_answer"] is None
+
+
+def test_markup_mode_allows_edit_diagram_only_there(tmp_path):
+    c = cfg(tmp_path)
+    allowed = flag(build_command(c, "markup"), "--allowedTools").split(",")
+    assert "mcp__inkbridge__edit_diagram" in allowed and "mcp__inkbridge__get_markup" in allowed
+    assert "edit_diagram" not in flag(build_command(c, "markup"), "--disallowedTools")
+    assert "edit_diagram" in flag(build_command(c, "question"), "--disallowedTools")
+
+
+def test_build_task_prompt_markup_names_tools():
+    from inkbridge.agent.ask_runner import build_task_prompt
+
+    t = {
+        "id": "t1", "kind": "offer", "mode": "markup", "document_id": "default", "op_limit": 1,
+        "input": {"anchor_chunk": "c1", "reason": "Apply mark-up?",
+                  "payload": {"diagram": "dg1", "markup": True}},
+    }  # fmt: skip
+    p = build_task_prompt(t)
+    assert "get_markup" in p and "edit_diagram" in p and "dg1" in p
+    assert "dg1" in p.split("<untrusted_data>")[0]
+    assert "Apply mark-up?" in p.split("<untrusted_data>")[1]

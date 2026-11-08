@@ -14,6 +14,7 @@ from typing import Any
 
 from inkbridge.agent import placement
 from inkbridge.agent.attention import attention
+from inkbridge.canvas import boxes
 from inkbridge.canvas.hashes import bbox_of
 from inkbridge.db import diagrams, scenes
 from inkbridge.db.common import _now
@@ -224,9 +225,19 @@ def accept_op(
 
     def finish(c, head):
         stamps = {e["id"]: [e["version"], e["versionNonce"]] for e in out[:n_new]}
+        # ids of live elements already overlapping the new shapes: ink that was there before
+        # Accept, so touching it later is not mark-up (INK-141, decision 0102)
+        mine = boxes.box(out[:n_new])
+        near = []
+        for r in c.execute(
+            "SELECT id, json FROM scene_elements WHERE document_id=? AND is_deleted=0",
+            (op["document_id"],),
+        ):
+            if r["id"] not in stamps and boxes.intersects(boxes.box([json.loads(r["json"])]), mine):
+                near.append(r["id"])
         c.execute(
             "UPDATE agent_ops SET status='accepted', resolved_at=?, result_json=? WHERE id=?",
-            (now, json.dumps({"seq": head, "stamps": stamps, "at": now}), op_id),
+            (now, json.dumps({"seq": head, "stamps": stamps, "at": now, "near": near}), op_id),
         )
         if op.get("diagram_id"):
             diagrams.commit_version(c, op)
