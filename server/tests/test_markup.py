@@ -155,7 +155,9 @@ def markup_task(client):
     run_detectors()
     (o,) = [o for o in offers(client) if o["kind"] == "markup"]
     assert client.post(f"/offers/{o['id']}/tap").status_code == 200
-    (t,) = [t for t in client.get("/documents/default/tasks").json()["tasks"] if t["mode"] == "markup"]
+    (t,) = [
+        t for t in client.get("/documents/default/tasks").json()["tasks"] if t["mode"] == "markup"
+    ]
     return op, t
 
 
@@ -187,9 +189,7 @@ def test_markup_png_is_png_with_ink_colour(client):
     assert r.status_code == 200 and r.content.startswith(b"\x89PNG")
     img = Image.open(io.BytesIO(r.content)).convert("RGB")
     want = (0xD3, 0x2F, 0x2F)
-    assert any(
-        all(abs(a - b) < 40 for a, b in zip(p, want, strict=True)) for p in img.getdata()
-    )
+    assert any(all(abs(a - b) < 40 for a, b in zip(p, want, strict=True)) for p in img.getdata())
     assert client.get("/documents/default/diagrams/nope/markup.png").status_code == 404
 
 

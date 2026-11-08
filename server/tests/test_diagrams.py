@@ -209,4 +209,5 @@ def test_runner_denies_edit_diagram_by_default():
     from inkbridge.agent import ask_runner
 
     assert "edit_diagram" in ask_runner.ALL_INKBRIDGE_WRITE
-    assert all("edit_diagram" not in t for t in ask_runner.MODE_TOOLS.values())
+    assert all("edit_diagram" not in t for m, t in ask_runner.MODE_TOOLS.items() if m != "markup")
+    assert "edit_diagram" in ask_runner.MODE_TOOLS["markup"]
