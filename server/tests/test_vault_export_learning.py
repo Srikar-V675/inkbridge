@@ -198,4 +198,7 @@ def test_a_title_with_spaces_is_counted_once(vault):
     assert r["observed"] == 3 and r["proposed"] == ["heading_question"]
     again = inknote.learn(spaced, v, today="2026-11-09")
     assert again["observed"] == 3 and again["new"] == 0 and again["proposed"] == []
-    assert len(re.findall(r"^- .* Gradient Descent#", profile_text(v), re.M)) == 3
+    assert (
+        len(re.findall(r"^- \d{4}-\d\d-\d\d \w+ Gradient Descent#", profile_text(v), re.MULTILINE))
+        == 3
+    )
