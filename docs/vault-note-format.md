@@ -123,3 +123,39 @@ by hand and deletes the callout. Because `body` is unchanged, the block stays pr
 reading move to the new values at once, so deleting the callout without merging hides the drift.
 
 If nothing needs doing, the file is left byte-identical and `exported` is not touched.
+
+## Export profile
+
+`<vault>/meta/Inkbridge Export Profile.md` is the user's file. The helper (`inknote.py learn`)
+only appends inside two sections it creates when missing, `## Observed edits` and `## Proposals`;
+every other byte is left alone. Learning never writes the note.
+
+An edit is a block whose entry has `body` and whose current interior hashes differently. The old
+text is the first revision in the vault's git history of the note whose block hashes to `body`; with
+no repository or no such revision the block is skipped (`no_history`).
+
+Kinds (closed set): `heading_question` (first heading became a question), `heading_level` (heading
+level changed), `crop_removed` (the `Source ink` callout was removed).
+
+Observed line (one per kind, block and new text; repeats are skipped):
+
+```
+- 2026-11-08 heading_question Optimisation#<chunk_id> <sha8 of the new text>
+```
+
+When 3 distinct blocks show one kind and the kind has no `###` heading in `## Proposals` yet (any
+status, so a rejected one is not proposed again), the helper appends:
+
+```
+### 2026-11-08 heading_question
+- Status: proposed
+- Before: ## gradient descent
+- After: ## What is gradient descent?
+- Evidence: 3 edits (Optimisation#a0, Optimisation#b0, Optimisation#c0)
+- Confidence: low
+```
+
+Confidence is low for 3 edits, medium for 4 to 5, high for 6 or more. The user approves by changing
+the line to `- Status: approved`; anything else is inert. `inknote.py rules` prints approved
+proposals of a known kind as JSON, and the agent follows them when writing words. Rules never reach
+markers, `body`, hashes, provenance or `apply`/`validate`.

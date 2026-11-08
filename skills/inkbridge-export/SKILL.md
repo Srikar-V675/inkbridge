@@ -19,6 +19,8 @@ if anything below is unclear.
 - Do not recreate a block the user deleted unless they ask you to.
 - Read `$INKBRIDGE_VAULT/_CLAUDE.md` at the start of every export. The vault's rules win over this
   skill's defaults for folders, frontmatter and writing style.
+- Edits to the export profile are only the helper's appends and the user's own. Never set
+  `Status: approved` yourself.
 - Do not write a daily note, a board or a task, and never overwrite the vault's `index.md`.
 - Never overwrite a block the user edited. The helper detects it (the entry's `body` hash) and
   writes a conflict callout instead; tell the user which blocks have one.
@@ -37,6 +39,8 @@ if anything below is unclear.
   obviously continues (optional).
 - **API:** `$INKBRIDGE_API_URL` (default `http://127.0.0.1:8000`); the canvas id is
   `$INKBRIDGE_DOCUMENT` (default `default`) unless the user names one.
+- **Export profile:** `$INKBRIDGE_VAULT/meta/Inkbridge Export Profile.md` holds what the helper
+  has seen the user change and the style rules the user approved (`rules` prints them).
 - **Helper:** `scripts/inknote.py` inside this skill's directory (the folder this SKILL.md was loaded
   from; Claude Code prints it as "Base directory for this skill"). It needs only Python 3.11+ and
   works from any working directory. Write its JSON inputs to a scratch folder, not into the vault.
@@ -60,7 +64,8 @@ If it is not there, ask the user for the repo path.
    `get_region` with its id and read the crop yourself.
 3. Save the outline for the helper: `python3 $H canvas --document ID > /tmp/inkb/canvas.json`.
    This is the same data as `read_canvas`, as JSON.
-4. Write the words of each block into `/tmp/inkb/bodies.json` as `{chunk_id: markdown}`. Make it a
+4. First run `python3 $H rules --vault "$INKBRIDGE_VAULT"` and follow the approved rules when writing words (heading style, whether to keep the source-ink callout); they never change markers, provenance or the safety rules above.
+   Then write the words of each block into `/tmp/inkb/bodies.json` as `{chunk_id: markdown}`. Make it a
    real study note, not a transcript:
    - Start a block with a heading (`##` or `###`) when it opens a topic; that heading becomes its
      `section`.
@@ -80,6 +85,9 @@ If it is not there, ask the user for the repo path.
 
 ## Re-export (sync an existing note)
 
+0. `python3 $H learn NOTE.md --vault "$INKBRIDGE_VAULT"` before anything else. If it lists
+   `proposed`, tell the user a proposal is waiting in `meta/Inkbridge Export Profile.md`; never
+   approve one yourself.
 1. `python3 $H sync NOTE.md > /tmp/inkb/sync.json`. This calls `check_sync`; with MCP only, call the
    `check_sync` tool with the frontmatter `chunks` (`id`, `hash`, `reading`; skip entries that have
    a `status`).
@@ -98,7 +106,7 @@ If it is not there, ask the user for the repo path.
    - `append`: new chunks, added at the end of the note.
    - `user_deleted`: the user removed the block; it is left out unless they ask for it back.
    - `needs_body`: the chunk ids you must write words for (`conflict` ids are in it, like `rewrite`).
-3. Refresh the canvas JSON (`canvas` command), read the chunks listed in `needs_body` (with
+3. Refresh the canvas JSON (`canvas` command), run `python3 $H rules --vault "$INKBRIDGE_VAULT"` and follow the approved rules when writing words (heading style, whether to keep the source-ink callout); they never change markers, provenance or the safety rules above. Read the chunks listed in `needs_body` (with
    `read_canvas` / `get_region` as above), and write only those into `/tmp/inkb/bodies.json`.
    `changed` with `reading: null` means no machine reading came back in time: look at the crop with
    `get_region`.
@@ -122,3 +130,5 @@ Follow `docs/vault-note-format.md` by hand:
   line of JSON.
 - Write one marker block per chunk.
 - On re-export, edit only the blocks and the `inkbridge:` line that `check_sync` points at.
+
+Learning (the export profile and `rules`) needs the helper; without it, skip learning.
