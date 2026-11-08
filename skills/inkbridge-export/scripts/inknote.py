@@ -696,7 +696,7 @@ OBSERVED = "## Observed edits"
 PROPOSALS = "## Proposals"
 SOURCE_INK = "> [!ink]- Source ink"
 OBSERVED_RE = re.compile(
-    r"^- (\d{4}-\d{2}-\d{2}) (\w+) (\S+)#([A-Za-z0-9_-]+) ([0-9a-f]{8})$", re.MULTILINE
+    r"^- (\d{4}-\d{2}-\d{2}) (\w+) (.+?)#([A-Za-z0-9_-]+) ([0-9a-f]{8})$", re.MULTILINE
 )
 PROPOSAL_RE = re.compile(r"^### (\d{4}-\d{2}-\d{2}) (\w+)[ \t]*$", re.MULTILINE)
 

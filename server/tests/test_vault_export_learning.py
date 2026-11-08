@@ -186,3 +186,16 @@ def test_cli_learn_then_rules(vault, capsys):
     assert [r["kind"] for r in got] == ["heading_question"]
     assert inknote.main(["validate", str(note)]) == 0
     assert json.loads(capsys.readouterr().out)["valid"] is True
+
+
+def test_a_title_with_spaces_is_counted_once(vault):
+    v, note = vault
+    spaced = note.with_name("Gradient Descent.md")
+    git(v, "mv", str(note), str(spaced))
+    git(v, "commit", "-m", "rename")
+    edit_headings(spaced, 3)
+    r = inknote.learn(spaced, v, today="2026-11-08")
+    assert r["observed"] == 3 and r["proposed"] == ["heading_question"]
+    again = inknote.learn(spaced, v, today="2026-11-09")
+    assert again["observed"] == 3 and again["new"] == 0 and again["proposed"] == []
+    assert len(re.findall(r"^- .* Gradient Descent#", profile_text(v), re.M)) == 3
