@@ -7,32 +7,13 @@ import json
 import sqlite3
 from datetime import datetime, timedelta
 
-from inkbridge.canvas import raster
+from inkbridge.canvas import boxes, raster
 from inkbridge.db import ops as ops_db
 
 MARKUP_WINDOW_S = 1800  # hypothesis: ink later than this after Accept is not read as mark-up
 MARKUP_INK = "#D32F2F"  # crop only: new ink in red so the agent can tell it from the diagram
 
-Box = tuple[float, float, float, float]  # x0, y0, x1, y1
-
-
-def _box(elements: list[dict]) -> Box | None:
-    """Union bbox over x, y, width, height; None for an empty list."""
-    if not elements:
-        return None
-    return (
-        min(e["x"] for e in elements),
-        min(e["y"] for e in elements),
-        max(e["x"] + e.get("width", 0) for e in elements),
-        max(e["y"] + e.get("height", 0) for e in elements),
-    )
-
-
-def _intersects(a: Box | None, b: Box | None) -> bool:
-    """Boxes that overlap or touch."""
-    if a is None or b is None:
-        return False
-    return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
+_box, _intersects = boxes.box, boxes.intersects
 
 
 def _live_rows(conn: sqlite3.Connection, document_id: str) -> list[tuple[int, str, dict]]:
@@ -61,19 +42,21 @@ def ink_over(
 ) -> list[tuple[int, dict]]:
     """User ink drawn after the diagram was accepted whose box overlaps it, as (seq, element)."""
     since = accepted_at(conn, diagram)
+    result = ops_db.get_op(conn, diagram["current_op"]).get("result") or {}
+    near = result.get("near")  # ids that already overlapped the diagram at Accept; None = old op
     box = _box(diagram_elements(conn, diagram))
     if since is None or box is None:
         return []
-    until = (
-        None
-        if window_s is None
-        else (datetime.fromisoformat(since) + timedelta(seconds=window_s)).isoformat()
-    )
+    t0 = datetime.fromisoformat(since)
+    until = None if window_s is None else t0 + timedelta(seconds=window_s)
     out = []
     for seq, updated, e in _live_rows(conn, diagram["document_id"]):
         if (e.get("customData") or {}).get("author") == "agent":
             continue
-        if updated < since or (until is not None and updated > until):
+        if near is not None and e["id"] in near:
+            continue  # old ink, even if the user nudged or recoloured it since
+        t = datetime.fromisoformat(updated)
+        if t < t0 or (until is not None and t > until):
             continue
         if _intersects(_box([e]), box):
             out.append((seq, e))

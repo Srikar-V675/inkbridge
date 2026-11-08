@@ -258,3 +258,25 @@ def test_markup_end_to_end(client):
     assert of_kind("markup") == []
     r = client.post(OPS, json={"type": "draw_diagram", "payload": body})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "task_op_limit"
+
+
+def test_touched_old_ink_is_not_markup(client):
+    from tests.test_ops_api import seed
+
+    seed(client)
+    a = draw(client).json()
+    measure(client, a, n=3)
+    with closing(db.connect()) as conn:
+        y = ops_db.get_op(conn, a["id"])["elements"][0]["y"]
+    old = ink(client, y=y + 2)  # written over the placed draft, before Accept
+    assert accept(client, a["id"]).status_code == 200
+    assert of_kind("markup") == []
+    moved = {**old, "version": 2, "versionNonce": 2, "x": old["x"] + 3, "strokeColor": "#2F55B8"}
+    r = client.post(
+        "/documents/default/elements", json={"device": "d1", "batch": 9, "elements": [moved]}
+    )
+    assert r.status_code == 200
+    assert of_kind("markup") == []
+    ink(client, i=2, y=y + 4)  # a new stroke on the diagram still counts
+    (found,) = of_kind("markup")
+    assert found.payload["key"].endswith(":ink-2")
