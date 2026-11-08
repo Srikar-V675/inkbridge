@@ -19,6 +19,7 @@ from inkbridge.api import (
     chunks,
     debug,
     graph,
+    markup,
     memory,
     offers,
     ops,
@@ -90,6 +91,7 @@ async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResp
 app.include_router(canvases.router)
 app.include_router(chunks.router)
 app.include_router(graph.router)
+app.include_router(markup.router)
 app.include_router(offers.router)
 app.include_router(ops.router)
 app.include_router(overrides.router)

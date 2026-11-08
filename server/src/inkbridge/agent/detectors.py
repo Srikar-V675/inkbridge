@@ -9,12 +9,14 @@ import sqlite3
 from dataclasses import dataclass
 
 from inkbridge import db
+from inkbridge.agent import markup
 from inkbridge.canvas.sketch import read_sketch
 from inkbridge.db import diagrams as diagrams_db
 from inkbridge.db import offers as offers_db
 
 SCORE = {
     "question": 0.9,
+    "markup": 0.85,
     "stale_note": 0.8,
     "stale_diagram": 0.7,
     "sketch": 0.6,
@@ -106,6 +108,7 @@ def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     out += _stale_diagram(conn, document_id, chunks)
     out += _sketch(conn, document_id, chunks)
     out += _related(conn, document_id, chunks)
+    out += _markup(conn, document_id, all_chunks)
     return sorted(out, key=lambda c: -c.score)
 
 
@@ -227,3 +230,22 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
         seen.add(k)
         changed += expired
     return changed
+
+
+def _markup(conn: sqlite3.Connection, document_id: str, all_chunks: list[dict]) -> list[Candidate]:
+    # decision 0102: only accepted diagrams, ink in the window after Accept, one offer per burst
+    out = []
+    for d in diagrams_db.list_accepted(conn, document_id):
+        ink = markup.ink_over(conn, d)
+        if not ink:
+            continue
+        ids = {e["id"] for e in markup.diagram_elements(conn, d)}
+        anchor = next(
+            (c for c in all_chunks if c["source"] == "agent" and ids & set(c["element_ids"])), None
+        )
+        if anchor is None:
+            continue
+        first = min(ink, key=lambda t: t[0])[1]["id"]
+        payload = {"action": "diagram", "diagram": d["id"], "markup": True, "key": f"{d['id']}:{first}"}
+        out.append(_cand("markup", anchor["id"], payload, "Apply mark-up?"))
+    return out
