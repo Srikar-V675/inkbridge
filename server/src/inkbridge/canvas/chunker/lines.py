@@ -81,6 +81,18 @@ def _ink_below(
     return True  # two short elements: the box test already decided
 
 
+_SHAPES = {"rectangle", "diamond", "ellipse"}
+
+
+def _apart_shapes(a_el: dict, b_el: dict, a: Box, b: Box) -> bool:
+    """Two drawn shapes that do not overlap: near is not the same idea. Arrows decide (0106)."""
+    return (
+        a_el.get("type") in _SHAPES
+        and b_el.get("type") in _SHAPES
+        and not (a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3])
+    )
+
+
 def cluster_lines(
     elements: list[dict[str, Any]],
     config: ChunkerConfig,
@@ -130,6 +142,8 @@ def cluster_lines(
         a, b = boxes[i], boxes[j]
         if kind[i] == "scribble" or kind[j] == "scribble":  # a scribble joins what it overlaps
             return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
+        if _apart_shapes(live[i], live[j], a, b):
+            return False
         limit = _threshold(a, b, t, config, "underline" in (kind[i], kind[j]))
         if limit is None:
             return False
