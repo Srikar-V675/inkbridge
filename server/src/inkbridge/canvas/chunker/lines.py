@@ -262,7 +262,7 @@ def cluster_lines(
             if len(sub) > 1:
                 pending += sub
                 continue
-        groups += _cap(g, box_of, config)
+        groups += _cap(g, box_of, config, split_overlapping=False)
 
     # The cap may cut a label from its container: bound text goes back to its container's group.
     home = {i: gi for gi, g in enumerate(groups) for i in g}

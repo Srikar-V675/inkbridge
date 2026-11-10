@@ -61,9 +61,17 @@ def _own_scale(boxes: Sequence[tuple[float, float, float, float]], config: Chunk
 
 
 def _cap(
-    ids: list[str], boxes: Mapping[str, tuple[float, float, float, float]], config: ChunkerConfig
+    ids: list[str],
+    boxes: Mapping[str, tuple[float, float, float, float]],
+    config: ChunkerConfig,
+    *,
+    split_overlapping: bool = True,
 ):
-    """Cut a group wider or taller than max_extent * its own median at its largest gap, recursively."""
+    """Cut a group wider or taller than max_extent * its own median at its largest gap, recursively.
+
+    With `split_overlapping=False` (v2, INK-195) a group with no real gap to cut at (one
+    page-sized stroke overlaps everything) stays whole instead of shattering into singletons.
+    """
     xs = [boxes[i] for i in ids]
     limit = config.max_extent * _own_scale(xs, config)
     w = max(b[2] for b in xs) - min(b[0] for b in xs)
@@ -79,7 +87,10 @@ def _cap(
         if gap > best or (gap == best and abs(n - len(order) / 2) < abs(cut - len(order) / 2)):
             best, cut = gap, n
         reach = max(reach, boxes[i][axis + 2])
-    return _cap(order[:cut], boxes, config) + _cap(order[cut:], boxes, config)
+    if not split_overlapping and best <= 0:
+        return [sorted(ids)]  # nothing to cut at: one stroke overlaps all the rest
+    kw = {"split_overlapping": split_overlapping}
+    return _cap(order[:cut], boxes, config, **kw) + _cap(order[cut:], boxes, config, **kw)
 
 
 def _proximity(

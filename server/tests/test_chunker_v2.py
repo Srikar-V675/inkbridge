@@ -369,7 +369,9 @@ def test_link_confidence_orders_by_evidence():
         line("loose", 40, 25, 540, 330, index="a10"),
     ]
     # the headless one ends 36 px (1.8 T) above the far box of "more"
-    els[-1] = line("loose", 40, 25, 540, 300 - 4 - 36, index="a10")
+    els[-1] = pen(  # a hook at the tip is evidence, but weaker than a head
+        "loose", [(40, 25), (290, 130), (540, 300 - 4 - 36), (505, 300 - 4 - 36 - 2)], "a10"
+    )
     r = chunk_scene(els, ChunkerConfig.v2())
     rows = {x.element_id: x for x in r.link_rows}
     assert set(rows) == {"tight", "loose"}
@@ -406,3 +408,31 @@ def test_v2_overlapping_or_nested_shapes_still_join():
 def test_v2_text_near_a_shape_still_joins_by_proximity():
     text = {"id": "t", "type": "text", "x": 170, "y": 20, "width": 60, "height": 30, "text": "hi"}
     assert sets(v2([rect("r", 0, 0, 160, 70), text])) == {frozenset({"r", "t"})}
+
+
+def _curly(i, x, y, w=6000, h=3000, periods=2):
+    """A page-sized wavy freedraw: low net / path, few reversals, so it reads as writing."""
+    pts = [
+        (x + w * u, y + h / 2 + (h / 2) * math.sin(2 * math.pi * periods * u))
+        for u in (k / 80 for k in range(81))
+    ]
+    return pen(i, pts)
+
+
+def _block(prefix, x0, y0, lines=4, words=8, strokes=3, stroke_w=50, stroke_h=40, gap=20, pitch=100):
+    """Paragraph of short strokes: `gap` px between strokes, `pitch` px between line tops."""
+    out = []
+    for r in range(lines):
+        for w in range(words):
+            for s in range(strokes):
+                x = x0 + (w * strokes + s) * (stroke_w + gap)
+                out.append(word(f"{prefix}{r}-{w}-{s}", x, y0 + r * pitch, stroke_w))
+    return out
+
+
+def test_page_sized_curly_stroke_does_not_shatter_a_paragraph():
+    para = _block("p", 2000, 1000)
+    curls = [_curly(f"c{k}", 0, 200 + k * 50) for k in range(3)]
+    els = [*para, *curls]
+    assert all(analyse(els).kinds[c["id"]] == "writing" for c in curls)
+    assert len(chunk_scene(els, ChunkerConfig.v2()).chunks) <= 4

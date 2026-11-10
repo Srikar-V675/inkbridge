@@ -1,7 +1,8 @@
 """Stroke kinds (INK-121). Pure: no I/O, no model, not wired into the chunker yet (INK-122).
 
 Labels every live stroke from its shape alone: writing, container (a closed loop with ink
-inside), connector (a long straight or hooked stroke, or a native arrow/line), head (the small
+inside), connector (a long straight or hooked stroke with a head, a hook or a shape at an end, or a
+native arrow/line; a bare long stroke is writing, INK-195), head (the small
 stroke that makes an arrow's tip), underline (a flat stroke under writing) or scribble (a tight
 zigzag). Text, native shapes and anything else are never keys. Rotation is ignored.
 
@@ -82,17 +83,20 @@ def _scale(extents: list[float]) -> float:
 
 def _features(
     elements: list[dict[str, Any]],
-) -> tuple[list[_F], list[dict[str, Any]], list[Box]]:
-    """Live freedraw strokes in draw order, native arrows/lines, and native text boxes."""
+) -> tuple[list[_F], list[dict[str, Any]], list[Box], list[Box]]:
+    """Live freedraw strokes in draw order, native arrows/lines, text boxes and shape boxes."""
     live = [e for e in elements if usable(e) and not _dead(e)]
     idx = [e.get("index") if isinstance(e.get("index"), str) else None for e in live]
     feats: list[_F] = []
     natives: list[dict[str, Any]] = []
     texts: list[Box] = []
+    shapes: list[Box] = []
     for i in _order(idx):
         e = live[i]
         if e.get("type") in ("arrow", "line"):
             natives.append(e)
+        elif e.get("type") in ("rectangle", "ellipse", "diamond", "frame"):
+            shapes.append(bbox_of([e]))
         elif e.get("type") == "text":
             texts.append(bbox_of([e]))
         elif e.get("type") == "freedraw":
@@ -115,7 +119,7 @@ def _features(
                     cy=box["y"] + h / 2,
                 )
             )
-    return feats, natives, texts
+    return feats, natives, texts, shapes
 
 
 def _dead(e: dict[str, Any]) -> bool:
@@ -221,7 +225,7 @@ def _writing_above(u: _F, columns: dict[int, list[Box]], t: float) -> bool:
 
 
 def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
-    feats, natives, texts = _features(elements)
+    feats, natives, texts, shapes = _features(elements)
     kinds: dict[str, str] = {e["id"]: "connector" for e in natives}
     head_of: dict[str, str] = {}
     if not feats:
@@ -265,6 +269,15 @@ def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
     for hid in head_of:
         kinds[hid] = "head"
 
+    # A bare straight stroke is evidence of nothing; one that ends on a shape or a container loop
+    # is a link between two things (INK-195).
+    anchors = shapes + [f.box for f in feats if kinds.get(f.id) == "container"]
+    for f in shafts:
+        if f.id not in evidence and any(
+            _dist_point_box(p, a) <= HEAD_REACH * scale for p in (f.pts[0], f.pts[-1]) for a in anchors
+        ):
+            evidence.add(f.id)
+
     # Writing that an underline can sit under: small, not flat, not a head; native text too.
     columns: dict[int, list[Box]] = {}
     for f in rest:
@@ -273,7 +286,6 @@ def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
     for b in texts:
         columns.setdefault(_column(b["x"] + b["width"] / 2, scale), []).append(b)
 
-    shaft_ids = {f.id for f in shafts}
     for f in rest:
         if f.id in head_of:
             continue
@@ -281,8 +293,6 @@ def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
             kinds[f.id] = "connector"
         elif _flat(f) and f.extent >= UNDERLINE_MIN * scale and _writing_above(f, columns, scale):
             kinds[f.id] = "underline"
-        elif f.id in shaft_ids:
-            kinds[f.id] = "connector"
         else:
             kinds[f.id] = "writing"
     return StrokeKinds(kinds=kinds, head_of=head_of, scale=scale)

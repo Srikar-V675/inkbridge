@@ -173,10 +173,17 @@ def vee(i: str, x: float, y: float, index=None):
 
 
 def test_straight_long_stroke_is_connector():
-    result = analyse([line("s", 0, 0, 200, 40), line("forty", 0, 500, 40, 500), *field()])
+    els = [
+        line("s", 0, 0, 200, 40, index="a0"),
+        vee("vs", 190, 40, "a1"),
+        line("forty", 0, 500, 40, 500, index="a2"),
+        vee("vf", 30, 500, "a3"),
+        *field(),
+    ]
+    result = analyse(els)
     assert result.kinds["s"] == "connector"
     assert result.kinds["forty"] == "connector"
-    assert result.head_of == {}
+    assert result.head_of == {"vs": "s", "vf": "forty"}
 
 
 def test_arrow_with_separate_head():
@@ -205,7 +212,8 @@ def test_flat_stroke_under_writing_is_underline():
     flat = line("u", 0, 0, 200, 0)
     near = classify([flat, word("above", 80, -12), *field()])
     assert near["u"] == "underline"
-    far = classify([flat, word("above", 80, -100), *field()])
+    flat = line("u", 0, 0, 200, 0, index="a0")  # a head makes it a connector, not bare writing
+    far = classify([flat, vee("v", 190, 0, "a1"), word("above", 80, -100), *field()])
     assert far["u"] == "connector"
 
 
@@ -241,6 +249,7 @@ def test_head_claimed_once():
         line("s1", 0, 0, 200, 0, index="a0"),
         line("s2", 420, 0, 220, 0, index="a1"),
         vee("v", 205, 0, "a2"),
+        {"id": "box", "type": "rectangle", "x": 420, "y": -20, "width": 40, "height": 40},
         *field(),
     ]
     result = analyse(els)
@@ -349,3 +358,24 @@ def test_runs_under_20ms_for_824_elements():
         for k in ("container", "connector", "head", "underline", "scribble")
     }
     assert counts == {"container": 12, "connector": 18, "head": 14, "underline": 20, "scribble": 10}
+
+
+def test_long_straight_dash_among_writing_is_writing():
+    # 30 writing strokes, one straight 4 T dash with no head, hook or shape near it
+    els = [line("dash", 0, 0, 4 * 20, 0, index="z"), *field(30)]
+    # keep it off a writing line: not flat-under-writing either
+    assert analyse(els).kinds["dash"] == "writing"
+
+
+def test_straight_stroke_touching_a_shape_is_connector():
+    box = {
+        "id": "r",
+        "type": "rectangle",
+        "x": -40,
+        "y": -20,
+        "width": 40 - 4,
+        "height": 40,
+        "isDeleted": False,
+    }
+    els = [box, line("dash", 0, 0, 4 * 20, 0, index="z"), *field(30)]
+    assert analyse(els).kinds["dash"] == "connector"
