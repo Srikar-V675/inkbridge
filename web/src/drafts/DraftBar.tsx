@@ -8,6 +8,8 @@ import { draftOpId, type DraftElement } from "./drafts";
 import { offsetOf, type DraftStore, type PlacedOp } from "./draftStore";
 import { draftCard, failureText, jumpTarget, trayLabel, verdictToast } from "./draftUi";
 import { accept, fetchDrafts, reject, unaccept } from "./resolve";
+import { DraftPills } from "./DraftPills";
+import { cardOpIds, showBulk } from "./draftPills";
 import { Tether } from "./Tether";
 import { createGate } from "../lib/changeGate";
 import { Badge, DraftDot } from "../ui/Badge";
@@ -157,11 +159,12 @@ export function DraftBar({
     pending.current = ids; // show() flushed the previous batch; this one waits for its own toast
   };
 
-  const cardIds = new Set([...selected, ...(visible.length === 1 ? [visible[0].id] : [])]);
+  const cardIds = cardOpIds(selected, visible.map((o) => o.id));
   const cards = visible.filter((o) => cardIds.has(o.id));
   if (visible.length === 0 && !message && !toast) return null;
   return (
     <div className="ink-drafts">
+      <DraftPills api={api} ops={visible} busy={busy} onAccept={(o) => void acceptOps([o])} onReject={(o) => rejectOps([o])} />
       {cards.map((o) => o.payload.anchor_resolved && <Tether key={o.id} api={api} documentId={documentId} op={o} />)}
       <div className="ink-drafts__stack">
         {message && (
@@ -210,12 +213,16 @@ export function DraftBar({
             <Button variant="quiet" onClick={jump}>
               Jump
             </Button>
-            <Button variant="secondary" disabled={busy} onClick={() => void acceptOps(visible)}>
-              Accept all
-            </Button>
-            <Button variant="quiet" disabled={busy} onClick={() => rejectOps(visible)}>
-              Reject all
-            </Button>
+            {showBulk(visible.length) && (
+              <>
+                <Button variant="secondary" disabled={busy} onClick={() => void acceptOps(visible)}>
+                  Accept all
+                </Button>
+                <Button variant="quiet" disabled={busy} onClick={() => rejectOps(visible)}>
+                  Reject all
+                </Button>
+              </>
+            )}
           </div>
         )}
       </div>
