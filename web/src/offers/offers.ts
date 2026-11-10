@@ -10,10 +10,12 @@ export interface Offer {
   status: string;
 }
 
-export type Popover = "related" | "answer" | "generic";
+export type Popover = "related" | "answer" | "note" | "generic";
 export const popoverKind = (o: Offer): Popover =>
-  o.kind === "related" ? "related" : o.kind === "answer_ready" || typeof o.payload.question_id === "string" ? "answer" : "generic";
-export const chipLabel = (o: Offer): string => ({ related: "Related note", answer: "Answer ready", generic: o.reason })[popoverKind(o)];
+  o.kind === "to_note" ? "note" : o.kind === "related" ? "related" : o.kind === "answer_ready" || typeof o.payload.question_id === "string" ? "answer" : "generic";
+export const chipLabel = (o: Offer): string => ({ related: "Related note", answer: "Answer ready", note: o.reason, generic: o.reason })[popoverKind(o)];
+
+export const noteRequest = (canvas: string) => `Use the inkbridge-export skill to turn canvas "${canvas}" into a note.`;
 
 export const obsidianUrl = (vault: string, file: string) =>
   `obsidian://open?vault=${encodeURIComponent(vault)}&file=${encodeURIComponent(file)}`;

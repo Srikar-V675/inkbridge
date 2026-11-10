@@ -380,3 +380,29 @@ def test_link_confidence_orders_by_evidence():
 def test_v1_scene_still_ignores_new_fields():
     r = chunk_scene(hub_and_spoke(), ChunkerConfig())
     assert r.link_rows == [] and r.connector == []
+
+
+def flow(gap, w=160, h=70):
+    els = [rect(f"b{i}", i * (w + gap), 0, w, h) for i in range(4)]
+    els += [
+        arrow(f"a{i}", i * (w + gap) + w, 35, gap, start=f"b{i}", end=f"b{i + 1}") for i in range(3)
+    ]
+    return els
+
+
+# Arrows no longer than the median element are ticks and merge their boxes (techref 5.x).
+@pytest.mark.parametrize(
+    "gap,chunks,links", [(80, 1, 0), (160, 1, 0), (200, 4, 3), (240, 4, 3), (400, 4, 3)]
+)
+def test_v2_flowchart_boxes_are_separate_chunks_joined_by_links(gap, chunks, links):
+    r = chunk_scene(flow(gap), V2)
+    assert (len(r.chunks), len(r.links)) == (chunks, links)
+
+
+def test_v2_overlapping_or_nested_shapes_still_join():
+    assert sets(v2([rect("o", 0, 0, 300, 200), rect("i", 50, 50, 100, 60)])) == {frozenset("oi")}
+
+
+def test_v2_text_near_a_shape_still_joins_by_proximity():
+    text = {"id": "t", "type": "text", "x": 170, "y": 20, "width": 60, "height": 30, "text": "hi"}
+    assert sets(v2([rect("r", 0, 0, 160, 70), text])) == {frozenset({"r", "t"})}

@@ -1,5 +1,13 @@
 .PHONY: install dev-web dev-server serve serve-https install-skill test lint
 
+# make does not parse .env (quotes, spaces); source it in the shell instead (INK-194, decision 0109).
+# An empty INKBRIDGE_DATA_DIR= line would make the data dir the server directory, so it is unset.
+LOAD_ENV = set -a; if [ -f .env ]; then . ./.env; fi; set +a; [ -n "$$INKBRIDGE_DATA_DIR" ] || unset INKBRIDGE_DATA_DIR
+# The runner's MCP config, written for the origin being served (scripts/runner_config.py). Absolute,
+# because the server runs from server/ and the script from the repo root.
+RUNNER_CFG ?= data/runner-mcp.json
+RUNNER_CFG_PATH = cfg="$${INKBRIDGE_RUNNER_MCP_CONFIG:-$(RUNNER_CFG)}"; case "$$cfg" in /*) ;; *) cfg="$(CURDIR)/$$cfg";; esac
+
 install:
 	cd server && uv sync
 	cd web && npm install
@@ -15,6 +23,12 @@ KEEPALIVE ?= 65
 
 serve:
 	cd web && npm run build
+	$(LOAD_ENV); \
+	$(RUNNER_CFG_PATH); \
+	if [ "$$INKBRIDGE_RUNNER" = claude ]; then \
+	  python3 scripts/runner_config.py --origin http://127.0.0.1:8000 --out "$$cfg" || exit 1; \
+	  export INKBRIDGE_RUNNER_MCP_CONFIG="$$cfg"; \
+	fi; \
 	cd server && uv run uvicorn inkbridge.api:app --host 0.0.0.0 --port 8000 --timeout-keep-alive $(KEEPALIVE)
 
 # The same over HTTPS for the tablet (INK-181, decision 0076): a browser hands the page every pen
@@ -27,6 +41,12 @@ LAN_IP ?= $(shell ip -4 -o route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <
 serve-https:
 	scripts/lan-cert.sh
 	cd web && npm run build
+	$(LOAD_ENV); \
+	$(RUNNER_CFG_PATH); \
+	if [ "$$INKBRIDGE_RUNNER" = claude ]; then \
+	  python3 scripts/runner_config.py --origin https://127.0.0.1:$(HTTPS_PORT) --ca "$${INKBRIDGE_DATA_DIR:-data}/tls/inkbridge-ca.pem" --out "$$cfg" || exit 1; \
+	  export INKBRIDGE_RUNNER_MCP_CONFIG="$$cfg"; \
+	fi; \
 	cd server && INKBRIDGE_PUBLIC_URL=$${INKBRIDGE_PUBLIC_URL:-https://$(LAN_IP):$(HTTPS_PORT)} uv run uvicorn inkbridge.api:app --host 0.0.0.0 --port $(HTTPS_PORT) --timeout-keep-alive $(KEEPALIVE) --ssl-keyfile ../data/tls/lan.key --ssl-certfile ../data/tls/lan.pem
 
 # Symlink, so a git pull updates the skill; every Claude session sees it, not just this repo's.
