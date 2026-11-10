@@ -1,17 +1,12 @@
 """Gemini Flash-Lite (free tier) recognizer. Free-tier content may be used for training:
 only send test and eval pages, never personal notes."""
 
-import json
 import os
-import re
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
 
 from inkbridge.recognizer import (
-    KINDS,
-    BadResponse,
     InvalidApiKey,
     MissingApiKey,
     RateLimited,
@@ -19,6 +14,7 @@ from inkbridge.recognizer import (
     RecognizerError,
     RecognizerTimeout,
     ServiceUnavailable,
+    parse_reading,
 )
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
@@ -29,8 +25,6 @@ PROMPT = (
     '"kind": one of "handwriting", "equation", "diagram", "mixed"}. '
     "Do not add commentary."
 )
-
-_KIND_ALIASES = {"text": "handwriting", "math": "equation"}
 
 Transport = Callable[[bytes, str, str], str]  # (png, prompt, model) -> raw response text
 
@@ -97,27 +91,7 @@ class GeminiRecognizer:
         return message.replace(self._key, "***") if self._key else message
 
     def _parse(self, raw: str) -> Recognition:
-        body = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
-        try:
-            data: Any = json.loads(body)
-        except (ValueError, RecursionError):
-            raise BadResponse("model reply was not JSON") from None
-        # Models sometimes wrap the object in a list (one item per line or block).
-        items = data if isinstance(data, list) else [data]
-        if not items or not all(
-            isinstance(i, dict) and isinstance(i.get("text"), str) for i in items
-        ):
-            raise BadResponse("model reply is missing a string 'text'")
-        latexes = [i["latex"] for i in items if isinstance(i.get("latex"), str) and i["latex"]]
-        raw_kind = items[0].get("kind")
-        kind = raw_kind.strip().lower() if isinstance(raw_kind, str) else None
-        kind = _KIND_ALIASES.get(kind, kind) if kind else None
-        return Recognition(
-            text="\n".join(i["text"] for i in items),
-            latex="\n".join(latexes) or None,
-            kind=kind if kind in KINDS else "mixed",
-            model=self.model,
-        )
+        return parse_reading(raw, self.model)
 
     def _google_transport(self, timeout: float) -> Transport:
         from google import genai
