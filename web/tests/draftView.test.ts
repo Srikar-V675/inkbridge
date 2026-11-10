@@ -4,6 +4,8 @@ import {
   BATCH_MS,
   createUnseen,
   draftBox,
+  hasFlowArrow,
+  isFlowArrow,
   inView,
   MARGIN_PX,
   panTarget,
@@ -203,5 +205,21 @@ describe("createUnseen", () => {
     assert.equal(u.ids(), first);
     u.add("b");
     assert.notEqual(u.ids(), first);
+  });
+});
+
+describe("flow arrow", () => {
+  const arrow = (extra: Record<string, unknown> = {}) => ({
+    id: "a:flow-arrow",
+    customData: { op_id: "a" },
+    ...extra,
+  });
+  it("is found by id and op, ignoring deleted or other ops", () => {
+    assert.equal(isFlowArrow({ id: "a:flow-arrow" }), true);
+    assert.equal(isFlowArrow({ id: "a:1" }), false);
+    assert.equal(hasFlowArrow([arrow()], "a"), true);
+    assert.equal(hasFlowArrow([arrow({ isDeleted: true })], "a"), false);
+    assert.equal(hasFlowArrow([arrow()], "b"), false);
+    assert.equal(hasFlowArrow([{ id: "a:1", customData: { op_id: "a" } }], "a"), false);
   });
 });

@@ -57,6 +57,17 @@ describe("offsetOf", () => {
   });
 });
 
+describe("offsetOf with a flow arrow", () => {
+  it("ignores the arrow outside the placed box but still sees a real drag", () => {
+    const arrow = el({ id: "a:flow-arrow", type: "arrow", x: 100, y: 10, width: 0, height: 40 });
+    const o = op("a", [el({ id: "a:1", type: "text", x: 100, y: 50, width: 10, height: 5 }), arrow]);
+    const scene = reconcile([], [o]);
+    assert.deepEqual(offsetOf(scene, o), { dx: 0, dy: 0 });
+    const moved = scene.map((e) => (e.id === "a:1" ? { ...e, x: e.x + 30 } : e));
+    assert.deepEqual(offsetOf(moved, o), { dx: 30, dy: 0 });
+  });
+});
+
 describe("store", () => {
   it("notifies once per change and keeps arrival order", () => {
     const s = createDraftStore();
