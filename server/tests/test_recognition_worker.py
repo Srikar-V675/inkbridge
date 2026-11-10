@@ -580,3 +580,50 @@ def test_from_env_uses_selected_recognizer(monkeypatch):
     monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "claude")
     monkeypatch.setattr("inkbridge.recognizer.worker.make_recognizer", lambda: stub)
     assert RecognitionWorker.from_env().recognizer is stub
+
+
+class AlwaysLimited(FakeModel):
+    def __init__(self, retry_after_s=None, fail=True):
+        super().__init__()
+        self.retry_after_s, self.fail = retry_after_s, fail
+
+    def __call__(self, png, hint):
+        if self.fail:
+            self.calls.append(png)
+            raise RateLimited("429", retry_after_s=self.retry_after_s)
+        return super().__call__(png, hint)
+
+
+def test_rate_limit_pause_grows_across_chunks(client):
+    fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    t = [float(LATER)]
+    model = AlwaysLimited()
+    w = worker(model, clock=lambda: t[0], backoff_s=30, rate_limit_max_s=100)
+    pauses = []
+    for _ in range(4):
+        assert w.run_once() == 1
+        pauses.append(w._paused_until - t[0])
+        t[0] = w._paused_until + 0.1
+    assert pauses == [30, 60, 100, 100]  # global exponent across chunks, capped
+
+
+def test_rate_limit_streak_resets_on_success(client):
+    fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    t = [float(LATER)]
+    model = AlwaysLimited()
+    w = worker(model, clock=lambda: t[0], backoff_s=30)
+    w.run_once()
+    t[0] = w._paused_until + 0.1
+    model.fail = False
+    w.run_once()  # reads the remaining chunk
+    assert w._rl_streak == 0
+    w._back_off(("x", "y"), RateLimited("429"))
+    assert w._paused_until - t[0] == 30
+
+
+def test_retry_after_honoured(client):
+    fresh_canvas(client)
+    t = [float(LATER)]
+    w = worker(AlwaysLimited(retry_after_s=900), clock=lambda: t[0], backoff_s=30)
+    w.run_once()
+    assert w._paused_until - t[0] >= 900

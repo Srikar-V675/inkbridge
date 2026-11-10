@@ -49,6 +49,7 @@ class RecognitionWorker:
         poll_s: float = 2.0,
         backoff_s: float = 30.0,
         backoff_max_s: float = 600.0,
+        rate_limit_max_s: float = 3600.0,
         clock: Callable[[], float] = time.time,
         publish: Publish | None = None,
     ):
@@ -56,6 +57,8 @@ class RecognitionWorker:
         self.documents = tuple(documents)
         self.idle_s, self.poll_s = idle_s, poll_s
         self._backoff_s, self._backoff_max_s = backoff_s, backoff_max_s
+        self._rate_limit_max_s = rate_limit_max_s
+        self._rl_streak = 0  # consecutive 429s across all chunks; a success resets it
         self._clock = clock
         self._publish = publish
         Key = tuple[str, str]  # (region id, content hash)
@@ -246,6 +249,7 @@ class RecognitionWorker:
                         self._back_off(key, e)
                         continue
                     self._failures.pop(key, None)
+                    self._rl_streak = 0
                 try:
                     db.save_model_reading(conn, region["id"], region["content_hash"], reading)
                 except sqlite3.OperationalError as e:  # locked: keep the reading, no new call
@@ -270,6 +274,11 @@ class RecognitionWorker:
     def _back_off(self, key: tuple[str, str], error: Exception) -> None:
         count = self._failures.get(key, (0, 0.0))[0] + 1
         delay = min(self._backoff_s * 2 ** (count - 1), self._backoff_max_s)
+        if isinstance(error, RateLimited):
+            # The quota is shared by every chunk: the pause grows with the streak, not per chunk.
+            self._rl_streak += 1
+            delay = min(self._backoff_s * 2 ** (self._rl_streak - 1), self._rate_limit_max_s)
+            delay = max(delay, getattr(error, "retry_after_s", None) or 0)
         self._failures[key] = (count, self._clock() + delay)
         if isinstance(error, RateLimited | RecognizerTimeout | ServiceUnavailable):
             # The provider is the problem, not this chunk: trying the next one would hit it too.
