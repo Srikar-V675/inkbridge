@@ -45,7 +45,7 @@ def test_tiny_chunk_never_triggers(client):
     canvas = with_dots(client, 1, 1, reading="Meeting notes")
     recognise(canvas.chunk_of("dot0"), "?")  # a dot read as a stray mark
     assert of_kind("question") == []
-    _, (c,) = chunks(client, "Why?")
+    chunks(client, "Why?")
     assert len(of_kind("question")) == 1
 
 
