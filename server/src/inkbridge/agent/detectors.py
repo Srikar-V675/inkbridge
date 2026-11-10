@@ -74,6 +74,44 @@ def _dangling(c: dict) -> Candidate | None:
         return _cand("dangling_arrow", c["id"], payload, "Arrow leads nowhere")
 
 
+DANGLE_TOL = 40.0  # scene units; hypothesis, tune on logs
+
+
+def _gap(x: float, y: float, s: dict) -> float:
+    # distance from a point to the element's axis-aligned box; rotation ignored (decision 0107)
+    sx, sy = s.get("x", 0.0), s.get("y", 0.0)
+    dx = max(sx - x, 0.0, x - (sx + s.get("width", 0.0)))
+    dy = max(sy - y, 0.0, y - (sy + s.get("height", 0.0)))
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _free_end_arrows(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:
+    """Chunker v1 keeps arrows in no chunk kind of their own: find a native arrow whose tip touches nothing."""
+    elements = json.loads(db.get_scene(conn, document_id)[1])
+    live = [
+        e
+        for e in elements
+        if not e.get("isDeleted")
+        and not (isinstance(e.get("customData"), dict) and e["customData"].get("draft"))
+    ]
+    owner = {i: c for c in chunks for i in c["element_ids"]}
+    solids = [e for e in live if e.get("type") not in ("arrow", "line")]
+    out = []
+    for e in live:
+        pts = e.get("points") or []
+        if e.get("type") != "arrow" or len(pts) < 2 or (e.get("endBinding") or {}).get("elementId"):
+            continue
+        ex, ey = e["x"] + pts[-1][0], e["y"] + pts[-1][1]
+        if any(_gap(ex, ey, s) <= DANGLE_TOL for s in solids if s["id"] != e["id"]):
+            continue
+        c = owner.get(e["id"]) or owner.get((e.get("startBinding") or {}).get("elementId"))
+        if c is None:
+            log.debug("free arrow %s belongs to no active chunk", e["id"])
+            continue
+        out.append(_cand("dangling_arrow", c["id"], {"action": "ask_user", "key": e["id"]}, "Arrow leads nowhere"))
+    return out
+
+
 def _stale_note(chunks: list[dict], watches: list[dict]) -> list[Candidate]:
     by_id = {c["id"]: c for c in chunks}
     out, seen = [], set()
@@ -129,13 +167,17 @@ def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     out: list[Candidate] = []
     for c in chunks:
         out += [x for x in (_question(c), _open_equation(c), _dangling(c)) if x]
+    out += _free_end_arrows(conn, document_id, chunks)
     out += _stale_note(chunks, watches)
     out += _to_note(chunks, watches)
     out += _stale_diagram(conn, document_id, chunks)
     out += _sketch(conn, document_id, chunks)
     out += _related(conn, document_id, chunks)
     out += _markup(conn, document_id, all_chunks)
-    return sorted(out, key=lambda c: -c.score)
+    first: dict[tuple, Candidate] = {}
+    for c in out:  # a v2 connector chunk and a scene arrow never give two for one anchor
+        first.setdefault((c.kind, c.anchor) if c.kind == "dangling_arrow" else id(c), c)
+    return sorted(first.values(), key=lambda c: -c.score)
 
 
 def _stale_diagram(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:

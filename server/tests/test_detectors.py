@@ -373,3 +373,57 @@ def test_run_logs_refusals(client, caplog):
     run()
     msgs = [r.getMessage() for r in caplog.records if "detector run" in r.getMessage()]
     assert len(msgs) == 1 and "skipped=" in msgs[0] and "question:budget_full" in msgs[0]
+
+
+def _box(i, x, y=0):
+    return {"id": i, "type": "rectangle", "x": x, "y": y, "width": 100, "height": 60, "version": 1}
+
+
+def _free_arrow(**extra):
+    return {
+        "id": "arr0",
+        "type": "arrow",
+        "x": 100,
+        "y": 30,
+        "width": 200,
+        "height": 0,
+        "points": [[0, 0], [200, 0]],
+        "endArrowhead": "arrow",
+        "startBinding": {"elementId": "box0", "focus": 0, "gap": 1},
+        "version": 1,
+        **extra,
+    }
+
+
+def _arrow_canvas(client, arrow, *others):
+    return Canvas(client, [_box("box0", 0), *row("t", 3, x=10, y=20), arrow, *others])
+
+
+def test_dangling_arrow_v1(client):
+    _arrow_canvas(client, _free_arrow())
+    (found,) = of_kind("dangling_arrow")
+    assert found.payload == {"action": "ask_user", "key": "arr0"}
+    conn = db.connect()
+    assert db.get_region(conn, found.anchor)["status"] == "active"
+    conn.close()
+
+
+def test_dangling_arrow_v1_negatives(client):
+    bound = _free_arrow(endBinding={"elementId": "box1", "focus": 0, "gap": 1})
+    _arrow_canvas(client, bound, _box("box1", 300))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_arrow_v1_ends_near_a_box(client):
+    _arrow_canvas(client, _free_arrow(), _box("box1", 320))  # 20 units from the tip
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_arrow_v1_ignores_drafts(client):
+    _arrow_canvas(client, _free_arrow(customData={"draft": True}))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_arrow_v1_ignores_deleted(client):
+    _arrow_canvas(client, _free_arrow(isDeleted=True))
+    assert of_kind("dangling_arrow") == []
