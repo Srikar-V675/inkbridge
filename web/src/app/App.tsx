@@ -415,7 +415,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       liveRef.current = null;
       catchUpRef.current = null;
     };
-  }, [open, route.canvas, apiReady, refresh, unseen, gate, drafts, offerStore]);
+  }, [open, route.canvas, apiReady, refresh, unseen, gate, drafts, offerStore, activity]);
 
   // The scene is a function of the placed-op list: add what is missing, drop what is gone, and
   // reveal a draft the first time it appears (a reload or reconnect replay must not pan).
