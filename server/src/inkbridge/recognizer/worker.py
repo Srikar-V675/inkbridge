@@ -85,11 +85,13 @@ class RecognitionWorker:
         documents = tuple(d.strip() for d in raw.split(",") if d.strip())
         if not documents:
             return None
+        claude = os.environ.get("INKBRIDGE_RECOGNIZER", "").strip().lower() == "claude"
+        default_idle = 1.5 if claude else 5.0  # the Claude reader has no free-tier quota to spare
         try:
-            idle = float(os.environ.get("INKBRIDGE_RECOGNIZE_IDLE_S") or 5)
+            idle = float(os.environ.get("INKBRIDGE_RECOGNIZE_IDLE_S") or default_idle)
         except ValueError:
-            log.warning("INKBRIDGE_RECOGNIZE_IDLE_S is not a number; using 5 s")
-            idle = 5.0
+            log.warning("INKBRIDGE_RECOGNIZE_IDLE_S is not a number; using %s s", default_idle)
+            idle = default_idle
         if recognizer is None:
             try:
                 recognizer = make_recognizer()

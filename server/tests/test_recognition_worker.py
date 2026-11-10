@@ -705,3 +705,17 @@ def test_new_ink_during_pass_restarts_listing(client):
     assert w.run_once() == 1  # not one call per old candidate
     assert w.run_once() >= 1
     assert canvas.chunk_of("c0")["text"] == "x squared"
+
+
+def test_from_env_idle_defaults_by_reader(monkeypatch):
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZE_DOCUMENTS", "default")
+    monkeypatch.delenv("INKBRIDGE_RECOGNIZE_IDLE_S", raising=False)
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "claude")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 1.5
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "gemini")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 5.0
+    monkeypatch.delenv("INKBRIDGE_RECOGNIZER")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 5.0
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "claude")
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZE_IDLE_S", "3")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 3.0
