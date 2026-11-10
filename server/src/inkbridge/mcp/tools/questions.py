@@ -27,7 +27,8 @@ def list_questions(
         Field(description="Which questions to list"),
     ] = "pending",
     document_id: Annotated[
-        str | None, Field(description="Defaults to the configured document")
+        str | None,
+        Field(description="The canvas; pass it on every call (omitting it uses INKBRIDGE_DOCUMENT)"),
     ] = None,
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> str:
@@ -35,13 +36,16 @@ def list_questions(
 
     Each has focus_chunk_ids (read them with get_region or read_canvas), parent_id and history
     (earlier question/answer pairs of the thread, oldest first). Reply with answer_question.
+    Pass document_id on every call; omitting it uses INKBRIDGE_DOCUMENT. The result names the
+    canvas it listed: {document_id, questions}.
     """
     client = get_client()
     try:
         questions = client.list_questions(document_id, status, limit)
     except ApiError as e:
         raise ToolError(str(e)) from e
-    return _dump({"questions": questions})
+    doc = client.default_document if document_id is None else document_id
+    return _dump({"document_id": doc, "questions": questions})
 
 
 @mcp.tool()
@@ -67,13 +71,21 @@ def answer_question(
             "the default completes the answer"
         ),
     ] = True,
+    document_id: Annotated[
+        str | None,
+        Field(
+            description="The canvas the question is on; pass it so a wrong canvas is refused "
+            "with its name. Defaults to none (no check)"
+        ),
+    ] = None,
 ) -> str:
     """Answer a pending question. Stores the text only; it changes no ink and writes no note.
 
     canvas_text is the answer for the canvas card; omit and the first paragraph is used.
     Fails if the question is already answered or cancelled. To stream, call with final=false and
     pieces of the answer in order (the panel shows them as they arrive), then finish with one
-    final call (the full answer, sources and canvas_text go on that call).
+    final call (the full answer, sources and canvas_text go on that call). Pass document_id on
+    every call; omitting it uses INKBRIDGE_DOCUMENT. The result echoes the question's canvas.
     """
     try:
         q = get_client().answer_question(
@@ -82,12 +94,13 @@ def answer_question(
             [s.model_dump(exclude_none=True) for s in sources],
             canvas_text,
             final,
+            document_id,
         )
     except (NotFound, Conflict) as e:
         raise ToolError(f"{e} {_NEXT_STEP}") from e
     except ApiError as e:
         raise ToolError(str(e)) from e
-    out = {"id": q["id"], "status": q["status"]}
+    out = {"id": q["id"], "status": q["status"], "document_id": q["document_id"]}
     if not final:
         out["seq"] = q["partial_seq"]
     return _dump(out)

@@ -61,11 +61,12 @@ def write_text(
     below all existing ink, never overlapping it. Text is sized from the median handwriting stroke
     height of the anchor chunk (or the page) so it reads beside the ink. Never edits existing ink.
     The draft appears when the canvas is open in a browser (now, or the next time it is opened).
-    Returns {op_id, status: "pending", placement, font_size, anchor_used, note}; anchor_used and
+    Returns {op_id, status: "pending", document_id, placement, font_size, anchor_used, note}; anchor_used and
     note appear when an anchor was given (note when it was replaced by a successor). A deleted
     anchor is refused with `anchor_gone`.
     """
     client = get_client()
+    doc = document_id or client.default_document
     payload = {
         "text": text,
         **({"anchor": anchor} if anchor else {}),
@@ -74,7 +75,7 @@ def write_text(
         **_question_link(question_id, relation),
     }
     try:
-        op = client.create_op(document_id or client.default_document, "write_text", payload)
+        op = client.create_op(doc, "write_text", payload)
     except NotFound as e:
         raise ToolError(f"{e} Check document_id, or the anchor chunk id via read_canvas.") from e
     except ApiError as e:
@@ -83,6 +84,7 @@ def write_text(
         {
             "op_id": op["id"],
             "status": op["status"],
+            "document_id": doc,
             "placement": op["payload"]["placement"],
             "font_size": op["payload"]["font_size"],
             **_anchor_info(op, anchor),
@@ -131,6 +133,7 @@ def _draw(
             {
                 "op_id": op["id"],
                 "status": "placed",
+                "document_id": doc,
                 "element_count": len(op.get("elements") or []),
                 "diagram_id": op["diagram_id"],
                 **({"revises": op["revises"]} if op.get("revises") else {}),
@@ -212,7 +215,7 @@ def draw_diagram(
     the diagram was made from, so it is flagged when their readings change. The canvas must be
     open in a browser: the source is converted there, and this call waits (default 20 s) for the
     browser to draw it. Never edits existing ink; it only adds new, dashed draft elements. Returns
-    {op_id, status: "placed", element_count, diagram_id, anchor_used, note} (the last two when an
+    {op_id, status: "placed", document_id, element_count, diagram_id, anchor_used, note} (the last two when an
     anchor was given; a replaced anchor is followed, a deleted one refused). Revise an accepted
     diagram with edit_diagram.
     """
