@@ -343,3 +343,33 @@ def test_concurrent_scans_do_not_duplicate(client):
     with ThreadPoolExecutor(4) as pool:
         list(pool.map(lambda _: offers_api.scan_now("default"), range(4)))
     assert len(run()) == 1
+
+
+def test_scan_logs_why_nothing(client, monkeypatch, caplog):
+    import logging
+
+    from inkbridge.api import offers as offers_api
+
+    monkeypatch.setattr(offers_api, "_ARM_TIMERS", False)
+    Canvas(client, row("a", 3) + row("b", 3, y=500))
+    caplog.set_level(logging.INFO, logger="inkbridge.offers")
+    offers_api.scan_now("default")
+    msgs = [r.getMessage() for r in caplog.records if "chunks=2" in r.getMessage()]
+    assert msgs and all("unread=2" in m and "candidates=0" in m for m in msgs)
+
+
+def test_run_logs_refusals(client, caplog):
+    import logging
+
+    _, (a, b, c, d) = chunks(client, "Why a?", "plain b", "plain c", "plain d")
+    conn = db.connect()
+    for x in (b, c, d):
+        db.offers.create_offer(
+            conn, "default", kind="related", anchor_chunk=x["id"], reason="r",
+            payload={"key": x["id"]}, score=1.0, source="detector", session_start="",
+        )
+    conn.close()
+    caplog.set_level(logging.INFO, logger="inkbridge.offers")
+    run()
+    msgs = [r.getMessage() for r in caplog.records if "detector run" in r.getMessage()]
+    assert len(msgs) == 1 and "skipped=" in msgs[0] and "question:budget_full" in msgs[0]

@@ -25,6 +25,10 @@ class Attention:
         s = self._s.get(doc)
         return None if not s or s[0] else max(0.0, config.quiet_s() - (self.clock() - s[1]))
 
+    def state(self, doc):
+        s = self._s.get(doc)
+        return "none" if not s else "pen_down" if s[0] else "quiet"
+
     def view(self, doc):
         s = self._s.get(doc)
         return s[2] if s else None

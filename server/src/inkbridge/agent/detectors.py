@@ -4,8 +4,10 @@ Pure rules over the stored chunks; the caller (`run`, below) turns candidates in
 """
 
 import json
+import logging
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 
 from inkbridge import db
@@ -13,6 +15,8 @@ from inkbridge.agent import markup
 from inkbridge.canvas.sketch import read_sketch
 from inkbridge.db import diagrams as diagrams_db
 from inkbridge.db import offers as offers_db
+
+log = logging.getLogger("inkbridge.offers")
 
 SCORE = {
     "question": 0.9,
@@ -107,6 +111,15 @@ def _tiny(c: dict) -> bool:
         and len(c["element_ids"]) < MIN_ELEMENTS
         and len((c["text"] or "").strip()) < 2
     )
+
+
+def scan_counts(conn: sqlite3.Connection, document_id: str) -> str:
+    """One log fragment: how many chunks the scan sees, how many have no reading, how many candidates."""
+    all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
+    chunks = [c for c in all_chunks if c["source"] != "agent"]
+    unread = sum(1 for c in chunks if not (c["text"] or "").strip())
+    cands = Counter(c.kind for c in scan(conn, document_id))
+    return f"chunks={len(chunks)} unread={unread} candidates={sum(cands.values())} {dict(cands)}"
 
 
 def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
@@ -222,7 +235,10 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
         if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
     }
     changed: list[dict] = []
-    for c in scan(conn, document_id):
+    candidates = scan(conn, document_id)
+    created: Counter = Counter()
+    skipped: Counter = Counter()
+    for c in candidates:
         k = _seen_key(c.kind, c.anchor, c.payload.get("key"))
         if k in seen:
             continue
@@ -238,10 +254,19 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
                 source="detector",
                 session_start=session_start,
             )
-        except (offers_db.BudgetFull, offers_db.KindMuted, offers_db.AnchorUnknown):
+        except (offers_db.BudgetFull, offers_db.KindMuted, offers_db.AnchorUnknown) as e:
+            reason = {"BudgetFull": "budget_full", "KindMuted": "kind_muted"}.get(
+                type(e).__name__, "anchor_unknown"
+            )
+            skipped[f"{c.kind}:{reason}"] += 1
             continue
+        created[c.kind] += 1
         seen.add(k)
         changed += expired
+    log.info(
+        "detector run doc=%s candidates=%d created=%s skipped=%s",
+        document_id, len(candidates), dict(created), dict(skipped),
+    )
     return changed
 
 
