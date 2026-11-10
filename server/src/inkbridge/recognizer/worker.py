@@ -8,8 +8,9 @@ unchanged or merely moved ink never calls the model. Model failures back off per
 a 429, 503 or timeout pauses the whole worker, and both are only logged; drawing never waits on this
 thread. Run one API process: each process would run its own worker (decision 0017).
 
-Privacy: the Gemini free tier may train on what it receives, so nothing is read unless its canvas
-id is listed in INKBRIDGE_RECOGNIZE_DOCUMENTS (test and eval pages only).
+Privacy: nothing is read unless its canvas id is listed in INKBRIDGE_RECOGNIZE_DOCUMENTS. With the
+Gemini reader (default) the free tier may train on what it receives, so list test and eval pages
+only; the Claude reader (INKBRIDGE_RECOGNIZER=claude, INK-185) does not train on content.
 """
 
 import json
@@ -29,6 +30,7 @@ from inkbridge.recognizer import (
     Recognizer,
     RecognizerTimeout,
     ServiceUnavailable,
+    make_recognizer,
 )
 from inkbridge.timing import timed
 
@@ -47,6 +49,7 @@ class RecognitionWorker:
         poll_s: float = 2.0,
         backoff_s: float = 30.0,
         backoff_max_s: float = 600.0,
+        rate_limit_max_s: float = 3600.0,
         clock: Callable[[], float] = time.time,
         publish: Publish | None = None,
     ):
@@ -54,6 +57,8 @@ class RecognitionWorker:
         self.documents = tuple(documents)
         self.idle_s, self.poll_s = idle_s, poll_s
         self._backoff_s, self._backoff_max_s = backoff_s, backoff_max_s
+        self._rate_limit_max_s = rate_limit_max_s
+        self._rl_streak = 0  # consecutive 429s across all chunks; a success resets it
         self._clock = clock
         self._publish = publish
         Key = tuple[str, str]  # (region id, content hash)
@@ -86,10 +91,8 @@ class RecognitionWorker:
             log.warning("INKBRIDGE_RECOGNIZE_IDLE_S is not a number; using 5 s")
             idle = 5.0
         if recognizer is None:
-            from inkbridge.recognizer.gemini import default_recognizer
-
             try:
-                recognizer = default_recognizer()
+                recognizer = make_recognizer()
             except Exception as e:  # noqa: BLE001 - e.g. missing key or SDK: start without it
                 log.warning("recognition worker not started: %s", e)
                 return None
@@ -246,6 +249,7 @@ class RecognitionWorker:
                         self._back_off(key, e)
                         continue
                     self._failures.pop(key, None)
+                    self._rl_streak = 0
                 try:
                     db.save_model_reading(conn, region["id"], region["content_hash"], reading)
                 except sqlite3.OperationalError as e:  # locked: keep the reading, no new call
@@ -270,6 +274,11 @@ class RecognitionWorker:
     def _back_off(self, key: tuple[str, str], error: Exception) -> None:
         count = self._failures.get(key, (0, 0.0))[0] + 1
         delay = min(self._backoff_s * 2 ** (count - 1), self._backoff_max_s)
+        if isinstance(error, RateLimited):
+            # The quota is shared by every chunk: the pause grows with the streak, not per chunk.
+            self._rl_streak += 1
+            delay = min(self._backoff_s * 2 ** (self._rl_streak - 1), self._rate_limit_max_s)
+            delay = max(delay, getattr(error, "retry_after_s", None) or 0)
         self._failures[key] = (count, self._clock() + delay)
         if isinstance(error, RateLimited | RecognizerTimeout | ServiceUnavailable):
             # The provider is the problem, not this chunk: trying the next one would hit it too.
