@@ -572,3 +572,11 @@ def test_a_too_large_chunk_is_never_sent_to_the_model(client, caplog):
     assert canvas.chunk_of("big")["text"] is None
     assert canvas.chunk_of("a0")["text"] == "x squared"
     assert len([r for r in caplog.records if "not reading" in r.getMessage()]) == 1
+
+
+def test_from_env_uses_selected_recognizer(monkeypatch):
+    stub = FakeModel()
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZE_DOCUMENTS", "d")
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "claude")
+    monkeypatch.setattr("inkbridge.recognizer.worker.make_recognizer", lambda: stub)
+    assert RecognitionWorker.from_env().recognizer is stub
