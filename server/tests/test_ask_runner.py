@@ -570,3 +570,12 @@ def test_task_prompt_tells_agent_to_pass_canvas():
     t = {"id": "t1", "document_id": "canvasB", "kind": "offer", "mode": "link", "op_limit": 0,
          "input": {"reason": "x", "anchor_chunk": "c1", "payload": {}}}  # fmt: skip
     assert 'document_id="canvasB"' in build_task_prompt(t)
+
+
+def test_task_prompt_uses_current_reading():
+    t = {"id": "t1", "document_id": "d", "kind": "offer", "mode": "question", "op_limit": 3,
+         "input": {"reason": "r", "anchor_chunk": "live9", "anchor_reading": "MCP?", "payload": {}}}  # fmt: skip
+    p = build_task_prompt(t)
+    assert "live9" in p and "MCP?" in p.split("<untrusted_data>", 1)[1]
+    t["input"]["anchor_reading"] = None
+    assert "no reading yet" in build_task_prompt(t)

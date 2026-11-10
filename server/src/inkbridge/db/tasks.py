@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from inkbridge.db.common import _now
+from inkbridge.db.regions import get_region
 
 CLAIM_TTL_S = 15 * 60  # a client that claimed and went silent loses the task (hypothesis)
 
@@ -123,7 +124,27 @@ def claim(conn: sqlite3.Connection, task_id: str, claimed_by: str) -> dict:
     )
     _guard(conn, cur, task_id)
     conn.commit()
-    return get_task(conn, task_id)
+    return refresh_anchor(conn, get_task(conn, task_id))
+
+
+def refresh_anchor(conn: sqlite3.Connection, task: dict) -> dict:
+    """INK-199: the agent works on the live chunk and its current reading, not what the offer saw."""
+    from inkbridge.db import supersede  # local: supersede imports db.offers, which imports tasks
+
+    a = task["input"].get("anchor_chunk")
+    if not a:
+        return task
+    live = supersede.line_of(
+        conn, task["document_id"], a, supersede.active_chunks(conn, task["document_id"])
+    )
+    reg = get_region(conn, live)
+    if reg is None or reg["status"] != "active":
+        return task
+    reading = (reg["text"] or reg["latex"]) if reg["source"] else None
+    new = {**task["input"], "anchor_chunk": live, "anchor_reading": reading}
+    conn.execute("UPDATE agent_tasks SET input_json=? WHERE id=?", (json.dumps(new), task["id"]))
+    conn.commit()
+    return {**task, "input": new}
 
 
 def finish(conn: sqlite3.Connection, task_id: str, status: str, error: str | None = None) -> dict:

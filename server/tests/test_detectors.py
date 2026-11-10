@@ -1,6 +1,7 @@
 """INK-132: detectors turn the canvas into offer candidates with no model."""
 
 import itertools
+from datetime import UTC, datetime, timedelta
 
 from inkbridge import db
 from inkbridge.agent import detectors
@@ -21,6 +22,15 @@ def of_kind(kind, slow=True):
     return [c for c in scan(slow) if c.kind == kind]
 
 
+def age(seconds=10):
+    """Make every chunk's ink look settled: updated_at that many seconds ago (INK-199)."""
+    ts = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
+    conn = db.connect()
+    conn.execute("UPDATE regions SET updated_at=?", (ts,))
+    conn.commit()
+    conn.close()
+
+
 def chunks(client, *texts):
     """One chunk per text, rows 500 px apart, each read as the given text (None = no reading)."""
     canvas = Canvas(client, [e for i, _ in enumerate(texts) for e in row(f"r{i}", 3, y=500 * i)])
@@ -29,6 +39,8 @@ def chunks(client, *texts):
         c = canvas.chunk_of(f"r{i}0")
         if t is not None:
             recognise(c, t)
+    age()
+    for i, _ in enumerate(texts):
         out.append(canvas.chunk_of(f"r{i}0"))
     return canvas, out
 
@@ -40,6 +52,7 @@ def with_dots(client, n_real, n_dots, reading="w"):
     canvas = Canvas(client, els)
     for i in range(n_real):
         recognise(canvas.chunk_of(f"r{i}0"), reading)
+    age()
     return canvas
 
 
@@ -492,6 +505,7 @@ def test_one_offer_per_kind_via_run(client):
     q, arrow, flow = _doc(client, "Q"), _doc(client, "A"), _doc(client, "F")
     _put(client, q, row("q", 3))
     _read(q, "Why does ice float?")
+    age()
     _put(client, arrow, [_box("box0", 0), *row("t", 3, x=10, y=20), _free_arrow()])
     _put(client, flow, _pen_flow())
     for _ in range(2):
@@ -584,3 +598,58 @@ def test_flowchart_gives_at_most_one(client):
     free = {**_free_arrow(), "id": "free", "y": 230}
     Canvas(client, _flow(3, 2) + [free])
     assert len([o for o in run() if o["status"] == "open"]) == 1
+
+
+def fresh_chunk(client, text):
+    """One chunk whose ink changed just now (not aged)."""
+    canvas = Canvas(client, row("r0", 3))
+    recognise(canvas.chunk_of("r00"), text)
+    return canvas
+
+
+def test_question_waits_until_ink_is_stable(client):
+    fresh_chunk(client, "Why?")
+    assert of_kind("question") == []
+    age()
+    assert len(of_kind("question")) == 1
+
+
+def test_question_needs_a_finished_reading(client):
+    fresh_chunk(client, "Why")
+    age()
+    assert of_kind("question") == []
+    recognise(_only_chunk(), "what is MP", source="user")
+    assert len(of_kind("question")) == 1
+    recognise(_only_chunk(), "Why?", source="user")
+    assert len(of_kind("question")) == 1
+
+
+def _only_chunk():
+    conn = db.connect()
+    try:
+        return db.list_regions(conn, "default", chunks=True, status="active", limit=5)[0]
+    finally:
+        conn.close()
+
+
+def test_open_equation_waits_for_stable_ink(client):
+    fresh_chunk(client, "x + 2 =")
+    assert of_kind("open_equation") == []
+    age()
+    assert len(of_kind("open_equation")) == 1
+
+
+def test_scan_now_rearms_when_held(client, monkeypatch):
+    from inkbridge.api import offers as offers_api
+
+    calls = []
+    monkeypatch.setattr(offers_api, "schedule_scan", calls.append)
+    monkeypatch.setattr(offers_api, "flush", lambda d: None)
+    fresh_chunk(client, "Why is it so?")
+    calls.clear()  # saves arm scans too
+    offers_api.scan_now("default")
+    assert calls == ["default"]
+    age()
+    calls.clear()
+    offers_api.scan_now("default")
+    assert calls == []
