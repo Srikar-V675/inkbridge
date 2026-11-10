@@ -3,6 +3,7 @@
 Pure rules over the stored chunks; the caller (`run`, below) turns candidates into offers.
 """
 
+import itertools
 import json
 import logging
 import re
@@ -92,7 +93,7 @@ DANGLE_STRAIGHT = 0.9  # chord / path length; a curvy stroke is handwriting (INK
 def _long_straight_headed(e: dict, pts: list) -> bool:
     if not e.get("endArrowhead"):
         return False
-    path = sum(((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in zip(pts, pts[1:]))
+    path = sum(((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in itertools.pairwise(pts))
     chord = ((pts[-1][0] - pts[0][0]) ** 2 + (pts[-1][1] - pts[0][1]) ** 2) ** 0.5
     return chord >= DANGLE_MIN_LEN and path > 0 and chord / path >= DANGLE_STRAIGHT
 
