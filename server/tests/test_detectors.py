@@ -354,8 +354,9 @@ def test_scan_logs_why_nothing(client, monkeypatch, caplog):
     Canvas(client, row("a", 3) + row("b", 3, y=500))
     caplog.set_level(logging.INFO, logger="inkbridge.offers")
     offers_api.scan_now("default")
-    msgs = [r.getMessage() for r in caplog.records if "chunks=2" in r.getMessage()]
-    assert msgs and all("unread=2" in m and "candidates=0" in m for m in msgs)
+    msgs = [r.getMessage() for r in caplog.records if r.getMessage().startswith("scan doc=")]
+    assert len(msgs) == 1
+    assert "chunks=2" in msgs[0] and "unread=2" in msgs[0] and "candidates=0" in msgs[0]
 
 
 def test_run_logs_refusals(client, caplog):
@@ -427,3 +428,66 @@ def test_dangling_arrow_v1_ignores_drafts(client):
 def test_dangling_arrow_v1_ignores_deleted(client):
     _arrow_canvas(client, _free_arrow(isDeleted=True))
     assert of_kind("dangling_arrow") == []
+
+
+def _loop(i, x, y=0, w=120, h=80):
+    pts = [[0, 0], [w, 0], [w, h], [0, h], [0, 0]]
+    dense = []
+    for a, b in zip(pts, pts[1:], strict=False):
+        dense += [[a[0] + (b[0] - a[0]) * t / 6, a[1] + (b[1] - a[1]) * t / 6] for t in range(6)]
+    dense.append([0, 0])
+    return {
+        "id": i, "type": "freedraw", "x": x, "y": y, "width": w, "height": h, "angle": 0,
+        "points": dense, "pressures": [0.5] * len(dense), "simulatePressure": False, "version": 1,
+    }  # fmt: skip
+
+
+def _pen_arrow(i, x, y=40):
+    pts = [[0, 0], [60, 1], [120, 0], [170, 0], [158, -10]]
+    return {
+        "id": i, "type": "freedraw", "x": x, "y": y, "width": 170, "height": 10, "angle": 0,
+        "points": pts, "pressures": [0.5] * len(pts), "simulatePressure": False, "version": 1,
+    }  # fmt: skip
+
+
+def _pen_flow(y=0):
+    return [
+        _loop("p0", 0, y), _loop("p1", 300, y), _loop("p2", 600, y),
+        _pen_arrow("pa0", 125, y + 40), _pen_arrow("pa1", 425, y + 40),
+    ]  # fmt: skip
+
+
+def test_sketch_pen_drawn(client):
+    Canvas(client, _pen_flow())
+    assert len(of_kind("sketch")) == 1
+
+
+def _put(client, doc, els):
+    scene = f"/documents/{doc}/scene"
+    client.put(scene, json={"base_version": client.get(scene).json()["version"], "elements": els})
+
+
+def _read(doc, text):
+    conn = db.connect()
+    try:
+        (c,) = [c for c in db.list_regions(conn, doc, chunks=True, status="active") if c["element_ids"]]
+        db.save_recognition(conn, c["id"], c["content_hash"], "gemini", text)
+    finally:
+        conn.close()
+
+
+def test_one_offer_per_kind_via_run(client):
+    q, arrow, flow = _doc(client, "Q"), _doc(client, "A"), _doc(client, "F")
+    _put(client, q, row("q", 3))
+    _read(q, "Why does ice float?")
+    _put(client, arrow, [_box("box0", 0), *row("t", 3, x=10, y=20), _free_arrow()])
+    _put(client, flow, _pen_flow())
+    for _ in range(2):
+        conn = db.connect()
+        for d in (q, arrow, flow):
+            detectors.run(conn, d)
+        got = {d: [o["kind"] for o in db.offers.list_offers(conn, d)] for d in (q, arrow, flow)}
+        conn.close()
+        assert got[q] == ["question"]
+        assert got[arrow] == ["dangling_arrow"]
+        assert got[flow] == ["sketch"]
