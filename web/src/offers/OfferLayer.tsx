@@ -16,6 +16,7 @@ import {
   dismissOffer,
   linksText,
   listOffers,
+  noteRequest,
   obsidianUrl,
   planeStyle,
   popoverKind,
@@ -28,7 +29,7 @@ import "./OfferLayer.css";
 
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 
-function PopoverBody({ offer, store, close, onOpenAsk }: { offer: Offer; store: OfferStore; close: () => void; onOpenAsk: (questionId?: string) => void }) {
+function PopoverBody({ offer, canvas, store, close, onOpenAsk }: { offer: Offer; canvas: string; store: OfferStore; close: () => void; onOpenAsk: (questionId?: string) => void }) {
   const [error, setError] = useState<string | null>(null);
   const kind = popoverKind(offer);
   const run = (fn: () => Promise<void>) => fn().then(close, () => setError("That did not work. Try again."));
@@ -51,6 +52,11 @@ function PopoverBody({ offer, store, close, onOpenAsk }: { offer: Offer; store: 
       ) : (
         <>
           <p>{offer.reason}</p>
+          {kind === "note" && (
+            <Button variant="secondary" onClick={() => void run(() => navigator.clipboard.writeText(noteRequest(canvas)))}>
+              Copy request
+            </Button>
+          )}
           {kind === "related" && (
             <>
               {doc && (
@@ -139,7 +145,7 @@ export function OfferLayer(props: { api: ExcalidrawImperativeAPI; canvas: string
                   <Chip onClick={() => tap(o, c)} aria-expanded={openId === o.id}>
                     {chipLabel(o)}
                   </Chip>
-                  {openId === o.id && <PopoverBody offer={o} store={store} close={() => setOpenId(null)} onOpenAsk={onOpenAsk} />}
+                  {openId === o.id && <PopoverBody offer={o} canvas={canvas} store={store} close={() => setOpenId(null)} onOpenAsk={onOpenAsk} />}
                 </div>
               );
             })}
