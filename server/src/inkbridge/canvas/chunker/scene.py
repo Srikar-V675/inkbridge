@@ -175,8 +175,19 @@ def chunk_scene(
         return best[2]
 
     uf = _UnionFind(len(groups))
+    # An accepted agent arrow (the answer's flow arrow, INK-201) belongs to its op's group: it
+    # never merges or links, so the question's chunk keeps its ink.
+    agent_home = {}
+    for gi in range(first_pinned + len(manual), len(groups)):
+        op = agent_op(by_id[groups[gi][0]])
+        if op is not None:
+            agent_home[op] = gi
     ends = []
     for c in connectors:
+        op = agent_op(c)
+        if op in agent_home:
+            ends.append((c, agent_home[op], agent_home[op], False))
+            continue
         start, end = end_chunk(c, "startBinding", 0), end_chunk(c, "endBinding", -1)
         points = c.get("points") or []
         # A connector needs a drawn path to join or connect anything.

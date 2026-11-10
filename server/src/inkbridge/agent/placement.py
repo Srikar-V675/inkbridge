@@ -194,6 +194,22 @@ def _inside_frac(box: Box, view: Box) -> float:
     return max(0.0, iw) * max(0.0, ih) / area if area > 0 else 1.0
 
 
+def flow_spot(
+    occupied: list[Box], size: tuple[float, float], anchor: Box, fs: float
+) -> dict[str, float] | None:
+    """Directly below the anchor (left-aligned), else directly right of it, if clear of all ink."""
+    w, h = size
+    d, margin = gap_for(fs), margin_for(fs)
+    for x, y in (
+        (anchor["x"], anchor["y"] + anchor["height"] + d),
+        (anchor["x"] + anchor["width"] + d, anchor["y"]),
+    ):
+        box: Box = {"x": x, "y": y, "width": w, "height": h}
+        if not any(overlaps(box, o, margin) for o in occupied):
+            return {"x": x, "y": y}
+    return None
+
+
 def place(
     occupied: list[Box],
     size: tuple[float, float],
@@ -203,13 +219,15 @@ def place(
     view: Box | None = None,
     connectors=(),
 ) -> dict[str, float]:
-    """Top-left for a box of `size`: the best-scored free candidate (rings of slots around the
+    """Top-left for a box of `size`: below the anchor, else right of it (INK-201), else the best-scored free candidate (rings of slots around the
     anchor, a grid over the view, the column under `recent`); below everything only if none is free.
     `view` is a scene rect and only ranks free spots."""
     w, h = size
     gap, margin = gap_for(fs), margin_for(fs)
     if not occupied:
         return {"x": 0, "y": 0}
+    if anchor is not None and (spot := flow_spot(occupied, size, anchor, fs)):
+        return spot
     cands: dict[tuple[float, float], float] = {}  # (x, y) -> direction penalty
 
     def add(x: float, y: float, pen: float) -> None:

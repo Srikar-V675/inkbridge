@@ -1,6 +1,6 @@
 // The placed-op list and the pure function from it to the scene's draft elements (INK-115,
 // decision 0090). The server owns placement; the scene shows exactly the placed ops.
-import { draftBox } from "./draftView.ts";
+import { draftBox, isFlowArrow } from "./draftView.ts";
 import { draftOpId, isDraftTagged, markDraft, type DraftElement } from "./drafts.ts";
 
 export interface PlacedOp {
@@ -63,7 +63,7 @@ export function reconcile<T extends DraftElement>(scene: readonly T[], ops: read
 
 /** How far the user dragged the draft: its bbox origin minus the placed box origin. */
 export function offsetOf(scene: readonly DraftElement[], op: PlacedOp): { dx: number; dy: number } {
-  const box = draftBox(scene.filter((e) => draftOpId(e) === op.id), op.id);
+  const box = draftBox(scene.filter((e) => draftOpId(e) === op.id && !isFlowArrow(e)), op.id);
   if (!box) return { dx: 0, dy: 0 };
   const r = (n: number) => Math.round(n * 100) / 100 || 0;
   return { dx: r(box.x - op.box.x), dy: r(box.y - op.box.y) };

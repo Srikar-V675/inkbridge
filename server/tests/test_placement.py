@@ -41,20 +41,55 @@ def test_without_anchor_goes_below_the_lowest_box_at_the_left_edge():
     assert place(occupied, (200, 50)) == {"x": -20, "y": 310 + GAP}
 
 
-def test_with_anchor_goes_right_of_it():
+def test_with_anchor_goes_below_it_first():
     anchor = _box(0, 0, 100, 40)
-    assert place([anchor], (200, 50), anchor) == {"x": 100 + GAP, "y": 0}
+    assert place([anchor], (200, 50), anchor) == {"x": 0, "y": 40 + GAP}
 
 
-def test_with_anchor_goes_below_it_when_the_right_is_taken():
+def test_with_anchor_goes_right_when_below_is_taken():
     anchor = _box(0, 0, 100, 40)
-    right = _box(150, 0, 100, 30)
-    assert place([anchor, right], (200, 50), anchor) == {"x": 0, "y": 40 + GAP}
+    below = _box(0, 60, 100, 30)
+    assert place([anchor, below], (200, 50), anchor) == {"x": 100 + GAP, "y": 0}
 
 
-def test_ring_order_east_first():
+def test_flow_order_below_then_right():
     anchor = _box(0, 0, 100, 40)
-    assert place([anchor], (200, 50), anchor, 20) == {"x": 100 + gap_for(20), "y": 0}
+    assert place([anchor], (200, 50), anchor, 20) == {"x": 0, "y": 40 + gap_for(20)}
+
+
+def test_anchor_prefers_below_left_aligned():
+    anchor = _box(50, 20, 300, 80)
+    assert place([anchor], (300, 80), anchor, 28) == {"x": 50, "y": 100 + gap_for(28)}
+
+
+def test_anchor_below_taken_goes_right():
+    anchor = _box(50, 20, 300, 80)
+    under = _box(50, 110, 300, 60)
+    got = place([anchor, under], (300, 80), anchor, 28)
+    assert got == {"x": 350 + gap_for(28), "y": 20}
+
+
+def test_both_taken_falls_back_to_search():
+    anchor = _box(50, 20, 300, 80)
+    occ = [anchor, _box(50, 110, 300, 60), _box(390, 20, 300, 60)]
+    got = place(occ, (300, 80), anchor, 28)
+    assert got not in ({"x": 50, "y": 100 + gap_for(28)}, {"x": 350 + gap_for(28), "y": 20})
+    assert not any(overlaps(_box(got["x"], got["y"], 300, 80), o, margin_for(28)) for o in occ)
+
+
+def test_below_is_close_when_free():
+    anchor = _box(0, 0, 400, 100)
+    got = place([anchor], (600, 200), anchor, 40)
+    assert got["y"] - 100 <= 1.25 * 40
+
+
+def test_two_anchors_two_spots():
+    a1, a2 = _box(0, 0, 300, 60), _box(2000, 0, 300, 60)
+    p1 = place([a1, a2], (300, 60), a1, 28)
+    d1 = _box(p1["x"], p1["y"], 300, 60)
+    p2 = place([a1, a2, d1], (300, 60), a2, 28)
+    assert p1 == {"x": 0, "y": 60 + gap_for(28)}
+    assert p2 == {"x": 2000, "y": 60 + gap_for(28)}
 
 
 def test_no_below_everything_fallback_when_space_exists():
@@ -224,7 +259,7 @@ def test_font_size_scales_linearly():
 def test_gap_and_margin_scale_with_font():
     anchor = _box(0, 0, 4000, 1000)
     spot = place([anchor], (100, 100), anchor, 450)
-    assert spot["x"] == anchor["width"] + gap_for(450) and gap_for(450) > GAP
+    assert spot["y"] == anchor["height"] + gap_for(450) and gap_for(450) > GAP
     assert gap_for(28) == GAP and gap_for(20) == GAP
     near = _box(0, 0, 100, 100)
     other = _box(100 + 100, 0, 100, 100)  # 100 apart: clear at 1x margin, overlapping at 450 fs

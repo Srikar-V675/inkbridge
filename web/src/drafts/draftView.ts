@@ -46,6 +46,14 @@ function extent(el: Located): Box {
   return { x: el.x, y: el.y, width: el.width ?? 0, height: el.height ?? 0 };
 }
 
+export const FLOW_ARROW = "flow-arrow";
+/** The arrow the server draws from a question to its answer (INK-201); it lies outside the text box. */
+export const isFlowArrow = (e: { id: string }) => e.id.endsWith(`:${FLOW_ARROW}`);
+export const hasFlowArrow = (
+  els: readonly { id: string; isDeleted?: boolean; customData?: Record<string, unknown> }[],
+  opId: string,
+) => els.some((e) => !e.isDeleted && e.customData?.op_id === opId && e.id === `${opId}:${FLOW_ARROW}`);
+
 /** Bounds of the live elements tagged customData.op_id === opId; null when there are none. */
 export function draftBox(els: readonly Located[], opId: string): Box | null {
   let out: { x0: number; y0: number; x1: number; y1: number } | null = null;

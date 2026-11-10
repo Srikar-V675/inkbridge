@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { followScroll } from "../chunks/followScroll";
 import { listChunks, toScreen, type Bounds, type Chunk, type View } from "../chunks/chunks";
-import { draftBox } from "./draftView";
+import { draftBox, hasFlowArrow } from "./draftView";
 import type { PlacedOp } from "./draftStore";
 
 type Pt = { x: number; y: number };
@@ -54,7 +54,9 @@ export function Tether({ api, documentId, op }: { api: ExcalidrawImperativeAPI; 
   }, [documentId, op.id]);
 
   const chunk = chunks.find((c) => c.id === op.payload.anchor_resolved);
-  const box: Bounds | null = draftBox(api.getSceneElements() as never, op.id);
+  const elements = api.getSceneElements();
+  if (hasFlowArrow(elements, op.id)) return null; // the server drew the arrow (INK-201)
+  const box: Bounds | null = draftBox(elements as never, op.id);
   if (!chunk || !box) return null;
   return (
     <svg className="ink-tether" aria-hidden>

@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from inkbridge import db
-from inkbridge.agent import mermaid
+from inkbridge.agent import flow, mermaid
 from inkbridge.agent.diagram_ir import parse_graph
 from inkbridge.api.chunks import Out
 from inkbridge.api.deps import Conn
@@ -187,6 +187,8 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
                 },
             )
         payload.relation = payload.relation or "answer"
+        if isinstance(payload, WriteTextPayload):
+            payload.text = flow.answer_lead(payload.text)
     swept: list[dict] = []
     try:
         with timed("ops.create", fields=len(body.payload)):  # includes server-side placement
