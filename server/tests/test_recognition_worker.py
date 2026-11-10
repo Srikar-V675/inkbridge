@@ -719,3 +719,28 @@ def test_from_env_idle_defaults_by_reader(monkeypatch):
     monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "claude")
     monkeypatch.setenv("INKBRIDGE_RECOGNIZE_IDLE_S", "3")
     assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 3.0
+
+
+def test_logs_stroke_to_reading_latency(client, caplog):
+    import logging
+
+    fresh_canvas(client)
+    with caplog.at_level(logging.INFO, logger="inkbridge.recognizer.latency"):
+        worker(FakeModel(errors=[ServiceUnavailable("down")])).run_once()
+        assert not [r for r in caplog.records if r.name == "inkbridge.recognizer.latency"]
+        worker(FakeModel()).run_once()
+    (rec,) = [r for r in caplog.records if r.name == "inkbridge.recognizer.latency"]
+    msg = rec.getMessage()
+    assert "region=" in msg and "backlog=0" in msg
+    assert int(msg.split("latency_ms=")[1].split()[0]) > 0
+
+
+def test_nudge_wakes_the_worker_after_the_idle_delay(client):
+    w = worker(FakeModel(), idle_s=0.05)
+    w._thread = threading.Thread(target=lambda: time.sleep(1))  # is_alive stand-in
+    w._thread.start()
+    w.nudge("default")
+    assert not w._wake.is_set()
+    assert w._wake.wait(1.0)
+    w.nudge("other")  # not opted in: no timer
+    w._thread.join()

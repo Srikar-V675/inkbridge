@@ -73,7 +73,9 @@ def flush(document_id: str) -> None:
         if not gate.can_push(document_id):
             wait = gate.remaining(document_id)
             state = gate.state(document_id)
-            reason = {"none": "no_attention", "pen_down": "pen_down"}.get(state, f"quiet_{wait or 0:.0f}s")
+            reason = {"none": "no_attention", "pen_down": "pen_down"}.get(
+                state, f"quiet_{wait or 0:.0f}s"
+            )
             log.info("offers held doc=%s reason=%s", document_id, reason)
             if wait and _ARM_TIMERS:
                 _timers[document_id] = _arm(document_id, wait)
@@ -158,7 +160,9 @@ def create_offer(document_id: str, body: OfferIn, conn: Conn) -> dict:
 def list_offers(
     document_id: str,
     conn: Conn,
-    status: Annotated[Literal["open", "tapped", "dismissed", "expired", "done"] | None, Query()] = None,
+    status: Annotated[
+        Literal["open", "tapped", "dismissed", "expired", "done"] | None, Query()
+    ] = None,
 ) -> dict:
     if not db.document_exists(conn, document_id):
         raise HTTPException(404, "document not found")

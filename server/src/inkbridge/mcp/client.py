@@ -125,7 +125,9 @@ class ApiClient:
         if r.status_code == 404:
             raise NotFound(NO_CANVAS)
         if r.status_code == 422:
-            raise ApiError("The Inkbridge API rejected the request (422): brief is over 4000 characters.")
+            raise ApiError(
+                "The Inkbridge API rejected the request (422): brief is over 4000 characters."
+            )
         if not r.is_success:
             raise self._status_error(r.status_code)
         return r
@@ -168,7 +170,12 @@ class ApiClient:
         return self._json(self._get("/search", params))
 
     def retrieve(self, query: str, scope: str, k: int, document_id: str | None = None) -> dict:
-        params = {"q": query, "scope": scope, "k": k, "document_id": document_id or self.default_document}
+        params = {
+            "q": query,
+            "scope": scope,
+            "k": k,
+            "document_id": document_id or self.default_document,
+        }
         return self._json(self._get("/retrieve", params, not_found=NO_CANVAS))
 
     def get_chunks(self, document_id: str | None) -> dict:

@@ -368,8 +368,15 @@ def test_run_logs_refusals(client, caplog):
     conn = db.connect()
     for x in (b, c, d):
         db.offers.create_offer(
-            conn, "default", kind="related", anchor_chunk=x["id"], reason="r",
-            payload={"key": x["id"]}, score=1.0, source="detector", session_start="",
+            conn,
+            "default",
+            kind="related",
+            anchor_chunk=x["id"],
+            reason="r",
+            payload={"key": x["id"]},
+            score=1.0,
+            source="detector",
+            session_start="",
         )
     conn.close()
     caplog.set_level(logging.INFO, logger="inkbridge.offers")
@@ -472,7 +479,9 @@ def _put(client, doc, els):
 def _read(doc, text):
     conn = db.connect()
     try:
-        (c,) = [c for c in db.list_regions(conn, doc, chunks=True, status="active") if c["element_ids"]]
+        (c,) = [
+            c for c in db.list_regions(conn, doc, chunks=True, status="active") if c["element_ids"]
+        ]
         db.save_recognition(conn, c["id"], c["content_hash"], "gemini", text)
     finally:
         conn.close()

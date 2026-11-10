@@ -251,7 +251,9 @@ def test_put_scene_rolls_back_on_its_own_connection(client, monkeypatch):
     # The API closes its connection, which would discard the transaction anyway; on a kept
     # connection only put_scene's own rollback stops the next commit from saving half a scene.
     canvas = Canvas(client, row("a", 3))
-    monkeypatch.setattr(db.scenes, "_sync_chunks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(
+        db.scenes, "_sync_chunks", lambda *a, **k: (_ for _ in ()).throw(RuntimeError())
+    )
     conn = db.connect()
     try:
         with pytest.raises(RuntimeError):

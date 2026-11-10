@@ -30,7 +30,11 @@ def test_scene_edit_after_reading_leaves_index_consistent(client):
     ra = post(client, ["a"]).json()
     recognise(ra, "hello world")
     client.put(
-        SCENE, json={"base_version": 1, "elements": [{**A, "points": [[0, 0], [31, 41]], "version": 2}, B]}
+        SCENE,
+        json={
+            "base_version": 1,
+            "elements": [{**A, "points": [[0, 0], [31, 41]], "version": 2}, B],
+        },
     )
     assert search(client, "hello") == []
     conn = db.connect()

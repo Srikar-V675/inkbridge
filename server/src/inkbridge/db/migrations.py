@@ -76,7 +76,9 @@ def _migrate_locked(conn: sqlite3.Connection) -> list[int]:
     ):
         _backfill_v2(conn, rows=8 in done | set(applied))
     if 4 in done | set(applied):
-        _rekey_integral_hashes(conn, rows=8 in done | set(applied))  # under the migration lock, committed with it
+        _rekey_integral_hashes(
+            conn, rows=8 in done | set(applied)
+        )  # under the migration lock, committed with it
     return applied
 
 
@@ -97,7 +99,8 @@ def _move_drafts_out_of_scene(conn: sqlite3.Connection) -> None:
         if not rows:
             continue
         head = conn.execute(
-            "UPDATE scenes SET version = version + 1 WHERE document_id = ? RETURNING version", (doc,)
+            "UPDATE scenes SET version = version + 1 WHERE document_id = ? RETURNING version",
+            (doc,),
         ).fetchone()[0]
         moved: dict[str, list[dict]] = {}
         for r in rows:
@@ -142,7 +145,9 @@ def _move_drafts_out_of_scene(conn: sqlite3.Connection) -> None:
         )
         from inkbridge.db.chunks import _sync_chunks  # local: chunks imports the db package
 
-        _sync_chunks(conn, doc, live, {e["id"]: e for e in live}, {r["id"] for r in rows}, _now(), None)
+        _sync_chunks(
+            conn, doc, live, {e["id"]: e for e in live}, {r["id"] for r in rows}, _now(), None
+        )
         for op_id, els in moved.items():
             conn.execute(
                 "UPDATE agent_ops SET status = 'placed', elements_json = ?, box_json = ? WHERE id = ?",
@@ -159,7 +164,10 @@ def _backfill_scene_rows(conn: sqlite3.Connection) -> None:
     ).fetchall():
         slots: dict[str, tuple[int, dict]] = {}  # a duplicate id keeps the last element, first slot
         for pos, element in enumerate(json.loads(scene["elements_json"])):
-            slots[element["id"]] = (slots[element["id"]][0] if element["id"] in slots else pos, element)
+            slots[element["id"]] = (
+                slots[element["id"]][0] if element["id"] in slots else pos,
+                element,
+            )
         for element_id, (pos, element) in slots.items():
             conn.execute(
                 "INSERT INTO scene_elements"

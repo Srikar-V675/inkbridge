@@ -85,7 +85,10 @@ def test_changing_a_point_drops_the_old_reading(client):
     client.put(SCENE, json={"base_version": 0, "elements": [A, B]})
     ra = post(client, ["a"]).json()
     recognise(ra, "hello world")
-    client.put(SCENE, json={"base_version": 1, "elements": [{**A, "points": [[0, 0], [5, 5]], "version": 2}, B]})
+    client.put(
+        SCENE,
+        json={"base_version": 1, "elements": [{**A, "points": [[0, 0], [5, 5]], "version": 2}, B]},
+    )
     after = client.get(f"/regions/{ra['id']}").json()
     assert after["text"] is None and after["content_hash"] != ra["content_hash"]
     assert search(client, "hello") == []

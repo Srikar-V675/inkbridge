@@ -35,6 +35,7 @@ from inkbridge.recognizer import (
 from inkbridge.timing import timed
 
 log = logging.getLogger(__name__)
+latency_log = logging.getLogger("inkbridge.recognizer.latency")
 
 Publish = Callable[[str, dict], None]
 
@@ -172,6 +173,15 @@ class RecognitionWorker:
             self._wake.set()
         return accepted
 
+    def nudge(self, document_id: str) -> None:
+        """A scene save happened: wake the loop once the canvas will have been idle for `idle_s`,
+        so a pass does not also wait out the rest of `poll_s` (INK-196)."""
+        if document_id not in self.documents or self.stopped or not self.is_alive():
+            return
+        timer = threading.Timer(self.idle_s + 0.1, self._wake.set)
+        timer.daemon = True
+        timer.start()
+
     def _urgent_ids(self, document_id: str) -> set[str]:
         now = self._clock()
         with self._lock:
@@ -270,6 +280,13 @@ class RecognitionWorker:
                     log.warning("saving the reading of %s failed (%s); will retry", key[0], e)
                     continue
                 recognized.append(region["id"])
+                wrote = datetime.fromisoformat(region["updated_at"]).timestamp()
+                latency_log.info(
+                    "region=%s latency_ms=%d backlog=%d",
+                    region["id"],
+                    max(0, (self._clock() - wrote) * 1000),
+                    len(candidates) - 1,
+                )
                 if db.document_updated_at(conn, document_id) != started:
                     break  # new ink while reading: re-list so the newest chunk goes first
         finally:

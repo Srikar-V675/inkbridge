@@ -171,8 +171,11 @@ def test_new_note_has_the_vault_frontmatter_and_callout(client, page):
     assert inknote.validate(text, strict=True) == []
     canvas = outline(client)
     rich = inknote.new_note(
-        canvas, "T", bodies_for(canvas),
-        index="[[Machine Learning & AI.base]]", relates=["[[Linear Regression]]"],
+        canvas,
+        "T",
+        bodies_for(canvas),
+        index="[[Machine Learning & AI.base]]",
+        relates=["[[Linear Regression]]"],
     )
     assert 'index: "[[Machine Learning & AI.base]]"' in rich
     assert 'relates: ["[[Linear Regression]]"]' in rich
@@ -208,7 +211,9 @@ def test_strict_validation_catches_vault_breaks(client, page, mutate):
     assert inknote.validate(broken, strict=True)
 
 
-@pytest.mark.parametrize("bad", ["a \u2014 b", "a \u2013 b", "a \u2192 b", "ok \U0001f600", "a \u00b7 b"])
+@pytest.mark.parametrize(
+    "bad", ["a \u2014 b", "a \u2013 b", "a \u2192 b", "ok \U0001f600", "a \u00b7 b"]
+)
 def test_words_with_dashes_arrows_or_emoji_are_refused(client, page, bad):
     canvas = outline(client)
     first = canvas["chunks"][0]["id"]
@@ -397,7 +402,9 @@ def test_a_note_without_body_hashes_is_treated_as_edited_and_gets_one(client, pa
     assert after.entry(a)["body"] == inknote._body_hash(block)
     assert after.entry(a)["hash"] == page.chunk_of("a0")["content_hash"]
     assert not inknote._edited(out, after, a)
-    assert "body" not in after.entry(after.blocks[1].id)  # untouched legacy blocks stay as they were
+    assert "body" not in after.entry(
+        after.blocks[1].id
+    )  # untouched legacy blocks stay as they were
     assert inknote.validate(out) == []
 
 
@@ -619,7 +626,9 @@ def test_cli_round_trip(client, page, api, tmp_path, monkeypatch, capsys):
     assert inknote.main(["validate", str(note)]) == 1
 
 
-def test_cli_new_creates_folders_and_refuses_to_overwrite(client, page, api, tmp_path, monkeypatch, capsys):
+def test_cli_new_creates_folders_and_refuses_to_overwrite(
+    client, page, api, tmp_path, monkeypatch, capsys
+):
     monkeypatch.setenv("INKBRIDGE_API_URL", api)
     canvas_json, bodies_json = tmp_path / "canvas.json", tmp_path / "bodies.json"
     assert inknote.main(["canvas"]) == 0
@@ -757,6 +766,9 @@ def test_helper_runs_from_a_symlinked_skill_outside_the_repo(tmp_path):
     link.symlink_to(SCRIPT.parents[1])
     r = subprocess.run(
         [sys.executable, str(link / "scripts" / "inknote.py"), "--help"],
-        check=False, cwd=tmp_path, capture_output=True, text=True,
+        check=False,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0 and "validate" in r.stdout

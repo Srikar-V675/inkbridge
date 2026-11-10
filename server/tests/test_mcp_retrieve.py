@@ -38,7 +38,10 @@ def test_retrieve_is_registered_with_scope_and_k():
 
 def test_tool_finds_across_canvases(api):
     a, b = two_canvases(api)
-    assert {h["canvas"] for h in call("retrieve", query="gradient", scope="all")["results"]} == {a, b}
+    assert {h["canvas"] for h in call("retrieve", query="gradient", scope="all")["results"]} == {
+        a,
+        b,
+    }
     only = call("retrieve", query="gradient", scope="canvas", document_id=a)["results"]
     assert [h["canvas"] for h in only] == [a]
 

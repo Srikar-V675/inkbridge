@@ -272,9 +272,9 @@ def test_set_chunker_rechunks_now_and_keeps_ids_where_ink_matches(client):
     assert old["status"] == "orphaned" and old["successor_of"] in {r["id"] for r in after.values()}
     set_chunker("v1")
     assert len([k for k in active_regions() if "a0" in k]) == 1
-    assert [r["chunker"] for r in conn_rows("SELECT chunker FROM documents WHERE id='default'")] == [
-        "v1"
-    ]
+    assert [
+        r["chunker"] for r in conn_rows("SELECT chunker FROM documents WHERE id='default'")
+    ] == ["v1"]
     set_chunker(None)
     assert conn_rows("SELECT chunker FROM documents WHERE id='default'")[0]["chunker"] is None
 
@@ -310,7 +310,14 @@ def test_check_sync_reports_replaced_after_switching_to_v2(client):
 
 def test_check_sync_reports_both_old_ids_replaced_when_v2_merges(client):
     small = [
-        {"id": f"r{k}", "type": "rectangle", "x": 20000 + 100 * k, "y": 3000, "width": 4, "height": 4}
+        {
+            "id": f"r{k}",
+            "type": "rectangle",
+            "x": 20000 + 100 * k,
+            "y": 3000,
+            "width": 4,
+            "height": 4,
+        }
         for k in range(30)
     ]
     spare = [word(f"s{k}", 8000 + 200 * k, 3000) for k in range(3)]

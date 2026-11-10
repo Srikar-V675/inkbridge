@@ -71,12 +71,17 @@ def _anchor_box(conn: sqlite3.Connection, op: dict) -> placement.Box | None:
     return json.loads(row["bbox"]) if row and row["bbox"] else None
 
 
-def measure_op(conn: sqlite3.Connection, op_id: str, elements: Any, width: Any, height: Any) -> dict:
+def measure_op(
+    conn: sqlite3.Connection, op_id: str, elements: Any, width: Any, height: Any
+) -> dict:
     """Store the browser's elements for the op, placed with their true size; status `placed`."""
     if not (isinstance(elements, list) and 0 < len(elements) <= MAX_MEASURED_ELEMENTS):
         raise ValueError("elements")
     if not all(
-        isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v) and 0 < v <= 100_000
+        isinstance(v, int | float)
+        and not isinstance(v, bool)
+        and math.isfinite(v)
+        and 0 < v <= 100_000
         for v in (width, height)
     ):
         raise ValueError("size")
@@ -120,7 +125,8 @@ def measure_op(conn: sqlite3.Connection, op_id: str, elements: Any, width: Any, 
         tag = {
             e["id"]: e["customData"]["node"]
             for e in elements
-            if isinstance(e.get("customData"), dict) and isinstance(e["customData"].get("node"), str)
+            if isinstance(e.get("customData"), dict)
+            and isinstance(e["customData"].get("node"), str)
         }
         node_map: dict[str, list[str]] = {}
         for e in elements:
@@ -144,7 +150,9 @@ def measure_op(conn: sqlite3.Connection, op_id: str, elements: Any, width: Any, 
         raise
 
 
-def list_drafts(conn: sqlite3.Connection, document_id: str, expired: list[dict] | None = None) -> list[dict]:
+def list_drafts(
+    conn: sqlite3.Connection, document_id: str, expired: list[dict] | None = None
+) -> list[dict]:
     return list_ops(conn, document_id, ["placed"], expired)
 
 
@@ -213,7 +221,10 @@ def accept_op(
             }
             for i, (v, n) in prev["result"]["stamps"].items():
                 r = rows.get(i)
-                if r is not None and (r["version"], r["nonce"]) == (v, n):  # user has not touched it
+                if r is not None and (r["version"], r["nonce"]) == (
+                    v,
+                    n,
+                ):  # user has not touched it
                     out.append(
                         {
                             **json.loads(r["json"]),
@@ -280,7 +291,9 @@ def unaccept_op(conn: sqlite3.Connection, op_id: str) -> tuple[dict, list[str], 
     if op["status"] != "accepted":
         raise InvalidTransition(op["status"], "placed")
     if op.get("revises"):
-        raise WindowClosed(op_id)  # shortcut: restoring the old version is out of scope (decision 0100)
+        raise WindowClosed(
+            op_id
+        )  # shortcut: restoring the old version is out of scope (decision 0100)
     age = (datetime.now(UTC) - datetime.fromisoformat(op["result"]["at"])).total_seconds()
     if age > UNACCEPT_WINDOW_S:
         raise WindowClosed(op_id)
@@ -306,7 +319,12 @@ def unaccept_op(conn: sqlite3.Connection, op_id: str) -> tuple[dict, list[str], 
             if r is not None and (r["version"], r["nonce"]) == (v, n):  # untouched since accept
                 e = json.loads(r["json"])
                 dead.append(
-                    {**e, "isDeleted": True, "version": v + 1, "versionNonce": random.getrandbits(31) or 1}
+                    {
+                        **e,
+                        "isDeleted": True,
+                        "version": v + 1,
+                        "versionNonce": random.getrandbits(31) or 1,
+                    }
                 )
                 removed.append(i)
             else:
