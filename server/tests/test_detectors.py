@@ -526,3 +526,34 @@ def test_related_and_to_note_only_on_request(client, monkeypatch):
     monkeypatch.setattr(detectors, "RELATED_MIN_SCORE", 0)
     assert of_kind("to_note", slow=False) == [] and of_kind("related", slow=False) == []
     assert of_kind("to_note") and of_kind("related")  # on the slow path they still exist
+
+
+def test_dangling_needs_arrowhead(client):
+    _arrow_canvas(client, _free_arrow(endArrowhead=None, points=[[0, 0], [500, 0]], width=500))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_short_arrow_ignored(client):
+    _arrow_canvas(client, _free_arrow(points=[[0, 0], [100, 0]], width=100))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_curvy_arrow_ignored(client):
+    pts = [[0, 0], [100, 80], [200, -80], [300, 0]]
+    _arrow_canvas(client, _free_arrow(points=pts, width=300))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_freedraw_stroke_ignored(client):
+    _arrow_canvas(client, _pen_arrow("pa0", 100, 30))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_tip_near_a_box_ignored(client):
+    _arrow_canvas(client, _free_arrow(), _box("box1", 360))  # tip 60 from a box: touching enough
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_tip_far_from_boxes_found(client):
+    _arrow_canvas(client, _free_arrow())  # tip 200 from every box, straight, long, headed
+    assert len(of_kind("dangling_arrow")) == 1

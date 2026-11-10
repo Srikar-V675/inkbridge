@@ -84,7 +84,17 @@ def _dangling(c: dict) -> Candidate | None:
         return _cand("dangling_arrow", c["id"], payload, "Arrow leads nowhere")
 
 
-DANGLE_TOL = 40.0  # scene units; hypothesis, tune on logs
+DANGLE_TOL = 80.0  # scene units; hypothesis, tune on logs (was 40, INK-197)
+DANGLE_MIN_LEN = 150.0  # scene units; a short arrow is a stroke, not a flow (INK-197)
+DANGLE_STRAIGHT = 0.9  # chord / path length; a curvy stroke is handwriting (INK-197)
+
+
+def _long_straight_headed(e: dict, pts: list) -> bool:
+    if not e.get("endArrowhead"):
+        return False
+    path = sum(((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in zip(pts, pts[1:]))
+    chord = ((pts[-1][0] - pts[0][0]) ** 2 + (pts[-1][1] - pts[0][1]) ** 2) ** 0.5
+    return chord >= DANGLE_MIN_LEN and path > 0 and chord / path >= DANGLE_STRAIGHT
 
 
 def _gap(x: float, y: float, s: dict) -> float:
@@ -110,6 +120,8 @@ def _free_end_arrows(conn: sqlite3.Connection, document_id: str, chunks: list[di
     for e in live:
         pts = e.get("points") or []
         if e.get("type") != "arrow" or len(pts) < 2 or (e.get("endBinding") or {}).get("elementId"):
+            continue
+        if not _long_straight_headed(e, pts):
             continue
         ex, ey = e["x"] + pts[-1][0], e["y"] + pts[-1][1]
         if any(_gap(ex, ey, s) <= DANGLE_TOL for s in solids if s["id"] != e["id"]):
