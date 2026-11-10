@@ -47,6 +47,22 @@ def _recent(c: dict, now: datetime) -> bool:
         return False
 
 
+STABLE_S = 2.0  # chunk ink unchanged this long before a question/equation offer (INK-199), hypothesis
+
+
+def _stable(c: dict, now: datetime) -> bool:
+    # updated_at moves only when the ink changes (see _recent)
+    try:
+        return now - datetime.fromisoformat(c["updated_at"]) >= timedelta(seconds=STABLE_S)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _complete(text: str) -> bool:
+    t = text.strip()
+    return t.endswith(("?", "=")) or len(t.split()) >= 2
+
+
 @dataclass(frozen=True)
 class Candidate:
     kind: str
@@ -60,22 +76,29 @@ def _cand(kind: str, anchor: str, payload: dict, reason: str) -> Candidate:
     return Candidate(kind, anchor, SCORE[kind], payload, reason)
 
 
-def _question(c: dict) -> Candidate | None:
+def _question_shaped(c: dict) -> bool:
     text = (c["text"] or "").strip()
-    if text and (_QUESTION.match(text) or text.endswith("?")):
+    return bool(text) and bool(_QUESTION.match(text) or text.endswith("?"))
+
+
+def _equation_shaped(c: dict) -> bool:
+    return any(t and t.strip().endswith("=") for t in (c["text"], c["latex"]))
+
+
+def _question(c: dict, now: datetime) -> Candidate | None:
+    if _question_shaped(c) and _stable(c, now) and _complete(c["text"]):
         payload = {"action": "answer", "prepare": True, "key": c["text_hash"]}
         return _cand("question", c["id"], payload, "Looks like a question")
 
 
-def _open_equation(c: dict) -> Candidate | None:
-    for t in (c["text"], c["latex"]):
-        if t and t.strip().endswith("="):
-            return _cand(
-                "open_equation",
-                c["id"],
-                {"action": "answer", "key": c["text_hash"]},
-                "Equation left open",
-            )
+def _open_equation(c: dict, now: datetime) -> Candidate | None:
+    if _equation_shaped(c) and _stable(c, now):
+        return _cand(
+            "open_equation",
+            c["id"],
+            {"action": "answer", "key": c["text_hash"]},
+            "Equation left open",
+        )
 
 
 def _dangling(c: dict) -> Candidate | None:
@@ -187,6 +210,17 @@ def _tiny(c: dict) -> bool:
     )
 
 
+def held_unstable(conn: sqlite3.Connection, document_id: str) -> bool:
+    """True when a fresh chunk would give a question/equation offer but its ink is still changing."""
+    now = datetime.now(UTC)
+    for c in db.list_regions(conn, document_id, chunks=True, status="active", limit=500):
+        if c["source"] == "agent" or _tiny(c) or not _recent(c, now) or _stable(c, now):
+            continue
+        if _question_shaped(c) or _equation_shaped(c):
+            return True
+    return False
+
+
 def scan_counts(conn: sqlite3.Connection, document_id: str) -> str:
     """One log fragment: how many chunks the scan sees, how many have no reading, how many candidates."""
     all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
@@ -208,7 +242,7 @@ def scan(conn: sqlite3.Connection, document_id: str, slow: bool = False) -> list
     fresh_ids = {c["id"] for c in fresh}
     out: list[Candidate] = []
     for c in fresh:
-        out += [x for x in (_question(c), _open_equation(c), _dangling(c)) if x]
+        out += [x for x in (_question(c, now), _open_equation(c, now), _dangling(c)) if x]
     out += [x for x in _free_end_arrows(conn, document_id, fresh) if x.anchor in fresh_ids]
     out += _stale_note(chunks, watches)
     if slow:

@@ -107,6 +107,8 @@ def scan_now(document_id: str) -> None:
             try:
                 log.info("scan doc=%s %s", document_id, detectors.scan_counts(conn, document_id))
                 changed = detectors.run(conn, document_id, hub.session_start(document_id))
+                if detectors.held_unstable(conn, document_id):
+                    schedule_scan(document_id)  # ink still changing: look again (INK-199)
             finally:
                 conn.close()
         publish_updates(changed)
