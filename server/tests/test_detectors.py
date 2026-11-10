@@ -3,7 +3,7 @@
 from inkbridge import db
 from inkbridge.agent import detectors
 from inkbridge.db import questions as q_db
-from tests.test_chunk_persistence import Canvas, row
+from tests.test_chunk_persistence import Canvas, row, stroke
 from tests.test_search import recognise
 
 
@@ -29,6 +29,24 @@ def chunks(client, *texts):
             recognise(c, t)
         out.append(canvas.chunk_of(f"r{i}0"))
     return canvas, out
+
+
+def with_dots(client, n_real, n_dots, reading="w"):
+    """n_real 3-element chunks plus n_dots single-element dots far apart; returns the canvas."""
+    els = [e for i in range(n_real) for e in row(f"r{i}", 3, y=500 * i)]
+    els += [stroke(f"dot{j}", 0, 500 * (n_real + j)) for j in range(n_dots)]
+    canvas = Canvas(client, els)
+    for i in range(n_real):
+        recognise(canvas.chunk_of(f"r{i}0"), reading)
+    return canvas
+
+
+def test_tiny_chunk_never_triggers(client):
+    canvas = with_dots(client, 1, 1, reading="Meeting notes")
+    recognise(canvas.chunk_of("dot0"), "?")  # a dot read as a stray mark
+    assert of_kind("question") == []
+    _, (c,) = chunks(client, "Why?")
+    assert len(of_kind("question")) == 1
 
 
 def test_question(client):
@@ -94,6 +112,27 @@ def test_to_note(client):
     db.put_watch(conn, "default", "n1", [(cs[0]["id"], "f" * 64)])
     conn.close()
     assert of_kind("to_note") == []
+
+
+def test_to_note_ignores_dots_in_the_count(client):
+    with_dots(client, 7, 3)
+    assert of_kind("to_note") == []
+
+
+def test_to_note_once_per_canvas(client):
+    canvas = with_dots(client, 8, 0)
+    assert len(of_kind("to_note")) == 1
+    canvas.elements += [stroke("dot9", 0, 99000)] + row("r9", 3, y=50000)
+    canvas.put()
+    assert len(of_kind("to_note")) == 1
+
+
+def test_run_to_note_not_repeated_by_new_dot(client):
+    canvas = with_dots(client, 8, 0)
+    assert len([o for o in run() if o["kind"] == "to_note"]) == 1
+    canvas.elements += [stroke("dotx", 0, 99000)]
+    canvas.put()
+    assert len([o for o in run() if o["kind"] == "to_note"]) == 1
 
 
 def _flow(n_boxes, n_arrows):

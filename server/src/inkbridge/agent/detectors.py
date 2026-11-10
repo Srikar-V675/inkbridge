@@ -86,19 +86,32 @@ def _stale_note(chunks: list[dict], watches: list[dict]) -> list[Candidate]:
 
 
 def _to_note(chunks: list[dict], watches: list[dict]) -> list[Candidate]:
-    if watches or len(chunks) < TO_NOTE_MIN_CHUNKS:
+    if watches or len(chunks) < TO_NOTE_MIN_CHUNKS:  # chunks are already tiny-free
         return []
-    # list_regions orders by updated_at DESC, so the first is the most recent
-    return [
-        _cand(
-            "to_note", chunks[0]["id"], {"action": "note", "key": "canvas"}, "Turn this into a note"
-        )
-    ]
+    biggest = max(chunks, key=lambda c: len(c["element_ids"]))  # max keeps the first of equals
+    return [_cand("to_note", biggest["id"], {"action": "note", "key": "canvas"}, "Turn this into a note")]
+
+
+def _seen_key(kind: str, anchor: str, key) -> tuple:
+    # to_note is one offer per canvas: the anchor may move, the offer must not repeat
+    return (kind, None if kind == "to_note" else anchor, key)
+
+
+MIN_ELEMENTS = 2
+
+
+def _tiny(c: dict) -> bool:
+    # a dot or a stray tick: never an anchor (INK-183); a connector chunk is one element by design
+    return (
+        c["kind"] != "connector"
+        and len(c["element_ids"]) < MIN_ELEMENTS
+        and len((c["text"] or "").strip()) < 2
+    )
 
 
 def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
-    chunks = [c for c in all_chunks if c["source"] != "agent"]  # an agent's answer never triggers
+    chunks = [c for c in all_chunks if c["source"] != "agent" and not _tiny(c)]  # an agent's answer never triggers
     watches = db.list_watches(conn, document_id)
     out: list[Candidate] = []
     for c in chunks:
@@ -204,13 +217,13 @@ def _related(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> 
 def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> list[dict]:
     """Create offers for new candidates, best first. Returns the rows the budget expired."""
     seen = {
-        (o["kind"], o["anchor_chunk"], o["payload"].get("key"))
+        _seen_key(o["kind"], o["anchor_chunk"], o["payload"].get("key"))
         for o in offers_db.list_offers(conn, document_id)
         if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
     }
     changed: list[dict] = []
     for c in scan(conn, document_id):
-        k = (c.kind, c.anchor, c.payload.get("key"))
+        k = _seen_key(c.kind, c.anchor, c.payload.get("key"))
         if k in seen:
             continue
         try:
