@@ -212,8 +212,8 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
                 "code": "anchor_not_found",
                 "anchor": payload.anchor,
                 "document_id": document_id,
-                "msg": f"anchor chunk {payload.anchor!r} is not on canvas {document_id!r}; "
-                "get chunk ids from read_canvas, or omit anchor",
+                "msg": f"anchor chunk {payload.anchor!r} is not on this canvas; "
+                f"get chunk ids from read_canvas with document_id={document_id!r}, or omit anchor",
             },
         ) from None
     except ops_db.TooManyOpen as e:

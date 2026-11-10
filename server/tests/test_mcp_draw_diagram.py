@@ -68,6 +68,7 @@ def test_placed_diagram_returns_its_element_count(tool, client):
     assert out == {
         "op_id": op["id"],
         "status": "placed",
+        "document_id": "default",
         "element_count": 3,
         "diagram_id": op["diagram_id"],
     }
@@ -164,7 +165,7 @@ def test_graph_source_and_from_chunks_reach_the_api(tool, client):
     tool(apply, after=2, source=graph, source_kind="graph")
     (op,) = client.get("/documents/default/ops").json()["ops"]
     assert op["payload"]["source_kind"] == "graph" and op["payload"]["source"] == graph
-    with pytest.raises(ToolError, match="chunk_not_found"):
+    with pytest.raises(ToolError, match="chunk nope is not on canvas"):
         tool(from_chunks=["nope"])
 
 
