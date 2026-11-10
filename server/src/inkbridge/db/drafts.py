@@ -12,7 +12,7 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-from inkbridge.agent import placement
+from inkbridge.agent import flow, placement
 from inkbridge.agent.attention import attention
 from inkbridge.canvas import boxes
 from inkbridge.canvas.hashes import bbox_of
@@ -110,10 +110,11 @@ def measure_op(
         ]
         extra, recent = reserved_boxes(conn, op["document_id"], exclude_op=op_id)
         occupied += extra
+        anchor = _anchor_box(conn, op)
         spot = placement.place(
             occupied,
             (float(width), float(height)),
-            _anchor_box(conn, op),
+            anchor,
             op["payload"]["font_size"],
             recent,
             placement.view_rect(attention.view(op["document_id"])),
@@ -122,6 +123,11 @@ def measure_op(
         box = bbox_of(elements)
         dx, dy = spot["x"] - box["x"], spot["y"] - box["y"]
         placed = [_as_draft(e, op_id, dx, dy) for e in elements]
+        arrow = (
+            flow.arrow_for(prefix, anchor, spot, (float(width), float(height))) if anchor else None
+        )
+        if arrow and arrow["id"] not in set(ids):
+            placed.append(_as_draft(arrow, op_id, 0, 0))
         tag = {
             e["id"]: e["customData"]["node"]
             for e in elements

@@ -437,7 +437,7 @@ def _gap(client, height, prefix, x):
     op = client.post(
         OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": rid}}
     ).json()
-    return op["payload"]["placement"]["x"] - (bbox["x"] + bbox["width"])
+    return op["payload"]["placement"]["y"] - (bbox["y"] + bbox["height"])
 
 
 def test_placement_gap_scales_with_ink(client):
@@ -555,9 +555,10 @@ def test_orphaned_anchor_resolves_to_successor(client):
     assert op.status_code == 201
     box = bbox_of([USER_B])
     assert op.json()["payload"]["anchor_resolved"] == b
-    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(
-        op.json()["payload"]["font_size"]
-    )
+    assert op.json()["payload"]["placement"] == {
+        "x": box["x"],
+        "y": box["y"] + box["height"] + gap_for(op.json()["payload"]["font_size"]),
+    }
 
 
 @pytest.mark.fts_unchecked
@@ -597,9 +598,10 @@ def test_chain_of_two_orphans_reaches_live(client, kind):
     assert r.status_code == 201, r.text
     assert r.json()["payload"]["anchor_resolved"] == c
     box = bbox_of([USER_B])
-    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(
-        r.json()["payload"]["font_size"]
-    )
+    assert r.json()["payload"]["placement"] == {
+        "x": box["x"],
+        "y": box["y"] + box["height"] + gap_for(r.json()["payload"]["font_size"]),
+    }
 
 
 @pytest.mark.parametrize("kind", ["write_text", "draw_diagram"])
