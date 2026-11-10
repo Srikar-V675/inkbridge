@@ -80,3 +80,54 @@ def _reset_module_tracker():
     activity.configure(None)
     activity._live.clear()
     activity._last.clear()
+
+
+# --- wiring: the API lifespan, task routes, the recognition worker and the socket -------------
+
+from tests.test_questions_api import ask
+from tests.test_recognition_worker import FakeModel, fresh_canvas, worker
+from tests.test_ws import WS, recv
+
+
+def _activity_until(ws, working):
+    for _ in range(10):
+        msg = recv(ws)
+        if msg.get("type") == "agent.activity" and msg["working"] is working:
+            return msg
+    pytest.fail(f"no agent.activity working={working}")
+
+
+def test_ws_gets_activity_on_claim_and_complete(client):
+    from tests.test_agent_tasks import claim, tasks_of
+
+    ask(client, "one")
+    tid = tasks_of(client)[0]["id"]
+    with client.websocket_connect(WS) as ws:
+        claim(client, tid)
+        msg = _activity_until(ws, True)
+        assert (msg["what"], msg["count"]) == ("answer", 1)
+        r = client.post(f"/tasks/{tid}/complete", json={"status": "failed", "error": "x"})
+        assert r.status_code == 200, r.text
+        assert _activity_until(ws, False)["what"] == "reading"
+
+
+def test_worker_reports_reading(client):
+    canvas = fresh_canvas(client)
+    seen = []
+
+    def model(png, hint):
+        seen.append(activity.snapshot("default")["working"])
+        return FakeModel()(png, hint)
+
+    assert worker(model).run_once() >= 1
+    assert seen and all(seen)
+    assert activity.snapshot("default")["working"] is False
+    del canvas
+
+
+def test_ws_replay_current_activity(client):
+    activity.begin("default", "reading", "read:x")
+    with client.websocket_connect(WS) as ws:
+        msg = recv(ws)
+        assert msg == {"type": "agent.activity", "working": True, "what": "reading", "count": 1}
+    activity.end("default", "read:x")

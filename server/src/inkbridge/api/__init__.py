@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.gzip import GZipMiddleware
 
 from inkbridge import config, db
+from inkbridge.agent.activity import activity
 from inkbridge.agent.ask_runner import AskWorker
 from inkbridge.api import (
     canvases,
@@ -47,6 +48,7 @@ async def lifespan(app: FastAPI):
     configure_logging()
     lag = asyncio.create_task(sample_loop_lag())
     db.init_db()
+    activity.configure(ws.hub.publish)  # the working dot (INK-198, decision 0113)
     # Off unless INKBRIDGE_RECOGNIZE_DOCUMENTS lists test canvases (decision 0017).
     worker = RecognitionWorker.from_env(publish=offers.publish_chunks)
     if worker is not None:
@@ -67,6 +69,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         lag.cancel()
+        activity.configure(None)
         try:
             if worker is not None:
                 worker.stop()

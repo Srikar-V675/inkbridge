@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Protocol
 
 from inkbridge import config, db
+from inkbridge.agent.activity import activity
 from inkbridge.agent.answer_stream import AnswerStream
 from inkbridge.db import questions as q_db
 from inkbridge.db import tasks as tasks_db
@@ -425,6 +426,7 @@ class AskWorker:
         return None
 
     def _announce(self, task: dict) -> None:
+        activity.on_task(task)  # the working dot (INK-198); outside the guard, tests run without a hub
         if self._publish is not None:
             self._publish(task["document_id"], tasks_db.ws_message(task))
 
@@ -466,6 +468,8 @@ class AskWorker:
             self._release(conn, tid, why, give_up=False)
             self._fail(conn, qid, why)  # last, so the panel's final message is the question's
             return 1
+        finally:
+            activity.end(question["document_id"], f"task:{tid}")  # INK-198: the dot ends with the run
         if q_db.get_question(conn, qid)["status"] == "pending":
             self._release(conn, tid, "returned without answering", give_up=False)
             self._fail(conn, qid, "returned without answering")
@@ -489,5 +493,7 @@ class AskWorker:
             log.warning("ask runner failed for task %s (attempt %d): %s", tid, n, why)
             self._release(conn, tid, why, give_up=n >= self.MAX_ATTEMPTS)
             return 1
+        finally:
+            activity.end(task["document_id"], f"task:{tid}")  # INK-198: the dot ends with the run
         self._announce(tasks_db.finish(conn, tid, "done"))
         return 1

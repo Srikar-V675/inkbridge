@@ -5,7 +5,8 @@ server -> browser: `op.pending {op_id, type, payload}`, `op.updated {op_id, stat
 `op.placed {op_id, elements, placement, anchor}` (INK-114: the server placed the measured drafts),
 `question.update {question}` (INK-047), `question.delta {id, seq, text}` (INK-176),
 `scene.delta {seq, origin, elements}` (INK-112; not sent to the socket whose `device` is `origin`),
-`offer.created {offer}` and `offer.updated {offer}` (INK-130; only while the attention gate is open).
+`offer.created {offer}` and `offer.updated {offer}` (INK-130; only while the attention gate is open),
+`agent.activity {working, what, count}` (INK-198: the working dot; sent on change and once on connect).
 browser -> server: `attention {pen, view}` (INK-130; any frame, pen down or up, counts as a stroke
 moment), `op.measured {op_id, elements, width, height}` (the drafts as drawn, to be
 placed), `op.failed {op_id, error}`.
@@ -31,6 +32,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 
 from inkbridge import db
+from inkbridge.agent.activity import activity
 from inkbridge.agent.attention import attention
 from inkbridge.db import drafts
 from inkbridge.db import ops as ops_db
@@ -266,6 +268,9 @@ async def ws_endpoint(
             await run_in_threadpool(_with_conn, ops_db.mark_delivered, op["id"])
         for op in await run_in_threadpool(_with_conn, drafts.list_drafts, document):
             await ws.send_json(_placed_message(op))  # a late tab gets the drafts without a GET
+        snap = activity.snapshot(document)  # a late tab shows the working dot (INK-198)
+        if snap["working"]:
+            await ws.send_json(snap)
         while True:
             frame = await ws.receive()
             if frame["type"] == "websocket.disconnect":

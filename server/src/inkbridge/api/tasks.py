@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from inkbridge import db
+from inkbridge.agent.activity import activity
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub
 from inkbridge.db import questions as q_db
@@ -30,6 +31,7 @@ class CompleteIn(_Strict):
 
 def publish(task: dict) -> dict:
     hub.publish(task["document_id"], tasks_db.ws_message(task))
+    activity.on_task(task)  # the working dot (INK-198); after the task line, which tabs read first
     return task
 
 

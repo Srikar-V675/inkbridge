@@ -183,19 +183,26 @@ def test_op_retry_does_not_count_twice(client):
         conn.close()
 
 
+def _task_frame(ws) -> dict:
+    """The next frame that is not the working dot (INK-198)."""
+    while (msg := ws.receive_json())["type"] == "agent.activity":
+        pass
+    return msg
+
+
 def test_claim_complete_routes_and_ws_line(client):
     t = new_task("link")
     with client.websocket_connect("/ws?document=default") as ws:
         got = claim(client, t)
         assert got["status"] == "running"
-        msg = ws.receive_json()
+        msg = _task_frame(ws)
         assert (
             msg["type"] == "task.status" and msg["task_id"] == t and msg["line"] == "Working on it"
         )
         assert client.post(f"/tasks/{t}/claim", json={"claimed_by": "x"}).status_code == 409
         r = client.post(f"/tasks/{t}/complete", json={"status": "failed", "error": "boom"})
         assert r.status_code == 200
-        assert ws.receive_json()["line"] == "Failed: boom"
+        assert _task_frame(ws)["line"] == "Failed: boom"
     assert client.post("/tasks/nope/claim", json={"claimed_by": "x"}).status_code == 404
 
 
