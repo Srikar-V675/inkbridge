@@ -257,14 +257,14 @@ def test_empty_canvas_places_at_origin(client):
     assert write(client).json()["payload"]["placement"] == {"x": 0, "y": 0}
 
 
-def test_anchored_op_goes_right_of_the_chunk(client):
+def test_anchored_op_goes_below_the_chunk(client):
     seed(client)
     rid = _anchor_region(["user-a"])
     op = client.post(OPS, json={"type": "write_text", "payload": {"text": "x", "anchor": rid}})
     assert op.status_code == 201
     box = bbox_of([USER_A])
     gap = gap_for(op.json()["payload"]["font_size"])
-    assert op.json()["payload"]["placement"] == {"x": box["x"] + box["width"] + gap, "y": box["y"]}
+    assert op.json()["payload"]["placement"] == {"x": box["x"], "y": box["y"] + box["height"] + gap}
 
 
 def test_stacked_ops_never_overlap_live_ink_or_each_other(client):
@@ -319,7 +319,7 @@ def test_anchored_diagram_is_placed_beside_the_chunk_when_there_is_room(client):
     op = client.post(OPS, json={"type": "draw_diagram", "payload": payload}).json()
     box = bbox_of([USER_A])
     gap = gap_for(op["payload"]["font_size"])
-    assert op["payload"]["placement"] == {"x": box["x"] + box["width"] + gap, "y": box["y"]}
+    assert op["payload"]["placement"] == {"x": box["x"], "y": box["y"] + box["height"] + gap}
 
 
 def test_placement_avoids_the_corners_of_rotated_ink(client):
