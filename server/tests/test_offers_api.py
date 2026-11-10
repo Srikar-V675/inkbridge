@@ -66,7 +66,9 @@ def post(client, chunk, score=0.5, kind="related", expect=201, **kw):
 
 def attend(ws, pen):
     ws.send_json({"type": "attention", "pen": pen, "view": VIEW})
-    time.sleep(0.15)  # the server reads the frame on another thread; the fake clock must not move first
+    time.sleep(
+        0.15
+    )  # the server reads the frame on another thread; the fake clock must not move first
 
 
 def test_no_push_while_pen_down(client, chunk, clock):
@@ -148,7 +150,11 @@ def test_focus_holds_and_releases(client, chunk, clock):
         open_gate(ws, clock)
         assert client.put("/documents/default/focus", json={"on": True}).json() == {"on": True}
         offer = post(client, chunk)
-        assert client.get("/documents/default/offers").json() == {"offers": [], "waiting": 1, "focus": True}
+        assert client.get("/documents/default/offers").json() == {
+            "offers": [],
+            "waiting": 1,
+            "focus": True,
+        }
         q = client.post("/documents/default/questions", json={"text": "hi"})
         assert q.status_code == 201
         assert recv(ws)["type"] == "question.update"  # asks ignore Focus, offers stay held
@@ -246,7 +252,12 @@ def test_scan_to_ws_for_question(client, clock):
 
 
 def test_tap_makes_a_task_per_kind(client, chunk, clock):
-    expected = {"question": "question", "dangling_arrow": "link", "sketch": "diagram", "to_note": "question"}
+    expected = {
+        "question": "question",
+        "dangling_arrow": "link",
+        "sketch": "diagram",
+        "to_note": "question",
+    }
     for kind, mode in expected.items():
         offer = post(client, chunk, kind=kind)
         assert client.post(f"/offers/{offer['id']}/tap").status_code == 200

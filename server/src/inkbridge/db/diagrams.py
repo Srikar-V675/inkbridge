@@ -37,13 +37,17 @@ def get(conn: sqlite3.Connection, diagram_id: str) -> dict | None:
     return _row(r) if r else None
 
 
-def attach(conn: sqlite3.Connection, document_id: str, oid: str, payload: dict) -> tuple[str, str | None]:
+def attach(
+    conn: sqlite3.Connection, document_id: str, oid: str, payload: dict
+) -> tuple[str, str | None]:
     """(diagram_id, revises) for a new draw_diagram op. The caller holds the write transaction."""
     if payload.get("diagram_id"):
         d = get(conn, payload["diagram_id"])
         if d is None or d["document_id"] != document_id:
             raise DiagramNotFound(payload["diagram_id"])
-        cur = conn.execute("SELECT status FROM agent_ops WHERE id = ?", (d["current_op"],)).fetchone()
+        cur = conn.execute(
+            "SELECT status FROM agent_ops WHERE id = ?", (d["current_op"],)
+        ).fetchone()
         if cur is None or cur["status"] != "accepted":
             raise DiagramBusy(d["id"])
         return d["id"], d["current_op"]

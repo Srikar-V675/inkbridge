@@ -555,7 +555,9 @@ def test_orphaned_anchor_resolves_to_successor(client):
     assert op.status_code == 201
     box = bbox_of([USER_B])
     assert op.json()["payload"]["anchor_resolved"] == b
-    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(op.json()["payload"]["font_size"])
+    assert op.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(
+        op.json()["payload"]["font_size"]
+    )
 
 
 @pytest.mark.fts_unchecked
@@ -595,7 +597,9 @@ def test_chain_of_two_orphans_reaches_live(client, kind):
     assert r.status_code == 201, r.text
     assert r.json()["payload"]["anchor_resolved"] == c
     box = bbox_of([USER_B])
-    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(r.json()["payload"]["font_size"])
+    assert r.json()["payload"]["placement"]["x"] == box["x"] + box["width"] + gap_for(
+        r.json()["payload"]["font_size"]
+    )
 
 
 @pytest.mark.parametrize("kind", ["write_text", "draw_diagram"])
@@ -810,7 +814,9 @@ def test_relation_needs_question_id(client):
     seed(client)
     assert write(client, payload={"text": "x", "relation": "answer"}).status_code == 422
     q = _question(client)
-    assert write(client, payload={"text": "x", "question_id": q, "relation": "bad"}).status_code == 422
+    assert (
+        write(client, payload={"text": "x", "question_id": q, "relation": "bad"}).status_code == 422
+    )
 
 
 def test_question_fields_do_not_bypass_ink_guard(client):
@@ -878,5 +884,7 @@ def test_agent_font_within_band_on_real_scale_page(client):
     box = bbox_of(page)
     gap = gap_for(fs)
     spot = first["payload"]["placement"]
-    assert spot["x"] <= box["x"] + box["width"] + 6 * gap and spot["y"] <= box["y"] + box["height"] + 6 * gap
-
+    assert (
+        spot["x"] <= box["x"] + box["width"] + 6 * gap
+        and spot["y"] <= box["y"] + box["height"] + 6 * gap
+    )

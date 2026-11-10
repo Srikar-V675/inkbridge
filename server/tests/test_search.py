@@ -88,7 +88,9 @@ def test_hostile_query_syntax_does_not_error(client, two_regions):
 
 def test_orphaned_regions_are_not_searchable(client, two_regions):
     ra, _ = two_regions
-    client.put(SCENE, json={"base_version": 1, "elements": [{**A, "isDeleted": True, "version": 2}, B]})
+    client.put(
+        SCENE, json={"base_version": 1, "elements": [{**A, "isDeleted": True, "version": 2}, B]}
+    )
     assert client.get(f"/regions/{ra['id']}").json()["status"] == "orphaned"
     # a reading for the orphaned region's *current* hash is indexed, but must stay hidden
     current = client.get(f"/regions/{ra['id']}").json()["content_hash"]

@@ -39,4 +39,6 @@ def parse_graph(source: str) -> Graph:
     try:
         return Graph.model_validate_json(source)
     except ValidationError as e:
-        raise ValueError("; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors())) from None
+        raise ValueError(
+            "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors())
+        ) from None

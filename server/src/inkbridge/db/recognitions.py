@@ -113,15 +113,16 @@ def recognition_candidates(
 
     Fresh crop (png_stale = 0; with include_stale the server renders it first, INK-120) and no reading of any source for the current content_hash: moved
     ink keeps its content_hash and so its reading, and a user or agent reading needs no model call.
+    Newest-touched first, so the area just written is read before a backlog (INK-196).
     """
     fresh = "" if include_stale else " AND r.png_stale = 0"
     rows = conn.execute(
-        "SELECT r.id, r.content_hash, r.png_path, r.bbox, r.element_ids_json FROM regions r"
+        "SELECT r.id, r.content_hash, r.png_path, r.bbox, r.element_ids_json, r.updated_at FROM regions r"
         f" WHERE r.document_id = ? AND r.status = 'active'{fresh}"
         " AND r.content_hash IS NOT NULL AND COALESCE(r.kind, '') != 'connector'"
         " AND NOT EXISTS (SELECT 1 FROM recognitions c"
         "  WHERE c.region_id = r.id AND c.content_hash = r.content_hash)"
-        " ORDER BY r.updated_at, r.id",
+        " ORDER BY r.updated_at DESC, r.id",
         (document_id,),
     )
     return [dict(r) for r in rows]

@@ -252,6 +252,8 @@ def test_parallel_ops_cannot_overshoot_the_limit(client):
     assert sorted(codes) == [201] * 3 + [409] * 5
     conn = db.connect()
     try:
-        assert conn.execute("SELECT COUNT(*) FROM agent_ops WHERE task_id=?", (t,)).fetchone()[0] == 3
+        assert (
+            conn.execute("SELECT COUNT(*) FROM agent_ops WHERE task_id=?", (t,)).fetchone()[0] == 3
+        )
     finally:
         conn.close()

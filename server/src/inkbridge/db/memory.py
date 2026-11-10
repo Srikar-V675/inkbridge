@@ -12,7 +12,9 @@ MAX_CHANGED = 100
 
 
 def _head(conn: sqlite3.Connection, document_id: str) -> int:
-    row = conn.execute("SELECT version FROM scenes WHERE document_id = ?", (document_id,)).fetchone()
+    row = conn.execute(
+        "SELECT version FROM scenes WHERE document_id = ?", (document_id,)
+    ).fetchone()
     if row is None:
         raise DocumentNotFound(document_id)
     return row["version"]
@@ -26,7 +28,11 @@ def get_memory(conn: sqlite3.Connection, document_id: str) -> dict:
     ).fetchone()
     if row is None:
         return {"brief": "", "last_seen_seq": 0, "updated_at": None}
-    return {"brief": row["brief_md"], "last_seen_seq": row["last_seen_seq"], "updated_at": row["updated_at"]}
+    return {
+        "brief": row["brief_md"],
+        "last_seen_seq": row["last_seen_seq"],
+        "updated_at": row["updated_at"],
+    }
 
 
 def set_brief(conn: sqlite3.Connection, document_id: str, brief: str) -> dict:
@@ -61,15 +67,27 @@ def what_changed(
         ):
             if changed.isdisjoint(json.loads(r["element_ids_json"])):
                 continue
-            found[r["id"]] = (_region_dict(conn, r), "changed" if r["status"] == "active" else "removed")
+            found[r["id"]] = (
+                _region_dict(conn, r),
+                "changed" if r["status"] == "active" else "removed",
+            )
     live = {i: c["bounds"] for i, (c, kind) in found.items() if kind == "changed"}
     ordered = reading_order(live) + sorted(i for i, (_, k) in found.items() if k == "removed")
     out = []
     for cid in ordered[:MAX_CHANGED]:
         c, kind = found[cid]
-        out.append({"id": cid, "change": kind, "kind": c["kind"], "bounds": c["bounds"],
-                    "text": c["text"], "latex": c["latex"], "content_hash": c["content_hash"],
-                    "text_hash": c["text_hash"]})
+        out.append(
+            {
+                "id": cid,
+                "change": kind,
+                "kind": c["kind"],
+                "bounds": c["bounds"],
+                "text": c["text"],
+                "latex": c["latex"],
+                "content_hash": c["content_hash"],
+                "text_hash": c["text_hash"],
+            }
+        )
     if mark_seen:
         conn.execute(
             "INSERT INTO canvas_memory (document_id, last_seen_seq, updated_at) VALUES (?,?,?)"
@@ -77,5 +95,12 @@ def what_changed(
             (document_id, head, _now()),
         )
         conn.commit()
-    return {"document": document_id, "since": start, "seq": head, "marked_seen": mark_seen,
-            "chunk_count": len(ordered), "omitted": max(0, len(ordered) - MAX_CHANGED), "chunks": out}
+    return {
+        "document": document_id,
+        "since": start,
+        "seq": head,
+        "marked_seen": mark_seen,
+        "chunk_count": len(ordered),
+        "omitted": max(0, len(ordered) - MAX_CHANGED),
+        "chunks": out,
+    }

@@ -167,7 +167,11 @@ def test_documents_can_be_created_and_listed(client, monkeypatch):
     doc = r.json()
     assert doc["title"] == "Linear algebra" and len(doc["id"]) == 12 and doc["version"] == 0
     assert doc["url"] == f"http://laptop.local:5173/?canvas={doc['id']}"
-    assert client.get(f"/documents/{doc['id']}/scene").json() == {"seq": 0, "version": 0, "elements": []}
+    assert client.get(f"/documents/{doc['id']}/scene").json() == {
+        "seq": 0,
+        "version": 0,
+        "elements": [],
+    }
     assert outline_of(client, doc["id"])["chunks"] == []
     listed = client.get("/documents").json()
     assert {d["id"] for d in listed} == {"default", doc["id"]}

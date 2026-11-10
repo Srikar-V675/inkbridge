@@ -123,9 +123,17 @@ def crop_file(rid: str) -> Path:
 
 def test_health_reports_the_crop_source(client, monkeypatch):
     monkeypatch.delenv("INKBRIDGE_CHUNKER", raising=False)
-    assert client.get("/health").json() == {"status": "ok", "crop_source": "browser", "chunker": "v1"}
+    assert client.get("/health").json() == {
+        "status": "ok",
+        "crop_source": "browser",
+        "chunker": "v2",
+    }
     server_mode(monkeypatch)
-    assert client.get("/health").json() == {"status": "ok", "crop_source": "server", "chunker": "v1"}
+    assert client.get("/health").json() == {
+        "status": "ok",
+        "crop_source": "server",
+        "chunker": "v2",
+    }
 
 
 def test_image_png_and_overview_render_on_demand_in_server_mode(client, monkeypatch):

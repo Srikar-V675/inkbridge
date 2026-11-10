@@ -167,7 +167,7 @@ def test_colliding_accept_is_refused(client):
     with closing(db.connect()) as conn:
         conn.execute(
             "INSERT INTO scene_elements (document_id, id, pos, seq, version, nonce, is_deleted, json,"
-            " updated_at) VALUES ('default', ?, 99, 1, 1, 1, 0, '{\"id\":\"x\",\"type\":\"text\"}', 'now')",
+            ' updated_at) VALUES (\'default\', ?, 99, 1, 1, 1, 0, \'{"id":"x","type":"text"}\', \'now\')',
             (f"{op['id']}:1",),
         )
         conn.commit()
@@ -222,7 +222,12 @@ def test_unaccept_removes_only_unchanged(client):
     accept(client, op["id"])
     mine = {e["id"]: e for e in scene_rows(op["id"])}
     edited = {**mine[f"{op['id']}:2"], "version": mine[f"{op['id']}:2"]["version"] + 1, "x": 999}
-    assert client.post("/documents/default/elements", json={"device": "d1", "batch": 1, "elements": [edited]}).status_code == 200
+    assert (
+        client.post(
+            "/documents/default/elements", json={"device": "d1", "batch": 1, "elements": [edited]}
+        ).status_code
+        == 200
+    )
     r = client.post(f"/ops/{op['id']}/unaccept")
     assert r.status_code == 200
     body = r.json()

@@ -179,7 +179,9 @@ def test_path_route_404_and_410(client):
     old, (a, *_) = chain(client)
     r = client.get(f"{G}/path", params={"from_chunk": a, "to_chunk": "nope"})
     assert r.status_code == 404 and r.json()["detail"]["code"] == "chunk_not_found"
-    for e in old.elements:  # a full save no longer replaces the scene: delete the chain, then start over
+    for e in (
+        old.elements
+    ):  # a full save no longer replaces the scene: delete the chain, then start over
         e["isDeleted"] = True
     old.put()
     canvas = Canvas(client, row("p", 3) + row("q", 3, y=500))

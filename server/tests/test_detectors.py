@@ -9,16 +9,16 @@ from tests.test_chunk_persistence import Canvas, row, stroke
 from tests.test_search import recognise
 
 
-def scan():
+def scan(slow=True):
     conn = db.connect()
     try:
-        return detectors.scan(conn, "default")
+        return detectors.scan(conn, "default", slow=slow)
     finally:
         conn.close()
 
 
-def of_kind(kind):
-    return [c for c in scan() if c.kind == kind]
+def of_kind(kind, slow=True):
+    return [c for c in scan(slow) if c.kind == kind]
 
 
 def chunks(client, *texts):
@@ -131,10 +131,10 @@ def test_to_note_once_per_canvas(client):
 
 def test_run_to_note_not_repeated_by_new_dot(client):
     canvas = with_dots(client, 8, 0)
-    assert len([o for o in run() if o["kind"] == "to_note"]) == 1
+    assert len([o for o in run(slow=True) if o["kind"] == "to_note"]) == 1
     canvas.elements += [stroke("dotx", 0, 99000)]
     canvas.put()
-    assert len([o for o in run() if o["kind"] == "to_note"]) == 1
+    assert len([o for o in run(slow=True) if o["kind"] == "to_note"]) == 1
 
 
 def _flow(n_boxes, n_arrows):
@@ -264,7 +264,7 @@ def test_run_creates_offers_and_dedupes(client):
 
 def test_run_swallows_budget_refusals(client):
     chunks(client, *["Why a?", "Why b?", "Why c?", "Why d?"])
-    assert len(run()) == 3
+    assert len(run()) == 1  # four candidates, one chip: the rest wait for a later scan
 
 
 def test_scan_now_publishes(client, monkeypatch):
@@ -368,14 +368,22 @@ def test_run_logs_refusals(client, caplog):
     conn = db.connect()
     for x in (b, c, d):
         db.offers.create_offer(
-            conn, "default", kind="related", anchor_chunk=x["id"], reason="r",
-            payload={"key": x["id"]}, score=1.0, source="detector", session_start="",
+            conn,
+            "default",
+            kind="related",
+            anchor_chunk=x["id"],
+            reason="r",
+            payload={"key": x["id"]},
+            score=1.0,
+            source="detector",
+            session_start="",
         )
     conn.close()
     caplog.set_level(logging.INFO, logger="inkbridge.offers")
     run()
     msgs = [r.getMessage() for r in caplog.records if "detector run" in r.getMessage()]
-    assert len(msgs) == 1 and "skipped=" in msgs[0] and "question:budget_full" in msgs[0]
+    assert len(msgs) == 1 and "held=open_offer" in msgs[0]  # one chip on screen: nothing new
+    assert len([o for o in run() if o["kind"] == "question"]) == 0
 
 
 def _box(i, x, y=0):
@@ -472,7 +480,9 @@ def _put(client, doc, els):
 def _read(doc, text):
     conn = db.connect()
     try:
-        (c,) = [c for c in db.list_regions(conn, doc, chunks=True, status="active") if c["element_ids"]]
+        (c,) = [
+            c for c in db.list_regions(conn, doc, chunks=True, status="active") if c["element_ids"]
+        ]
         db.save_recognition(conn, c["id"], c["content_hash"], "gemini", text)
     finally:
         conn.close()
@@ -493,3 +503,84 @@ def test_one_offer_per_kind_via_run(client):
         assert got[q] == ["question"]
         assert got[arrow] == ["dangling_arrow"]
         assert got[flow] == ["sketch"]
+
+
+def _age(chunk_id, seconds):
+    from datetime import UTC, datetime, timedelta
+
+    conn = db.connect()
+    conn.execute(
+        "UPDATE regions SET updated_at=? WHERE id=?",
+        ((datetime.now(UTC) - timedelta(seconds=seconds)).isoformat(), chunk_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_old_ink_gives_no_offer(client):
+    _, (a, b) = chunks(client, "Why does it rise?", "x =")
+    assert of_kind("question") and of_kind("open_equation")
+    _age(a["id"], 600)
+    _age(b["id"], 600)
+    assert of_kind("question") == [] and of_kind("open_equation") == []
+
+
+def test_related_and_to_note_only_on_request(client, monkeypatch):
+    other = _doc(client, "B")
+    _put(client, other, row("b", 3))
+    conn = db.connect()
+    (b,) = db.list_regions(conn, other, chunks=True, status="active")
+    db.save_recognition(conn, b["id"], b["content_hash"], "gemini", "gradient descent learning rate")
+    conn.close()
+    with_dots(client, 9, 0, reading="choosing a learning rate for gradient descent")
+    monkeypatch.setattr(detectors, "RELATED_MIN_SCORE", 0)
+    assert of_kind("to_note", slow=False) == [] and of_kind("related", slow=False) == []
+    assert of_kind("to_note") and of_kind("related")  # on the slow path they still exist
+
+
+def test_dangling_needs_arrowhead(client):
+    _arrow_canvas(client, _free_arrow(endArrowhead=None, points=[[0, 0], [500, 0]], width=500))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_short_arrow_ignored(client):
+    _arrow_canvas(client, _free_arrow(points=[[0, 0], [100, 0]], width=100))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_curvy_arrow_ignored(client):
+    pts = [[0, 0], [100, 80], [200, -80], [300, 0]]
+    _arrow_canvas(client, _free_arrow(points=pts, width=300))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_freedraw_stroke_ignored(client):
+    _arrow_canvas(client, _pen_arrow("pa0", 100, 30))
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_tip_near_a_box_ignored(client):
+    _arrow_canvas(client, _free_arrow(), _box("box1", 360))  # tip 60 from a box: touching enough
+    assert of_kind("dangling_arrow") == []
+
+
+def test_dangling_tip_far_from_boxes_found(client):
+    _arrow_canvas(client, _free_arrow())  # tip 200 from every box, straight, long, headed
+    assert len(of_kind("dangling_arrow")) == 1
+
+
+def test_run_creates_one_offer_at_a_time(client):
+    chunks(client, "Why a?", "Why b?", "Why c?")
+    assert len(run()) == 1  # three questions, one chip on screen
+    assert len(run()) == 1  # still one while it is open
+    conn = db.connect()
+    db.offers.dismiss_offer(conn, run()[0]["id"])
+    conn.close()
+    later = [o for o in run() if o["status"] == "open"]
+    assert len(later) == 1 and len(run()) == 2  # the next question, not the dismissed one
+
+
+def test_flowchart_gives_at_most_one(client):
+    free = {**_free_arrow(), "id": "free", "y": 230}
+    Canvas(client, _flow(3, 2) + [free])
+    assert len([o for o in run() if o["status"] == "open"]) == 1

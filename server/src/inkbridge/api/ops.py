@@ -140,7 +140,9 @@ def _check_diagram(conn, document_id: str, payload: "DrawDiagramPayload") -> Non
         r = db.get_region(conn, cid)
         if not (r and r["document_id"] == document_id):
             found_on = r["document_id"] if r else None
-            where = f"it is on canvas {found_on!r}" if found_on else "no canvas has it (re-chunked?)"
+            where = (
+                f"it is on canvas {found_on!r}" if found_on else "no canvas has it (re-chunked?)"
+            )
             raise HTTPException(
                 422,
                 {
@@ -189,7 +191,13 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
     try:
         with timed("ops.create", fields=len(body.payload)):  # includes server-side placement
             op, created = ops_db.create_op(
-                conn, document_id, body.type, payload.model_dump(exclude_none=True), body.op_id, swept, task_id
+                conn,
+                document_id,
+                body.type,
+                payload.model_dump(exclude_none=True),
+                body.op_id,
+                swept,
+                task_id,
             )
     except db.DocumentNotFound:
         raise HTTPException(404, "document not found") from None

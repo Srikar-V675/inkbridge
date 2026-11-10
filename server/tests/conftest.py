@@ -34,6 +34,15 @@ def reset_activity():
 
 
 @pytest.fixture(autouse=True)
+def legacy_chunker_v1(monkeypatch):
+    """Most chunk tests were written against v1; the default is v2 since INK-195 (decision 0110).
+
+    Tests of the default `delenv` this first; tests of v2 use the `v2` fixture or a canvas setting.
+    """
+    monkeypatch.setenv("INKBRIDGE_CHUNKER", "v1")
+
+
+@pytest.fixture(autouse=True)
 def fts_consistent(monkeypatch, request):
     yield
     if request.node.get_closest_marker("fts_unchecked"):

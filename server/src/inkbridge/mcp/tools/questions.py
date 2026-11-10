@@ -28,7 +28,9 @@ def list_questions(
     ] = "pending",
     document_id: Annotated[
         str | None,
-        Field(description="The canvas; pass it on every call (omitting it uses INKBRIDGE_DOCUMENT)"),
+        Field(
+            description="The canvas; pass it on every call (omitting it uses INKBRIDGE_DOCUMENT)"
+        ),
     ] = None,
     limit: Annotated[int, Field(ge=1, le=100)] = 20,
 ) -> str:

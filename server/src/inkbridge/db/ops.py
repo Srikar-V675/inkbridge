@@ -267,7 +267,15 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id
             stored = {
                 k: v
                 for k, v in existing["payload"].items()
-                if k not in ("placement", "id_prefix", "font_size", "wrap_chars", "anchor_resolved", "node_map")
+                if k
+                not in (
+                    "placement",
+                    "id_prefix",
+                    "font_size",
+                    "wrap_chars",
+                    "anchor_resolved",
+                    "node_map",
+                )
             }
             if (existing["document_id"], existing["type"], stored) != (
                 document_id,
@@ -277,7 +285,9 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id
                 raise OpConflict(op_id)
             conn.rollback()
             return existing, False
-    if task_id:  # INK-133: check and insert share this write lock, so parallel calls cannot overshoot
+    if (
+        task_id
+    ):  # INK-133: check and insert share this write lock, so parallel calls cannot overshoot
         tasks_db.op_budget(conn, task_id, document_id, op_type)
     swept = _expire_stale(conn, document_id)  # an expired op must not hold a slot
     open_ops, oldest = conn.execute(
@@ -303,7 +313,9 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id
         anchor_ids = set(json.loads(region["element_ids_json"] or "[]"))
 
     rows = _sample_rows(elements, anchor_ids)
-    fs = placement.font_size_for([h for _, h in rows], payload.get("size"), placement.line_pitch(rows))
+    fs = placement.font_size_for(
+        [h for _, h in rows], payload.get("size"), placement.line_pitch(rows)
+    )
     live_view = attention.view(document_id)
     payload = {**payload, "font_size": fs, "wrap_chars": placement.wrap_for(fs, live_view)}
 
@@ -325,7 +337,9 @@ def _create_op(conn, document_id, op_type, payload, op_id, expired=None, task_id
     )
 
     diagram_id, revises = (
-        diagrams.attach(conn, document_id, oid, payload) if op_type == "draw_diagram" else (None, None)
+        diagrams.attach(conn, document_id, oid, payload)
+        if op_type == "draw_diagram"
+        else (None, None)
     )
     conn.execute(
         "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at,"

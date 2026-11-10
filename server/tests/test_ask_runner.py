@@ -48,7 +48,14 @@ def test_command_has_explicit_allow_list(tmp_path):
     allowed = flag(cmd, "--allowedTools").split(",")
     assert allowed == [
         f"mcp__inkbridge__{t}"
-        for t in ("read_canvas", "get_region", "search", "answer_question", "write_text", "draw_diagram")
+        for t in (
+            "read_canvas",
+            "get_region",
+            "search",
+            "answer_question",
+            "write_text",
+            "draw_diagram",
+        )
     ]
     denied = flag(cmd, "--disallowedTools")
     for t in ("create_canvas", "Bash"):

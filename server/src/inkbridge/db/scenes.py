@@ -108,7 +108,9 @@ def merge_elements(
     crops: list[str] = []
     timings = {} if timings is None else timings
     t_start = time.perf_counter()  # before the lock wait
-    conn.execute("BEGIN IMMEDIATE")  # the write lock first; the merge is read-compare-write under it
+    conn.execute(
+        "BEGIN IMMEDIATE"
+    )  # the write lock first; the merge is read-compare-write under it
     t_lock = time.perf_counter()
     timings["lock"] = round((t_lock - t_start) * 1000, 1)
     t_diff = t_refresh = t_chunks = t_lock

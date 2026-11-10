@@ -99,7 +99,12 @@ def test_scope_all_finds_hits_in_other_canvases(client, two):
     assert set(hits) == {da, db_}
     for doc, chunk, title in ((da, ca, "Optimisation"), (db_, cb, "Calculus")):
         h = hits[doc]
-        assert (h["kind"], h["id"], h["chunk_id"], h["canvas_title"]) == ("chunk", chunk, chunk, title)
+        assert (h["kind"], h["id"], h["chunk_id"], h["canvas_title"]) == (
+            "chunk",
+            chunk,
+            chunk,
+            title,
+        )
         assert f"?canvas={doc}&chunk={chunk}" in h["deep_link"]
         assert h["source"] == "gemini" and "[gradient]" in h["snippet"]
         assert h["matched_by"] == ["chunks_fts"] and h["score"] > 0
@@ -107,7 +112,9 @@ def test_scope_all_finds_hits_in_other_canvases(client, two):
 
 def test_scope_canvas_filters_to_one_canvas(client, two):
     (da, _), _ = two
-    assert [h["canvas"] for h in retrieve(client, "gradient", scope="canvas", document_id=da)] == [da]
+    assert [h["canvas"] for h in retrieve(client, "gradient", scope="canvas", document_id=da)] == [
+        da
+    ]
     assert retrieve(client, "gradient") == []  # default scope is canvas, default document "default"
 
 
@@ -126,7 +133,9 @@ def test_archived_canvas_skipped_under_all_only(client, two):
     (da, _), (db_, _) = two
     assert client.patch(f"/documents/{da}", json={"archived": True}).status_code == 200
     assert {h["canvas"] for h in retrieve(client, "gradient", scope="all")} == {db_}
-    assert [h["canvas"] for h in retrieve(client, "gradient", scope="canvas", document_id=da)] == [da]
+    assert [h["canvas"] for h in retrieve(client, "gradient", scope="canvas", document_id=da)] == [
+        da
+    ]
 
 
 def test_orphaned_chunk_not_returned(client):
@@ -186,8 +195,16 @@ def test_extra_ranker_changes_nothing_else(client, two, monkeypatch):
 
     def fake(conn, query, document_id, limit):
         h = next(h for h in before if h["id"] == ca)
-        return [{"kind": "chunk", "id": ca, "canvas": h["canvas"], "canvas_title": h["canvas_title"],
-                 "snippet": "x", "key": ("chunk", ca)}]
+        return [
+            {
+                "kind": "chunk",
+                "id": ca,
+                "canvas": h["canvas"],
+                "canvas_title": h["canvas_title"],
+                "snippet": "x",
+                "key": ("chunk", ca),
+            }
+        ]
 
     monkeypatch.setitem(retrieve_db.RANKERS, "semantic", fake)
     after = retrieve(client, "gradient", scope="all")
