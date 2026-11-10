@@ -82,7 +82,9 @@ def test_path_errors_are_tool_errors(api):
     old, (a, *_) = chain(api)
     with pytest.raises(ToolError, match="not on this canvas"):
         call("get_subgraph", chunk_id=a, to_chunk_id="nope")
-    for e in old.elements:  # a full save no longer replaces the scene: delete the chain, then start over
+    for e in (
+        old.elements
+    ):  # a full save no longer replaces the scene: delete the chain, then start over
         e["isDeleted"] = True
     old.put()
     canvas = Canvas(api, row("p", 3) + row("q", 3, y=500))

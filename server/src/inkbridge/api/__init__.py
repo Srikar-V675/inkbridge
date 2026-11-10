@@ -274,6 +274,9 @@ def _publish_if_changed(conn, document_id: str, r: db.MergeResult, origin: str) 
         },
     )
     offers.schedule_scan(document_id)
+    worker = getattr(app.state, "recognition_worker", None)
+    if worker is not None:
+        worker.nudge(document_id)  # INK-196: read soon after the idle delay, not after the poll
 
 
 @app.put("/documents/{document_id}/scene")

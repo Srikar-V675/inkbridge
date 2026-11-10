@@ -32,7 +32,9 @@ def _scope(sql: str, args: list, column: str, document_id: str | None) -> tuple[
     return sql + " AND d.archived_at IS NULL", args
 
 
-def _chunk_ranker(conn: sqlite3.Connection, query: str, document_id: str | None, limit: int) -> list[dict]:
+def _chunk_ranker(
+    conn: sqlite3.Connection, query: str, document_id: str | None, limit: int
+) -> list[dict]:
     match = _fts_query(query)
     if match is None:
         return []
@@ -52,7 +54,9 @@ def _chunk_ranker(conn: sqlite3.Connection, query: str, document_id: str | None,
     ]
 
 
-def _answer_ranker(conn: sqlite3.Connection, query: str, document_id: str | None, limit: int) -> list[dict]:
+def _answer_ranker(
+    conn: sqlite3.Connection, query: str, document_id: str | None, limit: int
+) -> list[dict]:
     match = _fts_query(query)
     if match is None:
         return []

@@ -29,7 +29,16 @@ MIN_SAMPLES = 3
 WRAP_MAX, WRAP_MIN = 34, 8  # server-set wrap width in characters
 RINGS = (1.0, 1.5, 2.5, 4.0, 6.0)  # candidate distances from the anchor, in gaps
 # 8 directions as (dx, dy, direction_penalty): E, SE, S, SW, W, NW, N, NE
-DIRS = ((1, 0, 0.0), (1, 1, 0.1), (0, 1, 0.2), (-1, 1, 0.4), (-1, 0, 0.6), (-1, -1, 0.7), (0, -1, 0.8), (1, -1, 0.4))
+DIRS = (
+    (1, 0, 0.0),
+    (1, 1, 0.1),
+    (0, 1, 0.2),
+    (-1, 1, 0.4),
+    (-1, 0, 0.6),
+    (-1, -1, 0.7),
+    (0, -1, 0.8),
+    (1, -1, 0.4),
+)
 W_DIST, W_VIEW, W_CROSS, W_DIR, W_ALIGN = 1.0, 3.0, 2.0, 0.5, 1.0
 SIZE_HINTS = {"small": 0.75, "normal": 1.0, "large": 1.5}
 # Mermaid is laid out in the browser; reserve a generous box for a typical small flowchart.
@@ -55,7 +64,9 @@ def line_pitch(rows: list[tuple[float, float]]) -> float | None:
     return statistics.median(b - a for a, b in itertools.pairwise(centres))
 
 
-def font_size_for(stroke_heights: list[float], hint: str | None = None, pitch: float | None = None) -> int:
+def font_size_for(
+    stroke_heights: list[float], hint: str | None = None, pitch: float | None = None
+) -> int:
     """Font size that reads beside this handwriting: LINE_FACTOR x line pitch, else stroke height."""
     heights = [h for h in stroke_heights if h > 0]
     if pitch and pitch > 0:
@@ -122,10 +133,17 @@ def view_rect(view: dict | None) -> Box | None:
     if not view or not view.get("zoom") or view["zoom"] <= 0:
         return None
     z = view["zoom"]
-    return {"x": view["x"], "y": view["y"], "width": view["width"] / z, "height": view["height"] / z}
+    return {
+        "x": view["x"],
+        "y": view["y"],
+        "width": view["width"] / z,
+        "height": view["height"] / z,
+    }
 
 
-def connectors_of(elements: list[dict], cap: int = 500) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+def connectors_of(
+    elements: list[dict], cap: int = 500
+) -> list[tuple[tuple[float, float], tuple[float, float]]]:
     """Segments of live arrows/lines in scene coordinates, first `cap`."""
     out: list = []
     for e in elements:
@@ -201,8 +219,20 @@ def place(
         for k in RINGS:
             d = gap * k
             for dx, dy, pen in DIRS:
-                x = anchor["x"] + anchor["width"] + d if dx > 0 else anchor["x"] - d - w if dx < 0 else anchor["x"]
-                y = anchor["y"] + anchor["height"] + d if dy > 0 else anchor["y"] - d - h if dy < 0 else anchor["y"]
+                x = (
+                    anchor["x"] + anchor["width"] + d
+                    if dx > 0
+                    else anchor["x"] - d - w
+                    if dx < 0
+                    else anchor["x"]
+                )
+                y = (
+                    anchor["y"] + anchor["height"] + d
+                    if dy > 0
+                    else anchor["y"] - d - h
+                    if dy < 0
+                    else anchor["y"]
+                )
                 add(x, y, pen)
         for o in occupied:
             if 0 < _dist(o, anchor) < 6 * gap:  # 0 = part of the anchor itself

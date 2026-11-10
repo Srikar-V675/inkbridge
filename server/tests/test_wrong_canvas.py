@@ -27,9 +27,9 @@ def test_chunk_not_found_names_both_canvases(client):
     assert r.status_code == 422 and d["code"] == "chunk_not_found"
     assert d["document_id"] == b and d["found_on"] == "default" and b in d["msg"]
     payload["from_chunks"] = ["nope"]
-    d = client.post(f"/documents/{b}/ops", json={"type": "draw_diagram", "payload": payload}).json()[
-        "detail"
-    ]
+    d = client.post(
+        f"/documents/{b}/ops", json={"type": "draw_diagram", "payload": payload}
+    ).json()["detail"]
     assert d["found_on"] is None and b in d["msg"]
 
 
@@ -38,7 +38,8 @@ def test_question_in_other_canvas_names_both(client):
     b = canvas_b(client)
     for final in (True, False):
         r = client.post(
-            f"/questions/{q['id']}/answer", json={"answer_md": "x", "document_id": b, "final": final}
+            f"/questions/{q['id']}/answer",
+            json={"answer_md": "x", "document_id": b, "final": final},
         )
         d = r.json()["detail"]
         assert r.status_code == 409 and d["code"] == "question_other_canvas"

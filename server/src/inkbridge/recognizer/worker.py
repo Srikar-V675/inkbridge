@@ -35,6 +35,7 @@ from inkbridge.recognizer import (
 from inkbridge.timing import timed
 
 log = logging.getLogger(__name__)
+latency_log = logging.getLogger("inkbridge.recognizer.latency")
 
 Publish = Callable[[str, dict], None]
 
@@ -85,11 +86,13 @@ class RecognitionWorker:
         documents = tuple(d.strip() for d in raw.split(",") if d.strip())
         if not documents:
             return None
+        claude = os.environ.get("INKBRIDGE_RECOGNIZER", "").strip().lower() == "claude"
+        default_idle = 1.5 if claude else 5.0  # the Claude reader has no free-tier quota to spare
         try:
-            idle = float(os.environ.get("INKBRIDGE_RECOGNIZE_IDLE_S") or 5)
+            idle = float(os.environ.get("INKBRIDGE_RECOGNIZE_IDLE_S") or default_idle)
         except ValueError:
-            log.warning("INKBRIDGE_RECOGNIZE_IDLE_S is not a number; using 5 s")
-            idle = 5.0
+            log.warning("INKBRIDGE_RECOGNIZE_IDLE_S is not a number; using %s s", default_idle)
+            idle = default_idle
         if recognizer is None:
             try:
                 recognizer = make_recognizer()
@@ -170,6 +173,15 @@ class RecognitionWorker:
             self._wake.set()
         return accepted
 
+    def nudge(self, document_id: str) -> None:
+        """A scene save happened: wake the loop once the canvas will have been idle for `idle_s`,
+        so a pass does not also wait out the rest of `poll_s` (INK-196)."""
+        if document_id not in self.documents or self.stopped or not self.is_alive():
+            return
+        timer = threading.Timer(self.idle_s + 0.1, self._wake.set)
+        timer.daemon = True
+        timer.start()
+
     def _urgent_ids(self, document_id: str) -> set[str]:
         now = self._clock()
         with self._lock:
@@ -203,6 +215,7 @@ class RecognitionWorker:
         self._skipped &= keys
         urgent = self._urgent_ids(document_id)
         candidates.sort(key=lambda c: c["id"] not in urgent)  # stable: asked-for chunks first
+        started = db.document_updated_at(conn, document_id)
         try:
             for region in candidates:
                 asked = region["id"] in urgent
@@ -248,6 +261,15 @@ class RecognitionWorker:
                     except Exception as e:  # noqa: BLE001 - a model failure never reaches the editor
                         self._back_off(key, e)
                         continue
+                    current = conn.execute(
+                        "SELECT content_hash FROM regions WHERE id = ? AND status = 'active'",
+                        (region["id"],),
+                    ).fetchone()
+                    if current is None or current["content_hash"] != region["content_hash"]:
+                        log.info(
+                            "dropping stale reading of %s: ink changed during the read", key[0]
+                        )
+                        break  # re-list newest-first next pass; the new hash gets its own read
                     self._failures.pop(key, None)
                     self._rl_streak = 0
                 try:
@@ -258,6 +280,15 @@ class RecognitionWorker:
                     log.warning("saving the reading of %s failed (%s); will retry", key[0], e)
                     continue
                 recognized.append(region["id"])
+                wrote = datetime.fromisoformat(region["updated_at"]).timestamp()
+                latency_log.info(
+                    "region=%s latency_ms=%d backlog=%d",
+                    region["id"],
+                    max(0, (self._clock() - wrote) * 1000),
+                    len(candidates) - 1,
+                )
+                if db.document_updated_at(conn, document_id) != started:
+                    break  # new ink while reading: re-list so the newest chunk goes first
         finally:
             if recognized and self._publish is not None:
                 self._publish(

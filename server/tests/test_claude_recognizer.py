@@ -174,5 +174,3 @@ def test_make_recognizer_selects(monkeypatch):
     assert make_recognizer() is sentinel_g
     monkeypatch.delenv("INKBRIDGE_RECOGNIZER")
     assert make_recognizer() is sentinel_g
-
-
