@@ -1,5 +1,7 @@
 """INK-132: detectors turn the canvas into offer candidates with no model."""
 
+import itertools
+
 from inkbridge import db
 from inkbridge.agent import detectors
 from inkbridge.db import questions as q_db
@@ -362,7 +364,7 @@ def test_scan_logs_why_nothing(client, monkeypatch, caplog):
 def test_run_logs_refusals(client, caplog):
     import logging
 
-    _, (a, b, c, d) = chunks(client, "Why a?", "plain b", "plain c", "plain d")
+    _, (_a, b, c, d) = chunks(client, "Why a?", "plain b", "plain c", "plain d")
     conn = db.connect()
     for x in (b, c, d):
         db.offers.create_offer(
@@ -433,7 +435,7 @@ def test_dangling_arrow_v1_ignores_deleted(client):
 def _loop(i, x, y=0, w=120, h=80):
     pts = [[0, 0], [w, 0], [w, h], [0, h], [0, 0]]
     dense = []
-    for a, b in zip(pts, pts[1:], strict=False):
+    for a, b in itertools.pairwise(pts):
         dense += [[a[0] + (b[0] - a[0]) * t / 6, a[1] + (b[1] - a[1]) * t / 6] for t in range(6)]
     dense.append([0, 0])
     return {
