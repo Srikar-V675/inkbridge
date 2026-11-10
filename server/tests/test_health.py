@@ -10,7 +10,7 @@ def test_health(monkeypatch):
     assert r.status_code == 200 and r.json() == {
         "status": "ok",
         "crop_source": "browser",
-        "chunker": "v1",
+        "chunker": "v2",
     }
 
 
@@ -20,12 +20,14 @@ def test_health_in_server_crop_mode(monkeypatch):
     assert TestClient(app).get("/health").json() == {
         "status": "ok",
         "crop_source": "server",
-        "chunker": "v1",
+        "chunker": "v2",
     }
 
 
 def test_health_reports_the_chunker(monkeypatch):
     monkeypatch.setenv("INKBRIDGE_CHUNKER", "v2")
     assert TestClient(app).get("/health").json()["chunker"] == "v2"
-    monkeypatch.setenv("INKBRIDGE_CHUNKER", "bogus")
+    monkeypatch.setenv("INKBRIDGE_CHUNKER", "v1")
     assert TestClient(app).get("/health").json()["chunker"] == "v1"
+    monkeypatch.setenv("INKBRIDGE_CHUNKER", "bogus")
+    assert TestClient(app).get("/health").json()["chunker"] == "v2"

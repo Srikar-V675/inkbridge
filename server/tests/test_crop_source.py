@@ -126,13 +126,13 @@ def test_health_reports_the_crop_source(client, monkeypatch):
     assert client.get("/health").json() == {
         "status": "ok",
         "crop_source": "browser",
-        "chunker": "v1",
+        "chunker": "v2",
     }
     server_mode(monkeypatch)
     assert client.get("/health").json() == {
         "status": "ok",
         "crop_source": "server",
-        "chunker": "v1",
+        "chunker": "v2",
     }
 
 
