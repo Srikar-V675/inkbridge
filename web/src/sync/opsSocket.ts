@@ -10,6 +10,7 @@ import type { PendingOp } from "../drafts/drafts";
 import type { Question, QuestionDelta } from "../ask/ask";
 import type { SceneDelta } from "./liveDelta.ts";
 import type { Offer } from "../offers/offers.ts";
+import type { ActivityMsg } from "../app/activity.ts";
 
 export interface AttentionView {
   x: number;
@@ -50,6 +51,7 @@ export interface OpsSocketOptions {
   onSceneDelta?: (d: SceneDelta) => void;
   onOfferCreated?: (o: Offer) => void;
   onOfferUpdated?: (o: Offer) => void;
+  onActivity?: (m: ActivityMsg) => void; // the working dot (INK-198)
   onOpError?: (msg: { op_id: string; code: string; detail?: unknown }) => void;
   onConnection?: (connected: boolean) => void;
   createSocket?: (url: string) => SocketLike;
@@ -141,6 +143,8 @@ export class OpsSocket {
         return this.o.onOfferCreated?.((msg as unknown as { offer: Offer }).offer);
       case "offer.updated":
         return this.o.onOfferUpdated?.((msg as unknown as { offer: Offer }).offer);
+      case "agent.activity":
+        return this.o.onActivity?.(msg as unknown as ActivityMsg);
       case "question.delta":
         return this.o.onQuestionDelta?.(msg as unknown as QuestionDelta);
       case "question.update":
