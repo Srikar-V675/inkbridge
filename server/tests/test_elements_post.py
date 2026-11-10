@@ -1,6 +1,5 @@
 """INK-111 (decision 0080): POST /documents/{id}/elements, the batch route with N1."""
 
-
 from inkbridge import api, db
 from tests.test_regions_api import SCENE
 
@@ -31,7 +30,9 @@ def post(client, elements, device="d1", batch=1, url=URL):
 
 def published(monkeypatch):
     sent = []
-    monkeypatch.setattr(api.ws.hub, "publish", lambda d, m: sent.append(m) if m["type"] != "scene.delta" else None)  # deltas: test_scene_delta_push
+    monkeypatch.setattr(
+        api.ws.hub, "publish", lambda d, m: sent.append(m) if m["type"] != "scene.delta" else None
+    )  # deltas: test_scene_delta_push
     return sent
 
 

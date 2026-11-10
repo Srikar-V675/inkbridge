@@ -229,13 +229,13 @@ def test_readers_dedupe_parallel_arrows(client, v2):
 
 
 def two_line_hub():
-    """Two lines of words 25 px apart (v1 joins them, v2 does not) with a pen arrow off the right
-    edge, and an untouched cluster far away."""
+    """Two lines of words 150 px apart joined by a pen arrow (v1 glues all of it into one chunk,
+    v2 keeps the arrow out and the two lines apart), and an untouched cluster far away."""
     return [
         *words("a", 0, 0),
-        *words("b", 0, 34),
-        line("c", 85, 8, 285, 8, index="a0"),
-        vee("c-head", 275, 8, index="a1"),
+        *words("b", 0, 150),
+        line("c", 30, 18, 30, 140, index="a0"),
+        vee("c-head", 20, 140, index="a1"),
         *words("f", 3000, 0),
     ]
 
@@ -272,9 +272,9 @@ def test_set_chunker_rechunks_now_and_keeps_ids_where_ink_matches(client):
     assert old["status"] == "orphaned" and old["successor_of"] in {r["id"] for r in after.values()}
     set_chunker("v1")
     assert len([k for k in active_regions() if "a0" in k]) == 1
-    assert [r["chunker"] for r in conn_rows("SELECT chunker FROM documents WHERE id='default'")] == [
-        "v1"
-    ]
+    assert [
+        r["chunker"] for r in conn_rows("SELECT chunker FROM documents WHERE id='default'")
+    ] == ["v1"]
     set_chunker(None)
     assert conn_rows("SELECT chunker FROM documents WHERE id='default'")[0]["chunker"] is None
 
@@ -310,7 +310,14 @@ def test_check_sync_reports_replaced_after_switching_to_v2(client):
 
 def test_check_sync_reports_both_old_ids_replaced_when_v2_merges(client):
     small = [
-        {"id": f"r{k}", "type": "rectangle", "x": 20000 + 100 * k, "y": 3000, "width": 4, "height": 4}
+        {
+            "id": f"r{k}",
+            "type": "rectangle",
+            "x": 20000 + 100 * k,
+            "y": 3000,
+            "width": 4,
+            "height": 4,
+        }
         for k in range(30)
     ]
     spare = [word(f"s{k}", 8000 + 200 * k, 3000) for k in range(3)]

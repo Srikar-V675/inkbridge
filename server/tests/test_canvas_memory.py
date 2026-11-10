@@ -85,7 +85,9 @@ def test_brief_routes(client):
     assert client.put("/documents/default/brief", json={"brief": "Thermo notes"}).status_code == 200
     assert client.get("/documents/default/brief").json()["brief"] == "Thermo notes"
     assert client.put("/documents/default/brief", json={"brief": "x" * 4001}).status_code == 422
-    assert client.put("/documents/default/brief", json={"brief": "x", "extra": 1}).status_code == 422
+    assert (
+        client.put("/documents/default/brief", json={"brief": "x", "extra": 1}).status_code == 422
+    )
     assert client.get("/documents/nope/brief").status_code == 404
     assert client.put("/documents/nope/brief", json={"brief": "x"}).status_code == 404
     assert client.get("/documents/nope/changes").status_code == 404
@@ -112,7 +114,9 @@ def call(name, **args):
 def test_tools_registered_and_in_instructions():
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert {"what_changed", "set_canvas_brief"} <= names
-    assert "what_changed" in server.mcp.instructions and "set_canvas_brief" in server.mcp.instructions
+    assert (
+        "what_changed" in server.mcp.instructions and "set_canvas_brief" in server.mcp.instructions
+    )
 
 
 def test_brief_reaches_read_canvas(api):

@@ -35,7 +35,7 @@ def _threshold(a: Box, b: Box, t: float, cfg: ChunkerConfig, underline: bool) ->
     if overlap > 0 and overlap >= 0.5 * smaller:  # same line
         return cfg.k * t if gx < cfg.k * t else None
     reach = max(cfg.next_line, UNDERLINE_REACH if underline else 0.0) * t
-    if gx == 0.0 and gy < reach:  # next line, horizontal overlap
+    if gy < reach and gx < cfg.k * t:  # next line: above or beside, diagonal neighbours too
         return reach
     return None
 

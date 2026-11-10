@@ -12,7 +12,8 @@ from inkbridge.canvas.strokes import analyse
 
 
 def measure(path: str) -> str:
-    els = [e for e in json.load(open(path))["elements"] if not e.get("isDeleted")]
+    with open(path) as f:
+        els = [e for e in json.load(f)["elements"] if not e.get("isDeleted")]
     k = analyse(els)
     v1 = chunk_scene(els, ChunkerConfig())
     v2 = chunk_scene(els, ChunkerConfig.v2())

@@ -52,8 +52,16 @@ def merge(conn, batch, **kw):
 def test_batch_orders_converge(client, tmp_path, monkeypatch):
     batches = [
         [el("x", 3, 10, tag="x3"), el("y", 2, 50, tag="y2a"), el("z", 1, 5, tag="z1")],
-        [el("x", 2, 1, tag="x2"), el("y", 2, 20, tag="y2b"), el("z", 2, 9, tag="z2", isDeleted=True)],
-        [el("y", 2, 90, tag="y2c"), el("z", 3, 4, tag="z3"), el("x", 4, 7, tag="x4", isDeleted=True)],
+        [
+            el("x", 2, 1, tag="x2"),
+            el("y", 2, 20, tag="y2b"),
+            el("z", 2, 9, tag="z2", isDeleted=True),
+        ],
+        [
+            el("y", 2, 90, tag="y2c"),
+            el("z", 3, 4, tag="z3"),
+            el("x", 4, 7, tag="x4", isDeleted=True),
+        ],
     ]
     # x: v4 deleted wins. y: tie at v2, lowest nonce 20 wins (y2b). z: v3 live again (undo).
     results = []

@@ -216,7 +216,12 @@ async def _handle(ws: WebSocket, document_id: str, msg: Any) -> None:
             return
         except ops_db.InvalidTransition as e:
             await ws.send_json(
-                {"type": "op.error", "op_id": op_id, "code": "invalid_transition", "detail": e.current}
+                {
+                    "type": "op.error",
+                    "op_id": op_id,
+                    "code": "invalid_transition",
+                    "detail": e.current,
+                }
             )
             return
         await hub.send(document_id, _placed_message(op))

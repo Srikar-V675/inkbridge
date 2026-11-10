@@ -31,12 +31,14 @@ class ChunkerConfig:
     next_line: float = (
         0.5  # a line below joins when closer than this * T and the boxes overlap in x
     )
-    long_stroke: float = 2.0  # a stroke longer than this * T joins by its ink, not its box
+    long_stroke: float = 4.0  # a stroke longer than this * T joins by its ink, not its box
 
     @classmethod
     def v2(cls, **kw: Any) -> "ChunkerConfig":
         """The v2 settings: connectors merge only when a tick (1 T) and link within 2 T."""
-        return cls(version="v2", arrow_merge=1.0, link_reach=2.0, **kw)
+        return cls(
+            version="v2", arrow_merge=1.0, link_reach=2.0, **{"next_line": 2.0, "k": 2.0, **kw}
+        )
 
     def __post_init__(self) -> None:
         for name in (

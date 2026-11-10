@@ -16,8 +16,22 @@ REGION_KEYS = {
     "stroke_hash", "content_hash", "status", "successor_of", "png_stale", "pinned", "updated_at",
     "text", "latex", "source", "text_hash", "live_successor",
 }  # fmt: skip
-OP_KEYS = {"id", "document_id", "type", "status", "payload", "result", "error", "created_at",
-           "elements", "box", "resolved_at", "question_id", "diagram_id", "revises"}
+OP_KEYS = {
+    "id",
+    "document_id",
+    "type",
+    "status",
+    "payload",
+    "result",
+    "error",
+    "created_at",
+    "elements",
+    "box",
+    "resolved_at",
+    "question_id",
+    "diagram_id",
+    "revises",
+}
 SYNC_KEYS = {"fresh", "fresh_after_reread", "changed", "replaced", "removed", "new"}
 DOC_KEYS = {
     "id", "title", "updated_at", "version", "url", "pinned", "archived", "element_count",

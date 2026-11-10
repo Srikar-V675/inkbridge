@@ -141,7 +141,12 @@ def shrink_tombstones(conn: sqlite3.Connection, document_id: str, now: str | Non
         (document_id, cutoff),
     ).fetchall()
     for r in rows:
-        stub = {"id": r["id"], "version": r["version"], "versionNonce": r["nonce"], "isDeleted": True}
+        stub = {
+            "id": r["id"],
+            "version": r["version"],
+            "versionNonce": r["nonce"],
+            "isDeleted": True,
+        }
         conn.execute(
             "UPDATE scene_elements SET json = ? WHERE document_id = ? AND id = ?",
             (row_json(stub), document_id, r["id"]),

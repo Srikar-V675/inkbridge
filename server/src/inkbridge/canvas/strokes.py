@@ -34,6 +34,7 @@ UNDERLINE_REACH = 0.75  # writing at most this*T above it (start value, tune on 
 UNDERLINE_TOUCH = 0.5  # ... or overlapping it by at most this*T (start value, tune on real pages)
 SCRIBBLE_REVERSALS = 6  # scribble: at least this many reversals (start value, tune on real pages)
 SCRIBBLE_LOOP = 4.0  # ... and path length >= this*diag (start value, tune on real pages)
+SCALE_PCT = 0.6  # T is this quantile of the short strokes, not their median (INK-195)
 MIN_SCALE = 4.0  # floor for T in px (start value, tune on real pages)
 HOOK_MAX = 0.4  # a hook's barb is at most this fraction of the path (the sketch HEAD_SIZE)
 MIN_STEP = 0.02  # reversal counting ignores steps smaller than this * diag
@@ -78,7 +79,8 @@ def _scale(extents: list[float]) -> float:
         return 0.0
     t0 = _median(extents)  # pass 1: everything
     short = [x for x in extents if x <= LONG * t0]  # drop what pass 1 already calls long
-    return max(MIN_SCALE, _median(short or extents))  # pass 2: the writing
+    s2 = sorted(short or extents)
+    return max(MIN_SCALE, s2[int(SCALE_PCT * (len(s2) - 1))])  # pass 2: the writing
 
 
 def _features(
@@ -274,7 +276,9 @@ def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
     anchors = shapes + [f.box for f in feats if kinds.get(f.id) == "container"]
     for f in shafts:
         if f.id not in evidence and any(
-            _dist_point_box(p, a) <= HEAD_REACH * scale for p in (f.pts[0], f.pts[-1]) for a in anchors
+            _dist_point_box(p, a) <= HEAD_REACH * scale
+            for p in (f.pts[0], f.pts[-1])
+            for a in anchors
         ):
             evidence.add(f.id)
 

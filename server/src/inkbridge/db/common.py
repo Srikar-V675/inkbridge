@@ -10,7 +10,6 @@ from inkbridge import config
 log = logging.getLogger("inkbridge.scene")  # stderr in the API process; never MCP stdout
 
 
-
 DEFAULT_DOCUMENT_ID = "default"
 AUTO = "auto"  # regions.created_by of chunks the chunker owns; anything else is a manual region
 

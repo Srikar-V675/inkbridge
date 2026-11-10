@@ -90,7 +90,15 @@ def test_connector_crossing_is_penalised():
 def test_ties_break_by_x_then_y_and_place_is_deterministic():
     rng = random.Random(7)
     for _ in range(50):
-        occ = [_box(rng.uniform(-300, 300), rng.uniform(-300, 300), rng.uniform(5, 150), rng.uniform(5, 90)) for _ in range(12)]
+        occ = [
+            _box(
+                rng.uniform(-300, 300),
+                rng.uniform(-300, 300),
+                rng.uniform(5, 150),
+                rng.uniform(5, 90),
+            )
+            for _ in range(12)
+        ]
         anchor = occ[0]
         want = place(occ, (80, 30), anchor, 20)
         for _ in range(2):
@@ -120,9 +128,14 @@ def test_wrap_chars():
 
 def test_view_rect_and_connectors():
     assert view_rect(None) is None
-    assert view_rect({"x": 5, "y": 6, "width": 400, "height": 200, "zoom": 2}) == _box(5, 6, 200, 100)
+    assert view_rect({"x": 5, "y": 6, "width": 400, "height": 200, "zoom": 2}) == _box(
+        5, 6, 200, 100
+    )
     arrow = {"type": "arrow", "x": 10, "y": 10, "points": [[0, 0], [5, 5], [9, 0]]}
-    assert connectors_of([arrow, {**arrow, "isDeleted": True}]) == [((10, 10), (15, 15)), ((15, 15), (19, 10))]
+    assert connectors_of([arrow, {**arrow, "isDeleted": True}]) == [
+        ((10, 10), (15, 15)),
+        ((15, 15), (19, 10)),
+    ]
 
 
 def test_estimate_grows_with_text_lines_and_length():
@@ -259,9 +272,7 @@ def test_consecutive_placements_stay_close(scale, anchored):
     occupied = [anchor, _box(0, 5000 * scale, 10, 10)]
     recent, spots = None, []
     for _ in range(5):
-        p = place(
-            occupied, size, anchor if anchored else None, fs, recent=recent
-        )
+        p = place(occupied, size, anchor if anchored else None, fs, recent=recent)
         recent = _box(p["x"], p["y"], *size)
         occupied.append(recent)
         spots.append(p)

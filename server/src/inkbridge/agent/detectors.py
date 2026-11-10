@@ -85,7 +85,9 @@ def _gap(x: float, y: float, s: dict) -> float:
     return (dx * dx + dy * dy) ** 0.5
 
 
-def _free_end_arrows(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:
+def _free_end_arrows(
+    conn: sqlite3.Connection, document_id: str, chunks: list[dict]
+) -> list[Candidate]:
     """Chunker v1 keeps arrows in no chunk kind of their own: find a native arrow whose tip touches nothing."""
     elements = json.loads(db.get_scene(conn, document_id)[1])
     live = [
@@ -108,7 +110,14 @@ def _free_end_arrows(conn: sqlite3.Connection, document_id: str, chunks: list[di
         if c is None:
             log.debug("free arrow %s belongs to no active chunk", e["id"])
             continue
-        out.append(_cand("dangling_arrow", c["id"], {"action": "ask_user", "key": e["id"]}, "Arrow leads nowhere"))
+        out.append(
+            _cand(
+                "dangling_arrow",
+                c["id"],
+                {"action": "ask_user", "key": e["id"]},
+                "Arrow leads nowhere",
+            )
+        )
     return out
 
 
@@ -131,7 +140,11 @@ def _to_note(chunks: list[dict], watches: list[dict]) -> list[Candidate]:
     if watches or len(chunks) < TO_NOTE_MIN_CHUNKS:  # chunks are already tiny-free
         return []
     biggest = max(chunks, key=lambda c: len(c["element_ids"]))  # max keeps the first of equals
-    return [_cand("to_note", biggest["id"], {"action": "note", "key": "canvas"}, "Turn this into a note")]
+    return [
+        _cand(
+            "to_note", biggest["id"], {"action": "note", "key": "canvas"}, "Turn this into a note"
+        )
+    ]
 
 
 def _seen_key(kind: str, anchor: str, key) -> tuple:
@@ -162,7 +175,9 @@ def scan_counts(conn: sqlite3.Connection, document_id: str) -> str:
 
 def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
-    chunks = [c for c in all_chunks if c["source"] != "agent" and not _tiny(c)]  # an agent's answer never triggers
+    chunks = [
+        c for c in all_chunks if c["source"] != "agent" and not _tiny(c)
+    ]  # an agent's answer never triggers
     watches = db.list_watches(conn, document_id)
     out: list[Candidate] = []
     for c in chunks:
@@ -180,16 +195,26 @@ def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     return sorted(first.values(), key=lambda c: -c.score)
 
 
-def _stale_diagram(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:
+def _stale_diagram(
+    conn: sqlite3.Connection, document_id: str, chunks: list[dict]
+) -> list[Candidate]:
     # shortcut: a chunk replaced by a new id is skipped (no successor follow), see decision 0100
     by_id = {c["id"]: c for c in chunks}
     out = []
     for d in diagrams_db.list_accepted(conn, document_id):
         for snap in d["from_chunks"]:
             c = by_id.get(snap["chunk"])
-            if c is None or snap["text_hash"] is None or c["text_hash"] in (None, snap["text_hash"]):
+            if (
+                c is None
+                or snap["text_hash"] is None
+                or c["text_hash"] in (None, snap["text_hash"])
+            ):
                 continue
-            payload = {"action": "diagram", "diagram": d["id"], "key": f"{d['id']}:{c['text_hash']}"}
+            payload = {
+                "action": "diagram",
+                "diagram": d["id"],
+                "key": f"{d['id']}:{c['text_hash']}",
+            }
             out.append(_cand("stale_diagram", c["id"], payload, "Diagram may be out of date"))
             break  # one offer per diagram
     return out
@@ -307,7 +332,10 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
         changed += expired
     log.info(
         "detector run doc=%s candidates=%d created=%s skipped=%s",
-        document_id, len(candidates), dict(created), dict(skipped),
+        document_id,
+        len(candidates),
+        dict(created),
+        dict(skipped),
     )
     return changed
 
@@ -326,6 +354,11 @@ def _markup(conn: sqlite3.Connection, document_id: str, all_chunks: list[dict]) 
         if anchor is None:
             continue
         first = min(ink, key=lambda t: t[0])[1]["id"]
-        payload = {"action": "diagram", "diagram": d["id"], "markup": True, "key": f"{d['id']}:{first}"}
+        payload = {
+            "action": "diagram",
+            "diagram": d["id"],
+            "markup": True,
+            "key": f"{d['id']}:{first}",
+        }
         out.append(_cand("markup", anchor["id"], payload, "Apply mark-up?"))
     return out

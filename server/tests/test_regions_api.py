@@ -159,7 +159,11 @@ def test_put_image_replaces_crop_and_clears_stale_flag(client):
     seed(client)
     rid = post(client, ["a"]).json()["id"]
     client.put(
-        SCENE, json={"base_version": 1, "elements": [{**A, "points": [[0, 0], [31, 41]], "version": 2}, B]}
+        SCENE,
+        json={
+            "base_version": 1,
+            "elements": [{**A, "points": [[0, 0], [31, 41]], "version": 2}, B],
+        },
     )
     assert client.get(f"/regions/{rid}").json()["png_stale"] is True
     new = big_png(40, 20)

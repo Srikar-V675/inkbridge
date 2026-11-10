@@ -40,15 +40,26 @@ def test_migration_11_moves_drafts_out_of_the_scene(tmp_path, monkeypatch):
     monkeypatch.undo()
 
     user = {**el("user-1"), "type": "freedraw", "points": [[0, 0], [5, 5]], "pressures": [0.3, 0.6]}
-    rows = [user, el("acc:1", True, "acc"), el("app:1", True, "app"), el("app:2", True, "app"),
-            el("rej:1", True, "rej"), el("lonely", True)]
+    rows = [
+        user,
+        el("acc:1", True, "acc"),
+        el("app:1", True, "app"),
+        el("app:2", True, "app"),
+        el("rej:1", True, "rej"),
+        el("lonely", True),
+    ]
     for pos, e in enumerate(rows):
         conn.execute(
             "INSERT INTO scene_elements (document_id, id, pos, seq, version, nonce, is_deleted, json,"
             " updated_at) VALUES ('default', ?, ?, 1, 3, 7, 0, ?, 'now')",
             (e["id"], pos, dump(e)),
         )
-    for op, status in (("acc", "accepted"), ("app", "applied"), ("rej", "rejected"), ("stuck", "applied")):
+    for op, status in (
+        ("acc", "accepted"),
+        ("app", "applied"),
+        ("rej", "rejected"),
+        ("stuck", "applied"),
+    ):
         conn.execute(
             "INSERT INTO agent_ops (id, document_id, type, payload_json, status, created_at)"
             " VALUES (?, 'default', 'write_text', '{}', ?, 'now')",
@@ -59,8 +70,12 @@ def test_migration_11_moves_drafts_out_of_the_scene(tmp_path, monkeypatch):
     before = conn.execute("SELECT json FROM scene_elements WHERE id = 'user-1'").fetchone()[0]
 
     assert db.migrate(conn)[:5] == [11, 12, 13, 14, 15]  # later migrations also apply (INK-133)
-    got = {r["id"]: json.loads(r["json"]) for r in conn.execute("SELECT id, json FROM scene_elements")}
-    assert conn.execute("SELECT json FROM scene_elements WHERE id = 'user-1'").fetchone()[0] == before
+    got = {
+        r["id"]: json.loads(r["json"]) for r in conn.execute("SELECT id, json FROM scene_elements")
+    }
+    assert (
+        conn.execute("SELECT json FROM scene_elements WHERE id = 'user-1'").fetchone()[0] == before
+    )
     assert "draft" not in got["acc:1"]["customData"] and got["acc:1"]["version"] == 4
     assert not got["acc:1"]["isDeleted"]
     assert got["app:1"]["isDeleted"] and got["app:2"]["isDeleted"] and got["app:1"]["version"] == 4
@@ -72,8 +87,12 @@ def test_migration_11_moves_drafts_out_of_the_scene(tmp_path, monkeypatch):
     assert all(e["customData"]["draft"] for e in placed) and json.loads(ops["app"]["box_json"])
     assert conn.execute("SELECT version FROM scenes").fetchone()[0] == 5
     assert conn.execute("SELECT element_count FROM scenes").fetchone()[0] == 2  # user-1, acc:1
-    chunk_ids = [json.loads(r[0]) for r in conn.execute(
-        "SELECT element_ids_json FROM regions WHERE created_by = 'auto' AND status = 'active'")]
+    chunk_ids = [
+        json.loads(r[0])
+        for r in conn.execute(
+            "SELECT element_ids_json FROM regions WHERE created_by = 'auto' AND status = 'active'"
+        )
+    ]
     assert ["acc:1"] in chunk_ids
     seqs = {r["id"]: r["seq"] for r in conn.execute("SELECT id, seq FROM scene_elements")}
     assert seqs["acc:1"] == seqs["rej:1"] == seqs["app:1"] == 5 and seqs["user-1"] == 1

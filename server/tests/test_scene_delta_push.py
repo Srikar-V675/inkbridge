@@ -12,7 +12,12 @@ def test_delta_goes_to_other_device_not_origin(client):
     with client.websocket_connect(WS + "a1") as a, client.websocket_connect(WS + "b1") as b:
         s1 = el("s1")
         r = post(client, [s1], device="a1", batch=0)
-        assert recv(b) == {"type": "scene.delta", "seq": r.json()["seq"], "origin": "a1", "elements": [s1]}
+        assert recv(b) == {
+            "type": "scene.delta",
+            "seq": r.json()["seq"],
+            "origin": "a1",
+            "elements": [s1],
+        }
         assert recv(a)["type"] == "chunks.updated"
         post(client, [el("s2")], device="b1", batch=0)
         m = recv(a)
