@@ -1,0 +1,9 @@
+/* INK-198, decision 0113: the agent is working. Lime means agent only. */
+.ink-working { display: inline-flex; align-items: center; margin-left: var(--space-sm); }
+.ink-working__dot {
+  width: var(--component-working-dot-size, 10px); height: var(--component-working-dot-size, 10px);
+  border-radius: 50%; background: var(--component-working-dot-background-color);
+  animation: ink-working-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ink-working-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .ink-working__dot { animation: none; } }

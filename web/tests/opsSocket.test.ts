@@ -122,6 +122,21 @@ describe("OpsSocket", () => {
     s.sendAttention({ pen: false, view: null }); // must not throw
   });
 
+  it("hands agent activity pushes to onActivity (INK-198)", () => {
+    const got: unknown[] = [];
+    const sockets: FakeSocket[] = [];
+    const s = new OpsSocket({
+      url: "x",
+      onOp: async () => measured("x"),
+      onActivity: (m) => got.push(m),
+      createSocket: () => (sockets.push(new FakeSocket()), sockets[0]),
+    });
+    s.start();
+    const frame = { type: "agent.activity", working: true, what: "answer", count: 1 };
+    sockets[0].push(frame);
+    assert.deepEqual(got, [frame]);
+  });
+
   it("reconnects after a drop and stops after dispose", () => {
     const { s, sockets, timers } = setup(async () => measured("x"));
     sockets[0].close();

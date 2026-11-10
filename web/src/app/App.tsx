@@ -37,6 +37,8 @@ import { fetchTitle } from "./canvasTitle";
 import { CanvasState } from "./CanvasState";
 import { Shell } from "./Shell";
 import { StatusSlot } from "./StatusSlot";
+import { WorkingDot } from "./WorkingDot";
+import { createActivityStore } from "./activity";
 
 type Restored = ReturnType<typeof restoreElements>;
 type Initial = { elements: Restored; view: View | null } | "failed" | "missing" | null;
@@ -129,6 +131,7 @@ const Canvas = memo(function Canvas(props: {
 
 export default function App({ route }: { route: Extract<Location, { kind: "canvas" }> }) {
   const status = useMemo(() => createStatusStore(), []);
+  const activity = useMemo(() => createActivityStore(), []); // the working dot (INK-198)
   const refresh = useMemo(() => createRefresh(), []);
   const chunkView = useMemo(() => createChunkView(), []);
   useEffect(() => () => refresh.dispose(), [refresh]); // drop a pending refetch on unmount
@@ -379,6 +382,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       // A push lost while the socket was down is gone, so the chunk list refetches on every connect.
       onConnection: (c) => {
         wire.onConnection(c);
+        if (!c) activity.reset(); // the dot must not outlive a socket that can no longer say it is idle
         if (c) refetch(); // placed ops are replayed too, but a verdict made while down is only seen here
         if (c) void live.catchUp(); // a delta lost while the socket was down is gone
         if (c) publishQuestion(null); // pushes sent while the socket was down are lost
@@ -390,6 +394,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       onSceneDelta: (d) => live.receive(d),
       onOfferCreated: offerStore.upsert,
       onOfferUpdated: offerStore.upsert,
+      onActivity: activity.apply,
       // Anything but placed leaves the canvas; an unaccept returns the op to placed with only this message.
       onOpUpdated: (m) => (m.status === "placed" ? refetch() : drafts.remove(m.op_id)),
       onOpError: (m) => console.warn("op refused by the server", m),
@@ -410,7 +415,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       liveRef.current = null;
       catchUpRef.current = null;
     };
-  }, [open, route.canvas, apiReady, refresh, unseen, gate, drafts, offerStore]);
+  }, [open, route.canvas, apiReady, refresh, unseen, gate, drafts, offerStore, activity]);
 
   // The scene is a function of the placed-op list: add what is missing, drop what is gone, and
   // reveal a draft the first time it appears (a reload or reconnect replay must not pan).
@@ -489,7 +494,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
     <Shell
       api={liveApi}
       title={initial === "missing" ? "Canvas not found" : title}
-      status={<StatusSlot store={status} />}
+      status={<><StatusSlot store={status} /><WorkingDot store={activity} /></>}
       chunks={<><FingerToggle /><FocusToggle store={offerStore} canvas={route.canvas} /><ChunkToggle view={chunkView} /></>}
       overlays={
         <>

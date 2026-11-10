@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterable
 from datetime import datetime
 
 from inkbridge import config, db, imaging
+from inkbridge.agent.activity import activity
 from inkbridge.recognizer import (
     PermanentError,
     RateLimited,
@@ -252,6 +253,7 @@ class RecognitionWorker:
                     if png is None:
                         continue
                     calls += 1
+                    activity.begin(document_id, "reading", f"read:{region['id']}")  # INK-198
                     try:
                         reading = self.recognizer(png, None)
                     except PermanentError as e:
@@ -261,6 +263,8 @@ class RecognitionWorker:
                     except Exception as e:  # noqa: BLE001 - a model failure never reaches the editor
                         self._back_off(key, e)
                         continue
+                    finally:
+                        activity.end(document_id, f"read:{region['id']}")  # INK-198
                     current = conn.execute(
                         "SELECT content_hash FROM regions WHERE id = ? AND status = 'active'",
                         (region["id"],),

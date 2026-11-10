@@ -72,6 +72,8 @@
   --component-draft-badge-text-color: var(--color-charcoal);
   --component-draft-badge-rounded: var(--radius-badge);
   --component-draft-badge-padding: 3px 9px;
+  --component-working-dot-background-color: var(--color-lime);
+  --component-working-dot-size: 10px;
   --component-draft-card-background-color: var(--color-card);
   --component-draft-card-text-color: var(--color-charcoal);
   --component-draft-card-rounded: var(--radius-card);

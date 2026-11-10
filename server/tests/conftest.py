@@ -19,6 +19,21 @@ def client(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def reset_activity():
+    # The working dot (INK-198) is one module-level tracker; a task left running by one test must
+    # not be replayed to the next test's WebSocket.
+    from inkbridge.agent.activity import activity
+
+    activity.configure(None)
+    activity._live.clear()
+    activity._last.clear()
+    yield
+    activity.configure(None)
+    activity._live.clear()
+    activity._last.clear()
+
+
+@pytest.fixture(autouse=True)
 def legacy_chunker_v1(monkeypatch):
     """Most chunk tests were written against v1; the default is v2 since INK-195 (decision 0110).
 
