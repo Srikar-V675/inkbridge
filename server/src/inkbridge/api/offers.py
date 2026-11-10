@@ -15,8 +15,9 @@ from inkbridge import db
 from inkbridge.agent import attention as attention_mod
 from inkbridge.agent import detectors
 from inkbridge.api.deps import Conn
-from inkbridge.api.ws import hub
+from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import offers as offers_db
+from inkbridge.db import supersede
 
 router = APIRouter()
 log = logging.getLogger("inkbridge.offers")
@@ -106,12 +107,15 @@ def scan_now(document_id: str) -> None:
             conn = db.connect()
             try:
                 log.info("scan doc=%s %s", document_id, detectors.scan_counts(conn, document_id))
+                superseded, ops = supersede.run(conn, document_id)
                 changed = detectors.run(conn, document_id, hub.session_start(document_id))
                 if detectors.held_unstable(conn, document_id):
                     schedule_scan(document_id)  # ink still changing: look again (INK-199)
             finally:
                 conn.close()
-        publish_updates(changed)
+        publish_updates(superseded + changed)
+        for op in ops:
+            hub.publish(document_id, updated_message(op))
         flush(document_id)
     except Exception:
         log.exception("detector scan failed doc=%s", document_id)

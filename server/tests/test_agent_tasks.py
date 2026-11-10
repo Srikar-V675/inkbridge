@@ -257,3 +257,58 @@ def test_parallel_ops_cannot_overshoot_the_limit(client):
         )
     finally:
         conn.close()
+
+
+def _two_chunks(client):
+    from tests.test_chunk_persistence import Canvas, row
+    from tests.test_search import recognise
+
+    canvas = Canvas(client, row("a", 3) + row("b", 3, y=500))
+    a, b = canvas.chunk_of("a0"), canvas.chunk_of("b0")
+    recognise(a, "MP?")
+    recognise(b, "MCP?")
+    return a, b
+
+
+def _tapped_task(client, a):
+    from inkbridge.db import offers as offers_db
+
+    conn = db.connect()
+    try:
+        o, _ = offers_db.create_offer(
+            conn, "default", kind="question", anchor_chunk=a["id"], reason="r",
+            payload={"key": "k"}, score=0.9,
+        )  # fmt: skip
+        offers_db.tap_offer(conn, o["id"])
+        return offers_db.get_offer(conn, o["id"])["task_id"]
+    finally:
+        conn.close()
+
+
+def test_claim_follows_replaced_anchor(client):
+    a, b = _two_chunks(client)
+    tid = _tapped_task(client, a)
+    conn = db.connect()
+    conn.execute(
+        "UPDATE regions SET status='orphaned', successor_of=? WHERE id=?", (b["id"], a["id"])
+    )
+    conn.commit()
+    try:
+        assert tasks_db.claim(conn, tid, "mcp")["input"]["anchor_chunk"] == b["id"]
+        assert tasks_db.get_task(conn, tid)["input"]["anchor_chunk"] == b["id"]
+    finally:
+        conn.close()
+
+
+def test_claim_carries_current_reading(client):
+    a, _b = _two_chunks(client)
+    tid = _tapped_task(client, a)
+    from tests.test_search import recognise
+
+    recognise(a, "MCP now?", source="user")
+    conn = db.connect()
+    try:
+        got = tasks_db.claim(conn, tid, "mcp")["input"]
+        assert got["anchor_reading"] == "MCP now?" and got["anchor_chunk"] == a["id"]
+    finally:
+        conn.close()

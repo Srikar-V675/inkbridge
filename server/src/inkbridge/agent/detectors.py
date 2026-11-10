@@ -17,6 +17,7 @@ from inkbridge.agent import markup
 from inkbridge.canvas.sketch import read_sketch
 from inkbridge.db import diagrams as diagrams_db
 from inkbridge.db import offers as offers_db
+from inkbridge.db import supersede
 
 log = logging.getLogger("inkbridge.offers")
 
@@ -47,7 +48,9 @@ def _recent(c: dict, now: datetime) -> bool:
         return False
 
 
-STABLE_S = 2.0  # chunk ink unchanged this long before a question/equation offer (INK-199), hypothesis
+STABLE_S = (
+    2.0  # chunk ink unchanged this long before a question/equation offer (INK-199), hypothesis
+)
 
 
 def _stable(c: dict, now: datetime) -> bool:
@@ -357,7 +360,22 @@ def _related(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> 
     return out
 
 
-def run(conn: sqlite3.Connection, document_id: str, session_start: str = "", slow: bool = False) -> list[dict]:
+def _busy_lines(conn: sqlite3.Connection, document_id: str) -> set[str]:
+    """Lines (live chunk ids) with a tapped offer whose task is still pending or running."""
+    rows = conn.execute(
+        "SELECT o.anchor_chunk FROM offers o JOIN agent_tasks t ON t.id = o.task_id"
+        " WHERE o.document_id=? AND o.status='tapped' AND t.status IN ('pending','running')",
+        (document_id,),
+    ).fetchall()
+    if not rows:
+        return set()
+    active = supersede.active_chunks(conn, document_id)
+    return {supersede.line_of(conn, document_id, r["anchor_chunk"], active) for r in rows}
+
+
+def run(
+    conn: sqlite3.Connection, document_id: str, session_start: str = "", slow: bool = False
+) -> list[dict]:
     """Create offers for new candidates, best first. Returns the rows the budget expired."""
     seen = {
         _seen_key(o["kind"], o["anchor_chunk"], o["payload"].get("key"))
@@ -369,11 +387,16 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "", slo
         log.info("detector run doc=%s held=open_offer", document_id)
         return changed
     candidates = scan(conn, document_id, slow=slow)
+    busy = _busy_lines(conn, document_id)
+    active = supersede.active_chunks(conn, document_id) if busy else []
     created: Counter = Counter()
     skipped: Counter = Counter()
     for c in candidates:
         k = _seen_key(c.kind, c.anchor, c.payload.get("key"))
         if k in seen:
+            continue
+        if busy and supersede.line_of(conn, document_id, c.anchor, active) in busy:
+            log.info("detector run doc=%s held=answer_pending anchor=%s", document_id, c.anchor)
             continue
         try:
             _, expired = offers_db.create_offer(
