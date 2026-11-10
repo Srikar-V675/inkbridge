@@ -58,11 +58,15 @@ claude mcp add --scope user inkbridge -- uv run --directory "$PWD/server" inkbri
 make install-skill                # link the export skill into ~/.claude/skills
 ```
 
+For the HTTPS origin (`make serve-https`), register the server with the API URL and the CA:
+`claude mcp add --scope user -e INKBRIDGE_API_URL=https://127.0.0.1:4173 -e SSL_CERT_FILE="$PWD/data/tls/inkbridge-ca.pem" inkbridge -- uv run --directory "$PWD/server" inkbridge-mcp`.
+
 Set `INKBRIDGE_VAULT` to your vault folder and ask Claude to "export my inkbridge canvas to the vault".
 Tools are listed in [docs/mcp-tools.md](docs/mcp-tools.md); the note format in [docs/vault-note-format.md](docs/vault-note-format.md).
 
-Settings are plain environment variables (the server does not read `.env`; `.env.example` lists them, so
-`set -a; . ./.env; set +a` before `make serve`). Optional features, all off until set: handwriting recognition (`GEMINI_API_KEY` plus
+Settings are plain environment variables. `.env.example` lists them; `make serve` and `make serve-https` load `.env`
+(the server itself does not read it). With the Ask runner on, both also write the runner's MCP config for the origin
+they serve (decision [0109](docs/decisions/0109-serve-env-and-runner-config.md)). Optional features, all off until set: handwriting recognition (`GEMINI_API_KEY` plus
 `INKBRIDGE_RECOGNIZE_DOCUMENTS=<canvas ids>`; test pages only, the free tier may train on them), the Ask runner
 (`INKBRIDGE_RUNNER=claude`, see `.env.example`), and offers beside your ink (`INKBRIDGE_QUIET_S`).
 
