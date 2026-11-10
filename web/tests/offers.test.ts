@@ -5,6 +5,7 @@ import {
   canvasLink,
   chipLabel,
   linksText,
+  noteRequest,
   obsidianUrl,
   planeStyle,
   popoverKind,
@@ -35,6 +36,12 @@ describe("offer helpers", () => {
     assert.equal(chipLabel(offer({ kind: "x", payload: { question_id: "q" } })), "Answer ready");
     assert.equal(popoverKind(offer({ kind: "note" })), "generic");
     assert.equal(chipLabel(offer({ kind: "note", reason: "A note" })), "A note");
+  });
+
+  it("gives to_note its own popover and a request to copy", () => {
+    assert.equal(popoverKind(offer({ kind: "to_note", payload: { action: "note", key: "canvas" } })), "note");
+    const t = noteRequest("default");
+    assert.ok(t.includes("default") && t.includes("inkbridge-export"));
   });
 
   it("encodes the Obsidian url and the canvas link", () => {
