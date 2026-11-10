@@ -9,6 +9,7 @@ import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from inkbridge import db
 from inkbridge.agent import markup
@@ -34,6 +35,15 @@ RELATED_MIN_SCORE = 3.0  # -bm25
 RELATED_CHUNKS = 20
 SKETCH_CHUNKS = 30
 _QUESTION = re.compile(r"^\s*(why|how|what|should)\b", re.IGNORECASE)
+RECENT_S = 120.0  # "just written" window, hypothesis (INK-197, decision 0112)
+
+
+def _recent(c: dict, now: datetime) -> bool:
+    # updated_at moves only when the ink changes (db/chunks.py), so it is the "just written" signal
+    try:
+        return now - datetime.fromisoformat(c["updated_at"]) <= timedelta(seconds=RECENT_S)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -164,14 +174,17 @@ def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
     chunks = [c for c in all_chunks if c["source"] != "agent" and not _tiny(c)]  # an agent's answer never triggers
     watches = db.list_watches(conn, document_id)
+    now = datetime.now(UTC)
+    fresh = [c for c in chunks if _recent(c, now)]  # old ink never gets a new offer (INK-197)
+    fresh_ids = {c["id"] for c in fresh}
     out: list[Candidate] = []
-    for c in chunks:
+    for c in fresh:
         out += [x for x in (_question(c), _open_equation(c), _dangling(c)) if x]
-    out += _free_end_arrows(conn, document_id, chunks)
+    out += [x for x in _free_end_arrows(conn, document_id, fresh) if x.anchor in fresh_ids]
     out += _stale_note(chunks, watches)
     out += _to_note(chunks, watches)
     out += _stale_diagram(conn, document_id, chunks)
-    out += _sketch(conn, document_id, chunks)
+    out += _sketch(conn, document_id, fresh)
     out += _related(conn, document_id, chunks)
     out += _markup(conn, document_id, all_chunks)
     first: dict[tuple, Candidate] = {}

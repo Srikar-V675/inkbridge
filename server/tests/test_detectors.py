@@ -493,3 +493,23 @@ def test_one_offer_per_kind_via_run(client):
         assert got[q] == ["question"]
         assert got[arrow] == ["dangling_arrow"]
         assert got[flow] == ["sketch"]
+
+
+def _age(chunk_id, seconds):
+    from datetime import UTC, datetime, timedelta
+
+    conn = db.connect()
+    conn.execute(
+        "UPDATE regions SET updated_at=? WHERE id=?",
+        ((datetime.now(UTC) - timedelta(seconds=seconds)).isoformat(), chunk_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_old_ink_gives_no_offer(client):
+    _, (a, b) = chunks(client, "Why does it rise?", "x =")
+    assert of_kind("question") and of_kind("open_equation")
+    _age(a["id"], 600)
+    _age(b["id"], 600)
+    assert of_kind("question") == [] and of_kind("open_equation") == []
