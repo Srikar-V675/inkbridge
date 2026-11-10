@@ -264,7 +264,7 @@ def test_run_creates_offers_and_dedupes(client):
 
 def test_run_swallows_budget_refusals(client):
     chunks(client, *["Why a?", "Why b?", "Why c?", "Why d?"])
-    assert len(run()) == 3
+    assert len(run()) == 1  # four candidates, one chip: the rest wait for a later scan
 
 
 def test_scan_now_publishes(client, monkeypatch):
@@ -375,7 +375,8 @@ def test_run_logs_refusals(client, caplog):
     caplog.set_level(logging.INFO, logger="inkbridge.offers")
     run()
     msgs = [r.getMessage() for r in caplog.records if "detector run" in r.getMessage()]
-    assert len(msgs) == 1 and "skipped=" in msgs[0] and "question:budget_full" in msgs[0]
+    assert len(msgs) == 1 and "held=open_offer" in msgs[0]  # one chip on screen: nothing new
+    assert len([o for o in run() if o["kind"] == "question"]) == 0
 
 
 def _box(i, x, y=0):
@@ -557,3 +558,20 @@ def test_dangling_tip_near_a_box_ignored(client):
 def test_dangling_tip_far_from_boxes_found(client):
     _arrow_canvas(client, _free_arrow())  # tip 200 from every box, straight, long, headed
     assert len(of_kind("dangling_arrow")) == 1
+
+
+def test_run_creates_one_offer_at_a_time(client):
+    chunks(client, "Why a?", "Why b?", "Why c?")
+    assert len(run()) == 1  # three questions, one chip on screen
+    assert len(run()) == 1  # still one while it is open
+    conn = db.connect()
+    db.offers.dismiss_offer(conn, run()[0]["id"])
+    conn.close()
+    later = [o for o in run() if o["status"] == "open"]
+    assert len(later) == 1 and len(run()) == 2  # the next question, not the dismissed one
+
+
+def test_flowchart_gives_at_most_one(client):
+    free = {**_free_arrow(), "id": "free", "y": 230}
+    Canvas(client, _flow(3, 2) + [free])
+    assert len([o for o in run() if o["status"] == "open"]) == 1

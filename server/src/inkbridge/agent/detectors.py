@@ -305,6 +305,9 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "", slo
         if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
     }
     changed: list[dict] = []
+    if offers_db.open_offers(conn, document_id):  # one chip on screen at a time (INK-197)
+        log.info("detector run doc=%s held=open_offer", document_id)
+        return changed
     candidates = scan(conn, document_id, slow=slow)
     created: Counter = Counter()
     skipped: Counter = Counter()
@@ -333,6 +336,7 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "", slo
         created[c.kind] += 1
         seen.add(k)
         changed += expired
+        break  # best candidate first; the rest are found again on a later scan while the ink is fresh
     log.info(
         "detector run doc=%s candidates=%d created=%s skipped=%s",
         document_id, len(candidates), dict(created), dict(skipped),
