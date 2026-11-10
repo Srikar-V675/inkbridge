@@ -357,8 +357,8 @@ def test_ink_edited_during_another_call_is_not_read_under_its_old_hash(client):
         ]
     finally:
         conn.close()
-    # Only the chunk read before the edit has a reading for its old hash (its bytes were old).
-    assert len(read_old) == 1
+    # The reading made before the edit is dropped too (INK-196): no old hash is saved.
+    assert read_old == []
     assert w.run_once() == 2 and model.calls[1:] == [edited, edited]
 
 
@@ -627,3 +627,120 @@ def test_retry_after_honoured(client):
     w = worker(AlwaysLimited(retry_after_s=900), clock=lambda: t[0], backoff_s=30)
     w.run_once()
     assert w._paused_until - t[0] >= 900
+
+
+def test_reads_newest_touched_chunk_first(client):
+    canvas = fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    a, b = canvas.chunk_of("a0"), canvas.chunk_of("b0")
+    conn = db.connect()
+    for rid, when in (
+        (a["id"], "2026-01-01T00:00:00+00:00"),
+        (b["id"], "2026-01-02T00:00:00+00:00"),
+    ):
+        conn.execute("UPDATE regions SET updated_at = ? WHERE id = ?", (when, rid))
+    conn.commit()
+    conn.close()
+
+    class OneThenDown(FakeModel):
+        def __call__(self, png, hint):
+            if self.calls:
+                raise ServiceUnavailable("down")
+            return super().__call__(png, hint)
+
+    w = worker(OneThenDown())
+    w.run_once()
+    assert canvas.chunk_of("b0")["text"] == "x squared"
+    assert not canvas.chunk_of("a0")["text"]
+
+
+def test_read_of_ink_that_changed_mid_call_is_dropped_and_reread(client):
+    canvas = fresh_canvas(client)
+    rid = canvas.chunk_of("a0")["id"]
+    old_hash = canvas.chunk_of("a0")["content_hash"]
+
+    class EditsWhileReading(FakeModel):
+        def __call__(self, png, hint):
+            if not self.calls:  # the user writes during the first read
+                canvas.elements[0]["points"] = [[0, 0], [7, 9]]
+                canvas.put()
+                upload(client, canvas, rid)
+            return super().__call__(png, hint)
+
+    model = EditsWhileReading()
+    w = worker(model)
+    w.run_once()
+    conn = db.connect()
+    saved = conn.execute(
+        "SELECT count(*) FROM recognitions WHERE region_id = ? AND content_hash = ?",
+        (rid, old_hash),
+    ).fetchone()[0]
+    conn.close()
+    assert saved == 0
+    assert w.run_once() == 1
+    assert len(model.calls) == 2
+    assert canvas.chunk_of("a0")["text"] == "x squared"
+
+
+def test_new_ink_during_pass_restarts_listing(client):
+    canvas = fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    conn = db.connect()
+    for rid, when in (
+        (canvas.chunk_of("a0")["id"], "2026-01-02T00:00:00+00:00"),
+        (canvas.chunk_of("b0")["id"], "2026-01-01T00:00:00+00:00"),
+    ):
+        conn.execute("UPDATE regions SET updated_at = ? WHERE id = ?", (when, rid))
+    conn.commit()
+    conn.close()
+
+    class WritesElsewhere(FakeModel):
+        def __call__(self, png, hint):
+            if not self.calls:  # new ink in a third place during the first read
+                canvas.elements.extend(row("c", 3, y=1000))
+                canvas.put()
+                upload(client, canvas, canvas.chunk_of("c0")["id"])
+            return super().__call__(png, hint)
+
+    model = WritesElsewhere()
+    w = worker(model)
+    assert w.run_once() == 1  # not one call per old candidate
+    assert w.run_once() >= 1
+    assert canvas.chunk_of("c0")["text"] == "x squared"
+
+
+def test_from_env_idle_defaults_by_reader(monkeypatch):
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZE_DOCUMENTS", "default")
+    monkeypatch.delenv("INKBRIDGE_RECOGNIZE_IDLE_S", raising=False)
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "claude")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 1.5
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "gemini")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 5.0
+    monkeypatch.delenv("INKBRIDGE_RECOGNIZER")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 5.0
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZER", "claude")
+    monkeypatch.setenv("INKBRIDGE_RECOGNIZE_IDLE_S", "3")
+    assert RecognitionWorker.from_env(recognizer=FakeModel()).idle_s == 3.0
+
+
+def test_logs_stroke_to_reading_latency(client, caplog):
+    import logging
+
+    fresh_canvas(client)
+    with caplog.at_level(logging.INFO, logger="inkbridge.recognizer.latency"):
+        worker(FakeModel(errors=[ServiceUnavailable("down")])).run_once()
+        assert not [r for r in caplog.records if r.name == "inkbridge.recognizer.latency"]
+        worker(FakeModel()).run_once()
+    (rec,) = [r for r in caplog.records if r.name == "inkbridge.recognizer.latency"]
+    msg = rec.getMessage()
+    assert "region=" in msg and "backlog=0" in msg
+    assert int(msg.split("latency_ms=")[1].split()[0]) > 0
+
+
+def test_nudge_wakes_the_worker_after_the_idle_delay(client):
+    w = worker(FakeModel(), idle_s=0.05)
+    w._thread = threading.Thread(target=lambda: time.sleep(1))  # is_alive stand-in
+    w._thread.start()
+    w.nudge("default")
+    assert not w._wake.is_set()
+    assert w._wake.wait(1.0)
+    w.nudge("other")  # not opted in: no timer
+    w._thread.join()

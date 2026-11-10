@@ -3,12 +3,14 @@
 Pure rules over the stored chunks; the caller (`run`, below) turns candidates into offers.
 """
 
+import itertools
 import json
 import logging
 import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from inkbridge import db
 from inkbridge.agent import markup
@@ -34,6 +36,15 @@ RELATED_MIN_SCORE = 3.0  # -bm25
 RELATED_CHUNKS = 20
 SKETCH_CHUNKS = 30
 _QUESTION = re.compile(r"^\s*(why|how|what|should)\b", re.IGNORECASE)
+RECENT_S = 120.0  # "just written" window, hypothesis (INK-197, decision 0112)
+
+
+def _recent(c: dict, now: datetime) -> bool:
+    # updated_at moves only when the ink changes (db/chunks.py), so it is the "just written" signal
+    try:
+        return now - datetime.fromisoformat(c["updated_at"]) <= timedelta(seconds=RECENT_S)
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 @dataclass(frozen=True)
@@ -74,7 +85,17 @@ def _dangling(c: dict) -> Candidate | None:
         return _cand("dangling_arrow", c["id"], payload, "Arrow leads nowhere")
 
 
-DANGLE_TOL = 40.0  # scene units; hypothesis, tune on logs
+DANGLE_TOL = 80.0  # scene units; hypothesis, tune on logs (was 40, INK-197)
+DANGLE_MIN_LEN = 150.0  # scene units; a short arrow is a stroke, not a flow (INK-197)
+DANGLE_STRAIGHT = 0.9  # chord / path length; a curvy stroke is handwriting (INK-197)
+
+
+def _long_straight_headed(e: dict, pts: list) -> bool:
+    if not e.get("endArrowhead"):
+        return False
+    path = sum(((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5 for a, b in itertools.pairwise(pts))
+    chord = ((pts[-1][0] - pts[0][0]) ** 2 + (pts[-1][1] - pts[0][1]) ** 2) ** 0.5
+    return chord >= DANGLE_MIN_LEN and path > 0 and chord / path >= DANGLE_STRAIGHT
 
 
 def _gap(x: float, y: float, s: dict) -> float:
@@ -102,6 +123,8 @@ def _free_end_arrows(
     for e in live:
         pts = e.get("points") or []
         if e.get("type") != "arrow" or len(pts) < 2 or (e.get("endBinding") or {}).get("elementId"):
+            continue
+        if not _long_straight_headed(e, pts):
             continue
         ex, ey = e["x"] + pts[-1][0], e["y"] + pts[-1][1]
         if any(_gap(ex, ey, s) <= DANGLE_TOL for s in solids if s["id"] != e["id"]):
@@ -173,21 +196,27 @@ def scan_counts(conn: sqlite3.Connection, document_id: str) -> str:
     return f"chunks={len(chunks)} unread={unread} candidates={sum(cands.values())} {dict(cands)}"
 
 
-def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
+def scan(conn: sqlite3.Connection, document_id: str, slow: bool = False) -> list[Candidate]:
+    # slow=True adds the on-request candidates (to_note, related); nothing in the API passes it (INK-197)
     all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
     chunks = [
         c for c in all_chunks if c["source"] != "agent" and not _tiny(c)
     ]  # an agent's answer never triggers
     watches = db.list_watches(conn, document_id)
+    now = datetime.now(UTC)
+    fresh = [c for c in chunks if _recent(c, now)]  # old ink never gets a new offer (INK-197)
+    fresh_ids = {c["id"] for c in fresh}
     out: list[Candidate] = []
-    for c in chunks:
+    for c in fresh:
         out += [x for x in (_question(c), _open_equation(c), _dangling(c)) if x]
-    out += _free_end_arrows(conn, document_id, chunks)
+    out += [x for x in _free_end_arrows(conn, document_id, fresh) if x.anchor in fresh_ids]
     out += _stale_note(chunks, watches)
-    out += _to_note(chunks, watches)
+    if slow:
+        out += _to_note(chunks, watches)
     out += _stale_diagram(conn, document_id, chunks)
-    out += _sketch(conn, document_id, chunks)
-    out += _related(conn, document_id, chunks)
+    out += _sketch(conn, document_id, fresh)
+    if slow:
+        out += _related(conn, document_id, chunks)
     out += _markup(conn, document_id, all_chunks)
     first: dict[tuple, Candidate] = {}
     for c in out:  # a v2 connector chunk and a scene arrow never give two for one anchor
@@ -294,7 +323,7 @@ def _related(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> 
     return out
 
 
-def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> list[dict]:
+def run(conn: sqlite3.Connection, document_id: str, session_start: str = "", slow: bool = False) -> list[dict]:
     """Create offers for new candidates, best first. Returns the rows the budget expired."""
     seen = {
         _seen_key(o["kind"], o["anchor_chunk"], o["payload"].get("key"))
@@ -302,7 +331,10 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
         if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
     }
     changed: list[dict] = []
-    candidates = scan(conn, document_id)
+    if offers_db.open_offers(conn, document_id):  # one chip on screen at a time (INK-197)
+        log.info("detector run doc=%s held=open_offer", document_id)
+        return changed
+    candidates = scan(conn, document_id, slow=slow)
     created: Counter = Counter()
     skipped: Counter = Counter()
     for c in candidates:
@@ -330,6 +362,7 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
         created[c.kind] += 1
         seen.add(k)
         changed += expired
+        break  # best candidate first; the rest are found again on a later scan while the ink is fresh
     log.info(
         "detector run doc=%s candidates=%d created=%s skipped=%s",
         document_id,
