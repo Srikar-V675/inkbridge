@@ -203,6 +203,7 @@ class RecognitionWorker:
         self._skipped &= keys
         urgent = self._urgent_ids(document_id)
         candidates.sort(key=lambda c: c["id"] not in urgent)  # stable: asked-for chunks first
+        started = db.document_updated_at(conn, document_id)
         try:
             for region in candidates:
                 asked = region["id"] in urgent
@@ -248,6 +249,15 @@ class RecognitionWorker:
                     except Exception as e:  # noqa: BLE001 - a model failure never reaches the editor
                         self._back_off(key, e)
                         continue
+                    current = conn.execute(
+                        "SELECT content_hash FROM regions WHERE id = ? AND status = 'active'",
+                        (region["id"],),
+                    ).fetchone()
+                    if current is None or current["content_hash"] != region["content_hash"]:
+                        log.info(
+                            "dropping stale reading of %s: ink changed during the read", key[0]
+                        )
+                        break  # re-list newest-first next pass; the new hash gets its own read
                     self._failures.pop(key, None)
                     self._rl_streak = 0
                 try:
@@ -258,6 +268,8 @@ class RecognitionWorker:
                     log.warning("saving the reading of %s failed (%s); will retry", key[0], e)
                     continue
                 recognized.append(region["id"])
+                if db.document_updated_at(conn, document_id) != started:
+                    break  # new ink while reading: re-list so the newest chunk goes first
         finally:
             if recognized and self._publish is not None:
                 self._publish(

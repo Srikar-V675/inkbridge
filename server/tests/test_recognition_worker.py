@@ -357,8 +357,8 @@ def test_ink_edited_during_another_call_is_not_read_under_its_old_hash(client):
         ]
     finally:
         conn.close()
-    # Only the chunk read before the edit has a reading for its old hash (its bytes were old).
-    assert len(read_old) == 1
+    # The reading made before the edit is dropped too (INK-196): no old hash is saved.
+    assert read_old == []
     assert w.run_once() == 2 and model.calls[1:] == [edited, edited]
 
 
@@ -651,3 +651,57 @@ def test_reads_newest_touched_chunk_first(client):
     w.run_once()
     assert canvas.chunk_of("b0")["text"] == "x squared"
     assert not canvas.chunk_of("a0")["text"]
+
+
+def test_read_of_ink_that_changed_mid_call_is_dropped_and_reread(client):
+    canvas = fresh_canvas(client)
+    rid = canvas.chunk_of("a0")["id"]
+    old_hash = canvas.chunk_of("a0")["content_hash"]
+
+    class EditsWhileReading(FakeModel):
+        def __call__(self, png, hint):
+            if not self.calls:  # the user writes during the first read
+                canvas.elements[0]["points"] = [[0, 0], [7, 9]]
+                canvas.put()
+                upload(client, canvas, rid)
+            return super().__call__(png, hint)
+
+    model = EditsWhileReading()
+    w = worker(model)
+    w.run_once()
+    conn = db.connect()
+    saved = conn.execute(
+        "SELECT count(*) FROM recognitions WHERE region_id = ? AND content_hash = ?",
+        (rid, old_hash),
+    ).fetchone()[0]
+    conn.close()
+    assert saved == 0
+    assert w.run_once() == 1
+    assert len(model.calls) == 2
+    assert canvas.chunk_of("a0")["text"] == "x squared"
+
+
+def test_new_ink_during_pass_restarts_listing(client):
+    canvas = fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    conn = db.connect()
+    for rid, when in (
+        (canvas.chunk_of("a0")["id"], "2026-01-02T00:00:00+00:00"),
+        (canvas.chunk_of("b0")["id"], "2026-01-01T00:00:00+00:00"),
+    ):
+        conn.execute("UPDATE regions SET updated_at = ? WHERE id = ?", (when, rid))
+    conn.commit()
+    conn.close()
+
+    class WritesElsewhere(FakeModel):
+        def __call__(self, png, hint):
+            if not self.calls:  # new ink in a third place during the first read
+                canvas.elements.extend(row("c", 3, y=1000))
+                canvas.put()
+                upload(client, canvas, canvas.chunk_of("c0")["id"])
+            return super().__call__(png, hint)
+
+    model = WritesElsewhere()
+    w = worker(model)
+    assert w.run_once() == 1  # not one call per old candidate
+    assert w.run_once() >= 1
+    assert canvas.chunk_of("c0")["text"] == "x squared"
