@@ -36,6 +36,11 @@ def test_handwriting_chunk_counts_are_recorded_not_blessed():
     assert len(chunk_scene(els, ChunkerConfig.v2()).chunks) >= 1
 
 
-def test_default_chunker_is_v1(monkeypatch):
+def test_default_chunker_is_v2(monkeypatch, capsys):
     monkeypatch.delenv("INKBRIDGE_CHUNKER", raising=False)
-    assert config.chunker() == "v1"  # flipping the default is a decision (0106)
+    assert config.chunker() == "v2"  # flipped by INK-195, decision 0110
+    monkeypatch.setenv("INKBRIDGE_CHUNKER", "v1")
+    assert config.chunker() == "v1"
+    monkeypatch.setenv("INKBRIDGE_CHUNKER", "bogus")
+    assert config.chunker() == "v2"
+    assert "ignoring INKBRIDGE_CHUNKER" in capsys.readouterr().err

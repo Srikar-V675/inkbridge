@@ -21,3 +21,5 @@ Arrows and shapes landed in one big chunk. v2 (decision 0081) is built and switc
 - Flowchart gap 200 and more: 4 chunks and 3 links in v2 (was 1 chunk). Gaps at or under the median element still merge (tick rule).
 - Switch a canvas with `PATCH /documents/{id}` `{"chunker": "v2"}` or set `INKBRIDGE_CHUNKER=v2`.
 - Flip the default only when the owner confirms on real pages that handwriting is not shattered into word-sized chunks, or E5 recalibrates the v2 thresholds.
+
+Superseded in part by 0110 (default is now v2).

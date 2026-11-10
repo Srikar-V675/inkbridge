@@ -91,14 +91,14 @@ def crop_source() -> str:
 
 
 def chunker() -> str:
-    """INKBRIDGE_CHUNKER: 'v1' (default) or 'v2' (INK-122). A canvas's own setting wins. Read at call time."""
+    """INKBRIDGE_CHUNKER: 'v2' (default since INK-195, decision 0110) or 'v1' (INK-122). A canvas's own setting wins. Read at call time."""
     raw = (os.environ.get("INKBRIDGE_CHUNKER") or "").strip().lower()
-    if raw in ("", "v1"):
-        return "v1"
-    if raw == "v2":
+    if raw in ("", "v2"):
         return "v2"
+    if raw == "v1":
+        return "v1"
     print(f"inkbridge: ignoring INKBRIDGE_CHUNKER={raw!r} (want v1 or v2)", file=sys.stderr)
-    return "v1"
+    return "v2"
 
 
 def agent_daily_tasks() -> int:

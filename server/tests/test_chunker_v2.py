@@ -94,28 +94,29 @@ def test_default_config_is_v1_and_v2_factory_values():
     assert (d.version, d.arrow_merge, d.link_reach) == ("v1", 6.0, 3.0)
     c = ChunkerConfig.v2()
     assert (c.version, c.arrow_merge, c.link_reach) == ("v2", 1.0, 2.0)
-    assert (c.k, c.next_line, c.long_stroke) == (1.5, 0.5, 2.0)
+    assert (c.k, c.next_line, c.long_stroke) == (2.0, 2.0, 4.0)  # INK-195, decision 0110
     with pytest.raises(ValueError):
         ChunkerConfig(version="v3")
     with pytest.raises(ValueError):
         ChunkerConfig(next_line=0)
 
 
-def test_same_line_words_join_at_1_5_T_but_adjacent_lines_need_0_5_T():
+def test_same_line_words_join_at_2_T_but_adjacent_lines_need_2_T():
     a = word("a", 0, 0)
     same = [a, word("b", 45, 0)]  # 25 px apart on one line, T = 20
     assert analyse(same).scale == 20
     assert sets(v2(same)) == {frozenset("ab")} and len(v1(same)) == 1
-    apart = [a, below(a, "b", 25)]
-    assert len(v1(apart)) == 1  # one k does not tell a line from a word
+    apart = [a, below(a, "b", 45)]  # beyond next_line * T = 40
     assert len(v2(apart)) == 2
+    assert len(v2([a, below(a, "b", 35)])) == 1
     assert len(v2([a, below(a, "b", 8)])) == 1
 
 
 def test_adjacent_line_needs_horizontal_overlap():
     a = word("a", 0, 0)
-    b = below(a, "b", 15, x=40)  # no overlap in x
+    b = below(a, "b", 15, x=70)  # 50 px right of a: beyond k * T
     assert len(v2([a, b])) == 2
+    assert len(v2([a, below(a, "b", 15, x=40)])) == 1  # a diagonal neighbour joins
     assert len(v2([a, below(a, "b", 8, x=10)])) == 1
 
 
@@ -369,7 +370,9 @@ def test_link_confidence_orders_by_evidence():
         line("loose", 40, 25, 540, 330, index="a10"),
     ]
     # the headless one ends 36 px (1.8 T) above the far box of "more"
-    els[-1] = line("loose", 40, 25, 540, 300 - 4 - 36, index="a10")
+    els[-1] = pen(  # a hook at the tip is evidence, but weaker than a head
+        "loose", [(40, 25), (290, 130), (540, 300 - 4 - 36), (505, 300 - 4 - 36 - 2)], "a10"
+    )
     r = chunk_scene(els, ChunkerConfig.v2())
     rows = {x.element_id: x for x in r.link_rows}
     assert set(rows) == {"tight", "loose"}
@@ -406,3 +409,59 @@ def test_v2_overlapping_or_nested_shapes_still_join():
 def test_v2_text_near_a_shape_still_joins_by_proximity():
     text = {"id": "t", "type": "text", "x": 170, "y": 20, "width": 60, "height": 30, "text": "hi"}
     assert sets(v2([rect("r", 0, 0, 160, 70), text])) == {frozenset({"r", "t"})}
+
+
+def _curly(i, x, y, w=6000, h=3000, periods=2):
+    """A page-sized wavy freedraw: low net / path, few reversals, so it reads as writing."""
+    pts = [
+        (x + w * u, y + h / 2 + (h / 2) * math.sin(2 * math.pi * periods * u))
+        for u in (k / 80 for k in range(81))
+    ]
+    return pen(i, pts)
+
+
+def _block(
+    prefix, x0, y0, lines=4, words=8, strokes=3, stroke_w=50, stroke_h=40, gap=20, pitch=100
+):
+    """Paragraph of short strokes: `gap` px between strokes, `pitch` px between line tops."""
+    out = []
+    for r in range(lines):
+        for w in range(words):
+            for s in range(strokes):
+                x = x0 + (w * strokes + s) * (stroke_w + gap)
+                out.append(word(f"{prefix}{r}-{w}-{s}", x, y0 + r * pitch, stroke_w))
+    return out
+
+
+def test_page_sized_curly_stroke_does_not_shatter_a_paragraph():
+    para = _block("p", 2000, 1000)
+    curls = [_curly(f"c{k}", 0, 200 + k * 50) for k in range(3)]
+    els = [*para, *curls]
+    assert all(analyse(els).kinds[c["id"]] == "writing" for c in curls)
+    assert len(chunk_scene(els, ChunkerConfig.v2()).chunks) <= 4
+
+
+def _wide_block(prefix, x0, y0, lines=6, words=6, strokes=3, t=20.0):
+    """Handwriting block: word gap 1.4 T, line pitch 1.1 T, each line drifting 15 px downward."""
+    out = []
+    word_w = strokes * t + (strokes - 1) * 0.4 * t
+    width = words * (word_w + 1.4 * t)
+    for r in range(lines):
+        for w in range(words):
+            for s in range(strokes):
+                x = x0 + w * (word_w + 1.4 * t) + s * 1.4 * t
+                y = y0 + r * 1.1 * t + 15 * (x - x0) / width
+                pts = [(x + t * k / 7, y + 0.45 * t * math.sin(k * 1.3)) for k in range(8)]
+                out.append(pen(f"{prefix}{r}-{w}-{s}", pts))
+    return out
+
+
+def test_wide_handwriting_lines_form_one_block():
+    els = _wide_block("a", 0, 0)
+    assert analyse(els).scale == 20
+    assert len(chunk_scene(els, ChunkerConfig.v2()).chunks) == 1
+
+
+def test_two_paragraphs_a_screen_apart_stay_two():
+    els = _wide_block("a", 0, 0) + _wide_block("b", 0, 40 * 20.0)
+    assert len(chunk_scene(els, ChunkerConfig.v2()).chunks) == 2

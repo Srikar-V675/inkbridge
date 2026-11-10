@@ -229,13 +229,13 @@ def test_readers_dedupe_parallel_arrows(client, v2):
 
 
 def two_line_hub():
-    """Two lines of words 25 px apart (v1 joins them, v2 does not) with a pen arrow off the right
-    edge, and an untouched cluster far away."""
+    """Two lines of words 150 px apart joined by a pen arrow (v1 glues all of it into one chunk,
+    v2 keeps the arrow out and the two lines apart), and an untouched cluster far away."""
     return [
         *words("a", 0, 0),
-        *words("b", 0, 34),
-        line("c", 85, 8, 285, 8, index="a0"),
-        vee("c-head", 275, 8, index="a1"),
+        *words("b", 0, 150),
+        line("c", 30, 18, 30, 140, index="a0"),
+        vee("c-head", 20, 140, index="a1"),
         *words("f", 3000, 0),
     ]
 
@@ -349,7 +349,7 @@ def test_patch_documents_chunker(client, monkeypatch):
     r = client.patch("/documents/default", json={"chunker": "default"})
     assert r.json()["chunker"] == "v2"  # follows the env now
     monkeypatch.delenv("INKBRIDGE_CHUNKER")
-    assert client.get("/documents/default").json()["chunker"] == "v1"
+    assert client.get("/documents/default").json()["chunker"] == "v2"  # default since INK-195
     assert client.patch("/documents/default", json={"chunker": "v3"}).status_code == 422
     assert client.patch("/documents/default", json={}).status_code == 422
     assert client.patch("/documents/nope", json={"chunker": "v2"}).status_code == 404
@@ -394,3 +394,18 @@ def test_set_chunker_is_one_transaction(client, monkeypatch):
     with pytest.raises(RuntimeError):
         set_chunker("v2")
     assert conn_rows("SELECT chunker FROM documents WHERE id = 'default'")[0]["chunker"] is None
+
+
+def test_null_chunker_gets_v2_by_default_and_can_be_switched(client, monkeypatch):
+    monkeypatch.delenv("INKBRIDGE_CHUNKER", raising=False)
+    canvas = Canvas(client, hub_and_spoke())
+    assert conn_rows("SELECT chunker FROM documents WHERE id='default'")[0]["chunker"] is None
+    members = {i for c in canvas.chunks("active") for i in c["element_ids"]}
+    assert "cr" not in members and "na" not in members  # v2: connectors stay out
+    assert client.patch("/documents/default", json={"chunker": "v1"}).json()["chunker"] == "v1"
+    members = {i for c in canvas.chunks("active") for i in c["element_ids"]}
+    assert "cr" in members
+    assert client.patch("/documents/default", json={"chunker": "default"}).json()["chunker"] == "v2"
+    assert conn_rows("SELECT chunker FROM documents WHERE id='default'")[0]["chunker"] is None
+    members = {i for c in canvas.chunks("active") for i in c["element_ids"]}
+    assert "cr" not in members
