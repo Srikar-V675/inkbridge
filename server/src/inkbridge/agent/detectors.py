@@ -170,7 +170,8 @@ def scan_counts(conn: sqlite3.Connection, document_id: str) -> str:
     return f"chunks={len(chunks)} unread={unread} candidates={sum(cands.values())} {dict(cands)}"
 
 
-def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
+def scan(conn: sqlite3.Connection, document_id: str, slow: bool = False) -> list[Candidate]:
+    # slow=True adds the on-request candidates (to_note, related); nothing in the API passes it (INK-197)
     all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
     chunks = [c for c in all_chunks if c["source"] != "agent" and not _tiny(c)]  # an agent's answer never triggers
     watches = db.list_watches(conn, document_id)
@@ -182,10 +183,12 @@ def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
         out += [x for x in (_question(c), _open_equation(c), _dangling(c)) if x]
     out += [x for x in _free_end_arrows(conn, document_id, fresh) if x.anchor in fresh_ids]
     out += _stale_note(chunks, watches)
-    out += _to_note(chunks, watches)
+    if slow:
+        out += _to_note(chunks, watches)
     out += _stale_diagram(conn, document_id, chunks)
     out += _sketch(conn, document_id, fresh)
-    out += _related(conn, document_id, chunks)
+    if slow:
+        out += _related(conn, document_id, chunks)
     out += _markup(conn, document_id, all_chunks)
     first: dict[tuple, Candidate] = {}
     for c in out:  # a v2 connector chunk and a scene arrow never give two for one anchor
@@ -282,7 +285,7 @@ def _related(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> 
     return out
 
 
-def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> list[dict]:
+def run(conn: sqlite3.Connection, document_id: str, session_start: str = "", slow: bool = False) -> list[dict]:
     """Create offers for new candidates, best first. Returns the rows the budget expired."""
     seen = {
         _seen_key(o["kind"], o["anchor_chunk"], o["payload"].get("key"))
@@ -290,7 +293,7 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
         if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
     }
     changed: list[dict] = []
-    candidates = scan(conn, document_id)
+    candidates = scan(conn, document_id, slow=slow)
     created: Counter = Counter()
     skipped: Counter = Counter()
     for c in candidates:

@@ -9,16 +9,16 @@ from tests.test_chunk_persistence import Canvas, row, stroke
 from tests.test_search import recognise
 
 
-def scan():
+def scan(slow=True):
     conn = db.connect()
     try:
-        return detectors.scan(conn, "default")
+        return detectors.scan(conn, "default", slow=slow)
     finally:
         conn.close()
 
 
-def of_kind(kind):
-    return [c for c in scan() if c.kind == kind]
+def of_kind(kind, slow=True):
+    return [c for c in scan(slow) if c.kind == kind]
 
 
 def chunks(client, *texts):
@@ -131,10 +131,10 @@ def test_to_note_once_per_canvas(client):
 
 def test_run_to_note_not_repeated_by_new_dot(client):
     canvas = with_dots(client, 8, 0)
-    assert len([o for o in run() if o["kind"] == "to_note"]) == 1
+    assert len([o for o in run(slow=True) if o["kind"] == "to_note"]) == 1
     canvas.elements += [stroke("dotx", 0, 99000)]
     canvas.put()
-    assert len([o for o in run() if o["kind"] == "to_note"]) == 1
+    assert len([o for o in run(slow=True) if o["kind"] == "to_note"]) == 1
 
 
 def _flow(n_boxes, n_arrows):
@@ -513,3 +513,16 @@ def test_old_ink_gives_no_offer(client):
     _age(a["id"], 600)
     _age(b["id"], 600)
     assert of_kind("question") == [] and of_kind("open_equation") == []
+
+
+def test_related_and_to_note_only_on_request(client, monkeypatch):
+    other = _doc(client, "B")
+    _put(client, other, row("b", 3))
+    conn = db.connect()
+    (b,) = db.list_regions(conn, other, chunks=True, status="active")
+    db.save_recognition(conn, b["id"], b["content_hash"], "gemini", "gradient descent learning rate")
+    conn.close()
+    with_dots(client, 9, 0, reading="choosing a learning rate for gradient descent")
+    monkeypatch.setattr(detectors, "RELATED_MIN_SCORE", 0)
+    assert of_kind("to_note", slow=False) == [] and of_kind("related", slow=False) == []
+    assert of_kind("to_note") and of_kind("related")  # on the slow path they still exist
