@@ -286,8 +286,11 @@ class ApiClient:
         sources: list[dict],
         canvas_text: str | None = None,
         final: bool = True,
+        document_id: str | None = None,
     ) -> dict:
         body = {"answer_md": answer_md, "sources": sources}
+        if document_id is not None:
+            body["document_id"] = document_id
         if not final:
             body["final"] = False
         if canvas_text is not None:

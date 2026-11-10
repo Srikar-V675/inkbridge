@@ -91,11 +91,11 @@ def test_answer_question_final_false_appends(mcp_client):
     q = ask(mcp_client)
     with mcp_client.websocket_connect(WS) as ws:
         out = call("answer_question", question_id=q["id"], answer_md="ab", final=False)
-        assert out == {"id": q["id"], "status": "pending", "seq": 1}
+        assert out == {"id": q["id"], "status": "pending", "document_id": "default", "seq": 1}
         assert recv(ws)["type"] == "question.delta"
     assert call("list_questions")["questions"][0]["partial_answer"] == "ab"
     out = call("answer_question", question_id=q["id"], answer_md="abc")
-    assert out == {"id": q["id"], "status": "answered"}
+    assert out == {"id": q["id"], "status": "answered", "document_id": "default"}
     assert mcp_client.get(f"/questions/{q['id']}").json()["partial_answer"] is None
 
 

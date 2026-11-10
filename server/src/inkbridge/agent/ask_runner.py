@@ -157,13 +157,24 @@ def _data(s: str) -> str:
     return s.replace("</untrusted_data>", "<\\/untrusted_data>")
 
 
+def _pass_canvas(document_id: object) -> str:
+    did = str(document_id).replace("`", "").replace('"', "")
+    return (
+        f'The canvas is `{did}`: pass document_id="{did}" on every tool call (read_canvas, '
+        "get_region, answer_question, write_text, draw_diagram, edit_diagram); never rely on a "
+        "default canvas. "
+    )
+
+
 def build_prompt(q: dict) -> str:
     history = "\n".join(
         f"- question: {_data(h.get('text') or '')}\n  answer: {_data(h.get('answer_md') or '')}"
         for h in q.get("history", [])
     )
     return (
-        f"Answer question `{q['id']}` on canvas `{q['document_id']}`. Steps: call `read_canvas` "
+        f"Answer question `{q['id']}` on canvas `{q['document_id']}`. "
+        + _pass_canvas(q["document_id"])
+        + "Steps: call `read_canvas` "
         "(and `get_region` for the focus chunks), search the vault with the vault search tool if "
         "you have one, then call `answer_question` exactly once with markdown and sources. "
         "Use only these tools.\n"
@@ -196,6 +207,8 @@ def build_task_prompt(t: dict) -> str:
         )
     return (
         f"Task `{t['id']}` ({t['kind']}, mode {t['mode']}) on canvas `{t['document_id']}`. "
+        + _pass_canvas(t["document_id"])
+        +
         f"Anchor chunk: {i.get('anchor_chunk')}. Call `read_canvas` and `get_region` for it, then "
         "do what the offer says using only the tools you were given. "
         f"Your task id is {t['id']}; pass it as task_id to write_text and draw_diagram "
