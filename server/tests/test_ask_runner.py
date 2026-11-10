@@ -552,3 +552,14 @@ def test_build_task_prompt_markup_names_tools():
     assert "get_markup" in p and "edit_diagram" in p and "dg1" in p
     assert "dg1" in p.split("<untrusted_data>")[0]
     assert "Apply mark-up?" in p.split("<untrusted_data>")[1]
+
+
+def test_question_prompt_tells_agent_to_pass_canvas():
+    q = {"id": "q", "document_id": "canvasB", "text": "t", "focus_chunk_ids": []}
+    assert 'document_id="canvasB"' in build_prompt(q)
+
+
+def test_task_prompt_tells_agent_to_pass_canvas():
+    t = {"id": "t1", "document_id": "canvasB", "kind": "offer", "mode": "link", "op_limit": 0,
+         "input": {"reason": "x", "anchor_chunk": "c1", "payload": {}}}  # fmt: skip
+    assert 'document_id="canvasB"' in build_task_prompt(t)
