@@ -627,3 +627,27 @@ def test_retry_after_honoured(client):
     w = worker(AlwaysLimited(retry_after_s=900), clock=lambda: t[0], backoff_s=30)
     w.run_once()
     assert w._paused_until - t[0] >= 900
+
+
+def test_reads_newest_touched_chunk_first(client):
+    canvas = fresh_canvas(client, row("a", 3), row("b", 3, y=500))
+    a, b = canvas.chunk_of("a0"), canvas.chunk_of("b0")
+    conn = db.connect()
+    for rid, when in (
+        (a["id"], "2026-01-01T00:00:00+00:00"),
+        (b["id"], "2026-01-02T00:00:00+00:00"),
+    ):
+        conn.execute("UPDATE regions SET updated_at = ? WHERE id = ?", (when, rid))
+    conn.commit()
+    conn.close()
+
+    class OneThenDown(FakeModel):
+        def __call__(self, png, hint):
+            if self.calls:
+                raise ServiceUnavailable("down")
+            return super().__call__(png, hint)
+
+    w = worker(OneThenDown())
+    w.run_once()
+    assert canvas.chunk_of("b0")["text"] == "x squared"
+    assert not canvas.chunk_of("a0")["text"]
