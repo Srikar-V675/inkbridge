@@ -168,13 +168,15 @@ describe("lime is the agent", () => {
   it("the lime variables are found", () => {
     assert.ok(limeNames.includes("--component-offer-chip-background-color"));
     assert.ok(limeNames.includes("--component-draft-badge-background-color"));
+    assert.ok(limeNames.includes("--component-working-dot-background-color")); // INK-198
   });
 
   it("appears only in Chip.css and Badge.css", () => {
     const files = sources();
-    assert.deepEqual(limeOffenders(files, limeNames, ["ui/Chip.css", "ui/Badge.css"]), []);
+    assert.deepEqual(limeOffenders(files, limeNames, ["ui/Chip.css", "ui/Badge.css", "app/WorkingDot.css"]), []);
     assert.ok(hasToken(files["ui/Chip.css"], limeNames), "Chip uses lime");
     assert.ok(hasToken(files["ui/Badge.css"], limeNames), "Badge uses lime");
+    assert.ok(hasToken(files["app/WorkingDot.css"], limeNames), "WorkingDot uses lime");
   });
 
   it("the checker flags a stray use", () => {
