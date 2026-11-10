@@ -4,8 +4,10 @@ Pure rules over the stored chunks; the caller (`run`, below) turns candidates in
 """
 
 import json
+import logging
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 
 from inkbridge import db
@@ -13,6 +15,8 @@ from inkbridge.agent import markup
 from inkbridge.canvas.sketch import read_sketch
 from inkbridge.db import diagrams as diagrams_db
 from inkbridge.db import offers as offers_db
+
+log = logging.getLogger("inkbridge.offers")
 
 SCORE = {
     "question": 0.9,
@@ -70,6 +74,44 @@ def _dangling(c: dict) -> Candidate | None:
         return _cand("dangling_arrow", c["id"], payload, "Arrow leads nowhere")
 
 
+DANGLE_TOL = 40.0  # scene units; hypothesis, tune on logs
+
+
+def _gap(x: float, y: float, s: dict) -> float:
+    # distance from a point to the element's axis-aligned box; rotation ignored (decision 0107)
+    sx, sy = s.get("x", 0.0), s.get("y", 0.0)
+    dx = max(sx - x, 0.0, x - (sx + s.get("width", 0.0)))
+    dy = max(sy - y, 0.0, y - (sy + s.get("height", 0.0)))
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _free_end_arrows(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:
+    """Chunker v1 keeps arrows in no chunk kind of their own: find a native arrow whose tip touches nothing."""
+    elements = json.loads(db.get_scene(conn, document_id)[1])
+    live = [
+        e
+        for e in elements
+        if not e.get("isDeleted")
+        and not (isinstance(e.get("customData"), dict) and e["customData"].get("draft"))
+    ]
+    owner = {i: c for c in chunks for i in c["element_ids"]}
+    solids = [e for e in live if e.get("type") not in ("arrow", "line")]
+    out = []
+    for e in live:
+        pts = e.get("points") or []
+        if e.get("type") != "arrow" or len(pts) < 2 or (e.get("endBinding") or {}).get("elementId"):
+            continue
+        ex, ey = e["x"] + pts[-1][0], e["y"] + pts[-1][1]
+        if any(_gap(ex, ey, s) <= DANGLE_TOL for s in solids if s["id"] != e["id"]):
+            continue
+        c = owner.get(e["id"]) or owner.get((e.get("startBinding") or {}).get("elementId"))
+        if c is None:
+            log.debug("free arrow %s belongs to no active chunk", e["id"])
+            continue
+        out.append(_cand("dangling_arrow", c["id"], {"action": "ask_user", "key": e["id"]}, "Arrow leads nowhere"))
+    return out
+
+
 def _stale_note(chunks: list[dict], watches: list[dict]) -> list[Candidate]:
     by_id = {c["id"]: c for c in chunks}
     out, seen = [], set()
@@ -109,6 +151,15 @@ def _tiny(c: dict) -> bool:
     )
 
 
+def scan_counts(conn: sqlite3.Connection, document_id: str) -> str:
+    """One log fragment: how many chunks the scan sees, how many have no reading, how many candidates."""
+    all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
+    chunks = [c for c in all_chunks if c["source"] != "agent"]
+    unread = sum(1 for c in chunks if not (c["text"] or "").strip())
+    cands = Counter(c.kind for c in scan(conn, document_id))
+    return f"chunks={len(chunks)} unread={unread} candidates={sum(cands.values())} {dict(cands)}"
+
+
 def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     all_chunks = db.list_regions(conn, document_id, chunks=True, status="active", limit=500)
     chunks = [c for c in all_chunks if c["source"] != "agent" and not _tiny(c)]  # an agent's answer never triggers
@@ -116,13 +167,17 @@ def scan(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     out: list[Candidate] = []
     for c in chunks:
         out += [x for x in (_question(c), _open_equation(c), _dangling(c)) if x]
+    out += _free_end_arrows(conn, document_id, chunks)
     out += _stale_note(chunks, watches)
     out += _to_note(chunks, watches)
     out += _stale_diagram(conn, document_id, chunks)
     out += _sketch(conn, document_id, chunks)
     out += _related(conn, document_id, chunks)
     out += _markup(conn, document_id, all_chunks)
-    return sorted(out, key=lambda c: -c.score)
+    first: dict[tuple, Candidate] = {}
+    for c in out:  # a v2 connector chunk and a scene arrow never give two for one anchor
+        first.setdefault((c.kind, c.anchor) if c.kind == "dangling_arrow" else id(c), c)
+    return sorted(first.values(), key=lambda c: -c.score)
 
 
 def _stale_diagram(conn: sqlite3.Connection, document_id: str, chunks: list[dict]) -> list[Candidate]:
@@ -222,7 +277,10 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
         if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
     }
     changed: list[dict] = []
-    for c in scan(conn, document_id):
+    candidates = scan(conn, document_id)
+    created: Counter = Counter()
+    skipped: Counter = Counter()
+    for c in candidates:
         k = _seen_key(c.kind, c.anchor, c.payload.get("key"))
         if k in seen:
             continue
@@ -238,10 +296,19 @@ def run(conn: sqlite3.Connection, document_id: str, session_start: str = "") -> 
                 source="detector",
                 session_start=session_start,
             )
-        except (offers_db.BudgetFull, offers_db.KindMuted, offers_db.AnchorUnknown):
+        except (offers_db.BudgetFull, offers_db.KindMuted, offers_db.AnchorUnknown) as e:
+            reason = {"BudgetFull": "budget_full", "KindMuted": "kind_muted"}.get(
+                type(e).__name__, "anchor_unknown"
+            )
+            skipped[f"{c.kind}:{reason}"] += 1
             continue
+        created[c.kind] += 1
         seen.add(k)
         changed += expired
+    log.info(
+        "detector run doc=%s candidates=%d created=%s skipped=%s",
+        document_id, len(candidates), dict(created), dict(skipped),
+    )
     return changed
 
 

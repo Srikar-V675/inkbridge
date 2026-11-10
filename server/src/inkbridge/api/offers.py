@@ -67,10 +67,14 @@ def flush(document_id: str) -> None:
     conn = db.connect()
     try:
         if offers_db.get_focus(conn, document_id):
+            log.info("offers held doc=%s reason=focus", document_id)
             return
         gate = attention_mod.attention
         if not gate.can_push(document_id):
             wait = gate.remaining(document_id)
+            state = gate.state(document_id)
+            reason = {"none": "no_attention", "pen_down": "pen_down"}.get(state, f"quiet_{wait or 0:.0f}s")
+            log.info("offers held doc=%s reason=%s", document_id, reason)
             if wait and _ARM_TIMERS:
                 _timers[document_id] = _arm(document_id, wait)
             return
@@ -99,6 +103,7 @@ def scan_now(document_id: str) -> None:
         with lock:  # seen-check and create_offer are separate: two scans would duplicate
             conn = db.connect()
             try:
+                log.info("scan doc=%s %s", document_id, detectors.scan_counts(conn, document_id))
                 changed = detectors.run(conn, document_id, hub.session_start(document_id))
             finally:
                 conn.close()

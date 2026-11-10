@@ -216,3 +216,41 @@ def test_bad_attention_frames(client, chunk, clock):
         post(client, chunk)
         attend(ws, False)
         assert recv(ws)["type"] == "offer.created"
+
+
+def test_flush_logs_held_reason(client, chunk, clock, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="inkbridge.offers")
+    offers_api.flush("default")
+    assert "reason=no_attention" in caplog.text
+    caplog.clear()
+    client.put("/documents/default/focus", json={"on": True})
+    offers_api.flush("default")
+    assert "reason=focus" in caplog.text
+
+
+def test_scan_to_ws_for_question(client, clock):
+    from tests.test_detectors import chunks
+
+    chunks(client, "Why does ice float?")
+    with client.websocket_connect(WS) as ws:
+        attend(ws, False)
+        offers_api.scan_now("default")  # gate still closed: stored, not pushed
+        assert silent(ws)
+    with client.websocket_connect(WS) as ws:
+        open_gate(ws, clock)
+        offers_api.scan_now("default")
+        msg = recv(ws)
+    assert msg["type"] == "offer.created" and msg["offer"]["kind"] == "question"
+
+
+def test_tap_makes_a_task_per_kind(client, chunk, clock):
+    expected = {"question": "question", "dangling_arrow": "link", "sketch": "diagram", "to_note": "question"}
+    for kind, mode in expected.items():
+        offer = post(client, chunk, kind=kind)
+        assert client.post(f"/offers/{offer['id']}/tap").status_code == 200
+        tasks = client.get("/documents/default/tasks").json()
+        rows = tasks["tasks"] if isinstance(tasks, dict) else tasks
+        mine = [t for t in rows if t.get("offer_id") == offer["id"]]
+        assert len(mine) == 1 and mine[0]["mode"] == mode, (kind, rows)
