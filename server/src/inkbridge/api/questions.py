@@ -46,6 +46,7 @@ class AnswerIn(_Strict):
     answer_md: str = Field(min_length=1, max_length=20_000)  # untrusted markdown, stored as is
     sources: list[Source] = Field(default_factory=list, max_length=50)
     canvas_text: str | None = Field(default=None, min_length=1, max_length=600)
+    document_id: str | None = Field(default=None, max_length=256)  # INK-191: refuse a wrong canvas
     final: bool = True  # false: answer_md is a streamed piece appended to the partial (INK-176)
 
 
@@ -84,11 +85,11 @@ def _publish(q: dict) -> dict:
     return q
 
 
-def _transition(fn, *args) -> dict:
+def _transition(fn, conn, question_id, *args) -> dict:
     try:
-        return _publish(fn(*args))
+        return _publish(fn(conn, question_id, *args))
     except q_db.QuestionNotFound:
-        raise HTTPException(404, "question not found") from None
+        raise HTTPException(404, f"question {question_id} not found") from None
     except q_db.InvalidTransition as e:
         raise HTTPException(409, {"code": "invalid_transition", "status": e.current}) from None
 
@@ -128,16 +129,32 @@ def get_question(question_id: str, conn: Conn) -> dict:
     try:
         return q_db.get_question(conn, question_id)
     except q_db.QuestionNotFound:
-        raise HTTPException(404, "question not found") from None
+        raise HTTPException(404, f"question {question_id} not found") from None
 
 
 @router.post("/questions/{question_id}/answer", response_model=QuestionOut)
 def answer_question(question_id: str, body: AnswerIn, conn: Conn) -> dict:
+    if body.document_id is not None:
+        try:
+            owner = q_db.get_question(conn, question_id)["document_id"]
+        except q_db.QuestionNotFound:
+            raise HTTPException(
+                404, f"question {question_id} not found on canvas {body.document_id!r}"
+            ) from None
+        if owner != body.document_id:
+            raise HTTPException(
+                409,
+                {
+                    "code": "question_other_canvas",
+                    "msg": f"question {question_id} belongs to canvas {owner!r}, not "
+                    f"{body.document_id!r}; call list_questions with document_id={owner!r}",
+                },
+            )
     if not body.final:
         try:
             seq = q_db.append_partial(conn, question_id, body.answer_md)
         except q_db.QuestionNotFound:
-            raise HTTPException(404, "question not found") from None
+            raise HTTPException(404, f"question {question_id} not found") from None
         except q_db.InvalidTransition as e:
             raise HTTPException(409, {"code": "invalid_transition", "status": e.current}) from None
         except q_db.PartialTooLong:

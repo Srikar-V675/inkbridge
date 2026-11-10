@@ -199,7 +199,11 @@ def ws_message(task: dict) -> dict:
 def op_budget(conn: sqlite3.Connection, task_id: str, document_id: str, op_type: str) -> None:
     t = get_task(conn, task_id)  # TaskNotFound -> 404 in the API
     if t["document_id"] != document_id:
-        raise TaskRefused("task_other_canvas", "task belongs to another canvas")
+        raise TaskRefused(
+            "task_other_canvas",
+            f"task {task_id} belongs to canvas {t['document_id']!r}, not {document_id!r}; "
+            "pass the task's document_id to the tool",
+        )
     if t["status"] != "running":
         raise TaskRefused("task_not_running", f"task is {t['status']}; claim it first")
     if op_type not in t["allowed_op_types"]:

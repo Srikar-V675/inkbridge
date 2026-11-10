@@ -139,7 +139,19 @@ def _check_diagram(conn, document_id: str, payload: "DrawDiagramPayload") -> Non
     for cid in payload.from_chunks or []:
         r = db.get_region(conn, cid)
         if not (r and r["document_id"] == document_id):
-            raise HTTPException(422, {"code": "chunk_not_found", "chunk": cid})
+            found_on = r["document_id"] if r else None
+            where = f"it is on canvas {found_on!r}" if found_on else "no canvas has it (re-chunked?)"
+            raise HTTPException(
+                422,
+                {
+                    "code": "chunk_not_found",
+                    "chunk": cid,
+                    "document_id": document_id,
+                    "found_on": found_on,
+                    "msg": f"chunk {cid} is not on canvas {document_id!r}; {where}. "
+                    f"Call read_canvas with document_id={document_id!r} for current chunk ids.",
+                },
+            )
 
 
 def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
@@ -167,7 +179,9 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
                 {
                     "code": "question_not_found",
                     "question_id": payload.question_id,
-                    "msg": "question_id is not a question on this canvas",
+                    "document_id": document_id,
+                    "msg": f"question_id is not a question on canvas {document_id!r}; "
+                    f"call list_questions with document_id={document_id!r}",
                 },
             )
         payload.relation = payload.relation or "answer"
@@ -197,7 +211,8 @@ def _enqueue(conn, document_id: str, body: OpIn, response: Response) -> dict:
             {
                 "code": "anchor_not_found",
                 "anchor": payload.anchor,
-                "msg": f"anchor chunk {payload.anchor!r} is not on this canvas; "
+                "document_id": document_id,
+                "msg": f"anchor chunk {payload.anchor!r} is not on canvas {document_id!r}; "
                 "get chunk ids from read_canvas, or omit anchor",
             },
         ) from None
