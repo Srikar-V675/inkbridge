@@ -84,16 +84,16 @@ class _Proc:
         try:
             for line in self.proc.stdout:
                 self.lines.put(line)
-        except Exception:  # noqa: BLE001 - a closed pipe ends the reader
-            pass
+        except Exception as e:  # noqa: BLE001 - a closed pipe ends the reader
+            log.debug("claude stdout reader ended: %s", type(e).__name__)
         finally:
             self.lines.put(None)
 
     def kill(self) -> None:
         try:
             self.proc.kill()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            log.debug("killing claude failed: %s", type(e).__name__)
 
 
 class ClaudeRecognizer:
