@@ -67,6 +67,9 @@ def flush(document_id: str) -> None:
         pushed[document_id] = set()
     conn = db.connect()
     try:
+        swept: list[dict] = []
+        offers_db.list_offers(conn, document_id, "open", swept)
+        publish_updates(swept)  # the chip goes away when its offer lapses (INK-205)
         if offers_db.get_focus(conn, document_id):
             log.info("offers held doc=%s reason=focus", document_id)
             return

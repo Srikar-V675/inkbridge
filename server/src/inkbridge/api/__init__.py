@@ -37,6 +37,7 @@ from inkbridge.api import (
 from inkbridge.api.deps import Conn
 from inkbridge.api.limits import BodySizeLimit
 from inkbridge.api.web import mount_web
+from inkbridge.db import offers as offers_db
 from inkbridge.db import questions as q_db
 from inkbridge.db import tasks as tasks_db
 from inkbridge.recognizer.worker import RecognitionWorker
@@ -58,6 +59,7 @@ async def lifespan(app: FastAPI):
     app.state.runner_error = ask_error  # set when INKBRIDGE_RUNNER is on but refused (INK-103)
     conn = db.connect()
     try:
+        offers_db.sweep_all(conn)  # a stale open offer must not block the canvas (INK-205)
         q_db.reset_runner(conn, "failed" if ask_error else "pending", ask_error)
         tasks_db.reset_runner(conn)
     finally:

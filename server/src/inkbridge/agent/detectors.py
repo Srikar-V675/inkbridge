@@ -374,6 +374,11 @@ def _busy_lines(conn: sqlite3.Connection, document_id: str) -> set[str]:
     return {supersede.line_of(conn, document_id, r["anchor_chunk"], active) for r in rows}
 
 
+def _inked_after(conn: sqlite3.Connection, chunk_id: str, since: str) -> bool:
+    row = conn.execute("SELECT updated_at FROM regions WHERE id=?", (chunk_id,)).fetchone()
+    return bool(row and row["updated_at"] and row["updated_at"] > since)
+
+
 def run(
     conn: sqlite3.Connection,
     document_id: str,
@@ -385,15 +390,19 @@ def run(
 
     `extra` candidates (INK-202, from the latest ink) come first and are not re-sorted; a chunk
     question or equation fallback is skipped for an anchor that already has a "latest" offer."""
+    changed: list[dict] = []
     seen = {
         _seen_key(o["kind"], o["anchor_chunk"], o["payload"].get("key"))
-        for o in offers_db.list_offers(conn, document_id)
-        if o["status"] != "expired"  # budget or TTL expiry is not a refusal: it may come back
+        for o in offers_db.list_offers(conn, document_id, swept=changed)
+        # budget or replacement expiry is not a refusal: it may come back; a lapsed one may not
+        if o["status"] != "expired" or o["payload"].get("lapsed")
     }
-    changed: list[dict] = []
-    if offers_db.open_offers(conn, document_id):  # one chip on screen at a time (INK-197)
+    open_now = offers_db.open_offers(conn, document_id)
+    if any(o["kind"] not in offers_db.PROACTIVE for o in open_now):
+        # one chip on screen at a time (INK-197); a markup or note chip is not replaced by ink
         log.info("detector run doc=%s held=open_offer", document_id)
         return changed
+    since = max((o["created_at"] for o in open_now), default="")  # newer ink may replace (INK-205)
     candidates = list(extra) + scan(conn, document_id, slow=slow)
     latest = {
         o["anchor_chunk"]
@@ -417,6 +426,8 @@ def run(
         k = _seen_key(c.kind, c.anchor, c.payload.get("key"))
         if k in seen:
             continue
+        if since and not (c.kind in offers_db.PROACTIVE and _inked_after(conn, c.anchor, since)):
+            continue
         if busy and supersede.line_of(conn, document_id, c.anchor, active) in busy:
             log.info("detector run doc=%s held=answer_pending anchor=%s", document_id, c.anchor)
             continue
@@ -431,6 +442,7 @@ def run(
                 score=c.score,
                 source="detector",
                 session_start=session_start,
+                replace_open=bool(since),
             )
         except (offers_db.BudgetFull, offers_db.KindMuted, offers_db.AnchorUnknown) as e:
             reason = {"BudgetFull": "budget_full", "KindMuted": "kind_muted"}.get(

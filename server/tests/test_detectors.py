@@ -655,3 +655,53 @@ def test_scan_now_rearms_when_held(client, monkeypatch):
     calls.clear()
     offers_api.scan_now("default")
     assert calls == []
+
+
+def _backdate_offers(seconds):
+    ts = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
+    conn = db.connect()
+    conn.execute("UPDATE offers SET created_at=?", (ts,))
+    conn.commit()
+    conn.close()
+
+
+def test_newer_ink_replaces_an_open_offer(client):
+    _, (_a, b) = chunks(client, "Why is it so?", None)
+    (first,) = run()
+    assert run() == [first]  # same ink: nothing replaces it, one chip at a time
+    _backdate_offers(30)
+    recognise(b, "2+2=")
+    conn = db.connect()
+    conn.execute(
+        "UPDATE regions SET updated_at=? WHERE id=?", (datetime.now(UTC).isoformat(), b["id"])
+    )
+    conn.commit()
+    conn.close()
+    age(3)
+    rows = run()
+    by_id = {r["id"]: r for r in rows}
+    assert by_id[first["id"]]["status"] == "expired"
+    assert [r["kind"] for r in rows if r["status"] == "open"] == ["open_equation"]
+
+
+def test_expired_by_ttl_does_not_return(client):
+    chunks(client, "Why is it so?")
+    run()
+    _backdate_offers(61)
+    rows = run()
+    assert [r["status"] for r in rows] == ["expired"]  # swept, and not raised again
+    assert run() == rows
+
+
+def test_scan_publishes_the_lapse_of_a_pushed_offer(client, monkeypatch):
+    from inkbridge.api import offers as api_offers
+
+    chunks(client, "Why is it so?")
+    (o,) = run()
+    _backdate_offers(61)
+    api_offers.pushed["default"] = {o["id"]}
+    sent = []
+    monkeypatch.setattr(api_offers.hub, "publish", lambda d, m: sent.append(m))
+    monkeypatch.setattr(api_offers, "_ARM_TIMERS", False)
+    api_offers.flush("default")
+    assert [(m["type"], m["offer"]["status"]) for m in sent] == [("offer.updated", "expired")]
