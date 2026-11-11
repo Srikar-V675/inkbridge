@@ -312,3 +312,32 @@ def test_claim_carries_current_reading(client):
         assert got["anchor_reading"] == "MCP now?" and got["anchor_chunk"] == a["id"]
     finally:
         conn.close()
+
+
+def _tapped_with_text(client, read):
+    from inkbridge.db import offers as offers_db
+    from tests.test_chunk_persistence import Canvas, row
+    from tests.test_search import recognise
+
+    a = Canvas(client, row("a", 3)).chunk_of("a0")
+    if read:
+        recognise(a, "chunk reading", source="user")
+    conn = db.connect()
+    try:
+        o, _ = offers_db.create_offer(
+            conn, "default", kind="question", anchor_chunk=a["id"], reason="r",
+            payload={"key": "k", "text": "What is MCP?", "src": "latest"}, score=0.9,
+        )  # fmt: skip
+        offers_db.tap_offer(conn, o["id"])
+        tid = offers_db.get_offer(conn, o["id"])["task_id"]
+        return tasks_db.claim(conn, tid, "mcp")["input"]["anchor_reading"]
+    finally:
+        conn.close()
+
+
+def test_claim_uses_offer_text_when_chunk_unread(client):
+    assert _tapped_with_text(client, read=False) == "What is MCP?"
+
+
+def test_claim_prefers_chunk_reading(client):
+    assert _tapped_with_text(client, read=True) == "chunk reading"
