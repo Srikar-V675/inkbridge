@@ -116,8 +116,15 @@ class ClaudeRecognizer:
     def __repr__(self) -> str:
         return f"ClaudeRecognizer(model={self.model!r})"
 
+    def read_ink(self, png: bytes, prompt: str) -> str:
+        """Raw reply for one image + prompt (INK-202). Same process, lock, reset and errors."""
+        return self._image_call(png, prompt)
+
     def __call__(self, png: bytes, hint: str | None) -> Recognition:
         text = PROMPT if not hint else f"{PROMPT}\nContext hint: {hint}"
+        return parse_reading(self._image_call(png, text), self.model)
+
+    def _image_call(self, png: bytes, text: str) -> str:
         message = {
             "type": "user",
             "message": {
@@ -144,7 +151,7 @@ class ClaudeRecognizer:
             self._served += 1
             if self._served >= self._max_requests:
                 self._drop()
-        return parse_reading(raw, self.model)
+        return raw
 
     def _drop(self) -> None:
         if self._proc is not None:

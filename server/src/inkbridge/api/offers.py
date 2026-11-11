@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from inkbridge import db
 from inkbridge.agent import attention as attention_mod
-from inkbridge.agent import detectors
+from inkbridge.agent import detectors, latest_ink
 from inkbridge.api.deps import Conn
 from inkbridge.api.ws import hub, updated_message
 from inkbridge.db import offers as offers_db
@@ -108,7 +108,18 @@ def scan_now(document_id: str) -> None:
             try:
                 log.info("scan doc=%s %s", document_id, detectors.scan_counts(conn, document_id))
                 superseded, ops = supersede.run(conn, document_id)
-                changed = detectors.run(conn, document_id, hub.session_start(document_id))
+                extra = []
+                if latest_ink.enabled():
+                    gate = attention_mod.attention
+                    if gate.state(document_id) == "quiet" and gate.can_push(document_id):
+                        extra = latest_ink.poll(conn, document_id)
+                    elif gate.state(document_id) != "none" and latest_ink.pending(
+                        conn, document_id
+                    ):
+                        schedule_scan(document_id)  # wait out the quiet window
+                changed = detectors.run(
+                    conn, document_id, hub.session_start(document_id), extra=extra
+                )
                 if detectors.held_unstable(conn, document_id):
                     schedule_scan(document_id)  # ink still changing: look again (INK-199)
             finally:
