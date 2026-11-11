@@ -360,11 +360,37 @@ def test_runs_under_20ms_for_824_elements():
     assert counts == {"container": 12, "connector": 18, "head": 14, "underline": 20, "scribble": 10}
 
 
-def test_long_straight_dash_among_writing_is_writing():
-    # 30 writing strokes, one straight 4 T dash with no head, hook or shape near it
-    els = [line("dash", 0, 0, 4 * 20, 0, index="z"), *field(30)]
-    # keep it off a writing line: not flat-under-writing either
-    assert analyse(els).kinds["dash"] == "writing"
+def test_bare_long_smooth_stroke_is_connector():
+    # INK-203 (was INK-195 "bare straight dash is writing"): long and smooth is an arrow shaft
+    els = [line("dash", 0, 0, 400, 0, index="z"), *field(30)]
+    assert analyse(els).kinds["dash"] == "connector"
+
+
+def test_gently_curved_long_stroke_is_connector():
+    pts = [
+        (300 * math.sin(math.pi / 2 * k / 30), 300 * (1 - math.cos(math.pi / 2 * k / 30)))
+        for k in range(31)
+    ]
+    els = [pen("arc", pts, "z"), *field(30)]
+    assert analyse(els).kinds["arc"] == "connector"
+
+
+def cursive(i: str, x: float, y: float, length: float = 400, periods: int = 8):
+    n = periods * 12
+    pts = [
+        (x + length * k / n, y + 12 * math.sin(2 * math.pi * periods * k / n)) for k in range(n + 1)
+    ]
+    return pen(i, pts, "z")
+
+
+def test_long_cursive_word_is_writing():
+    els = [cursive("cur", 0, 0), *field(30)]
+    assert analyse(els).kinds["cur"] == "writing"
+
+
+def test_short_smooth_stroke_is_writing():
+    els = [line("short", 0, 0, 60, 0, index="z"), *field(30)]
+    assert analyse(els).kinds["short"] == "writing"
 
 
 def test_straight_stroke_touching_a_shape_is_connector():
