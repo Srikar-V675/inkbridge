@@ -71,12 +71,12 @@ def test_forget():
 
 def test_quiet_s_config(monkeypatch):
     monkeypatch.delenv("INKBRIDGE_QUIET_S")
-    assert config.quiet_s() == 8.0
+    assert config.quiet_s() == 3.0
     monkeypatch.setenv("INKBRIDGE_QUIET_S", "2.5")
     assert config.quiet_s() == 2.5
     for bad in ("junk", "-1"):
         monkeypatch.setenv("INKBRIDGE_QUIET_S", bad)
-        assert config.quiet_s() == 8.0
+        assert config.quiet_s() == 3.0
 
 
 def test_view_tick_while_up_does_not_reset():
