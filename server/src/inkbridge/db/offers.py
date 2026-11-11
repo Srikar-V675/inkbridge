@@ -5,12 +5,16 @@ import sqlite3
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from inkbridge import config
 from inkbridge.db import tasks as tasks_db
 from inkbridge.db.common import DocumentNotFound, _now
 
 OFFER_BUDGET = 3
 OFFER_TTL_S = 24 * 3600
 MUTE_AFTER = 2
+PROACTIVE = ("question", "open_equation", "dangling_arrow", "sketch")  # short open TTL (INK-205)
+_LAPSED = "payload_json = json_set(COALESCE(NULLIF(payload_json, ''), '{}'), '$.lapsed', json('true'))"
+_PRO_SQL = ",".join("?" * len(PROACTIVE))
 
 
 class OfferNotFound(Exception):
@@ -49,12 +53,22 @@ def get_offer(conn: sqlite3.Connection, offer_id: str) -> dict:
 
 
 def _expire_stale(conn: sqlite3.Connection, document_id: str) -> list[dict]:
-    """Caller owns the transaction. Returns the rows it just expired; the API layer publishes."""
-    cutoff = (datetime.now(UTC) - timedelta(seconds=OFFER_TTL_S)).isoformat()
+    """Caller owns the transaction. Returns the rows it just expired; the API layer publishes.
+
+    Open proactive offers lapse after OFFER_OPEN_TTL_S (marked `lapsed`, so the same ink is not
+    offered again); everything else after 24 h. Expiry is never a dismissal (INK-205)."""
+    now = datetime.now(UTC)
+    short = (now - timedelta(seconds=config.offer_open_ttl_s())).isoformat()
+    long = (now - timedelta(seconds=OFFER_TTL_S)).isoformat()
     rows = conn.execute(
+        f"UPDATE offers SET status='expired', resolved_at=?, {_LAPSED} WHERE document_id=?"
+        f" AND status='open' AND kind IN ({_PRO_SQL}) AND created_at < ? RETURNING id",
+        (_now(), document_id, *PROACTIVE, short),
+    ).fetchall()
+    rows += conn.execute(
         "UPDATE offers SET status='expired', resolved_at=? WHERE document_id=? AND status='open'"
         " AND created_at < ? RETURNING id",
-        (_now(), document_id, cutoff),
+        (_now(), document_id, long),
     ).fetchall()
     return [get_offer(conn, r["id"]) for r in rows]
 
@@ -92,6 +106,7 @@ def create_offer(
     score: float,
     source: str = "triage",
     session_start: str = "",
+    replace_open: bool = False,
 ) -> tuple[dict, list[dict]]:
     """Returns (offer, changed) where changed = rows expired by the sweep or replaced by the budget."""
     if conn.execute("SELECT 1 FROM documents WHERE id=?", (document_id,)).fetchone() is None:
@@ -111,6 +126,13 @@ def create_offer(
         if _muted(conn, document_id, kind, session_start):
             raise KindMuted(kind)
         now = _now()
+        if replace_open:  # newer ink beats an open proactive offer, in this transaction (INK-205)
+            for r in conn.execute(
+                f"UPDATE offers SET status='expired', resolved_at=?, {_LAPSED} WHERE document_id=?"
+                f" AND status='open' AND kind IN ({_PRO_SQL}) RETURNING id",
+                (now, document_id, *PROACTIVE),
+            ).fetchall():
+                changed.append(get_offer(conn, r["id"]))
         open_rows = conn.execute(
             "SELECT id, score FROM offers WHERE document_id=? AND status='open'"
             " ORDER BY score ASC, created_at ASC",

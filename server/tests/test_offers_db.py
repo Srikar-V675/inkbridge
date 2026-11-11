@@ -88,3 +88,59 @@ def test_unknown_anchor(conn):
         o.create_offer(
             conn, "default", kind="k", anchor_chunk="nope", reason="r", payload={}, score=0.5
         )
+
+
+def _backdate(conn, oid, seconds):
+    ts = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
+    conn.execute("UPDATE offers SET created_at=? WHERE id=?", (ts, oid))
+    conn.commit()
+
+
+def test_open_proactive_offer_expires_after_60s_without_a_dismissal(conn):
+    q = mk(conn, kind="question")[0]
+    _backdate(conn, q["id"], 61)
+    swept: list[dict] = []
+    assert o.list_offers(conn, "default", "open", swept) == []
+    assert [s["id"] for s in swept] == [q["id"]]
+    assert o.get_offer(conn, q["id"])["status"] == "expired"
+    for _ in range(3):  # expiry is not a dismissal: the kind is not muted
+        x = mk(conn, kind="question")[0]
+        _backdate(conn, x["id"], 61)
+        o.list_offers(conn, "default")
+
+
+def test_young_proactive_offer_stays_open(conn):
+    q = mk(conn, kind="question")[0]
+    _backdate(conn, q["id"], 30)
+    assert [r["id"] for r in o.open_offers(conn, "default")] == [q["id"]]
+
+
+def test_tapped_offer_is_never_swept(conn):
+    q = mk(conn, kind="question")[0]
+    o.tap_offer(conn, q["id"])
+    _backdate(conn, q["id"], 3600)
+    o.list_offers(conn, "default")
+    assert o.get_offer(conn, q["id"])["status"] == "tapped"
+
+
+def test_markup_and_note_offers_keep_24h(conn):
+    ids = [mk(conn, kind=k)[0]["id"] for k in ("markup", "stale_note", "to_note")]
+    for i in ids:
+        _backdate(conn, i, 3600)
+    assert len(o.open_offers(conn, "default")) == 3
+
+
+def test_open_ttl_env(conn, monkeypatch):
+    monkeypatch.setenv("INKBRIDGE_OFFER_OPEN_TTL_S", "600")
+    q = mk(conn, kind="question")[0]
+    _backdate(conn, q["id"], 120)
+    assert len(o.open_offers(conn, "default")) == 1
+
+
+def test_replace_open_proactive_in_one_transaction(conn):
+    old = mk(conn, kind="question")[0]
+    keep = mk(conn, kind="markup")[0]
+    new, changed = mk(conn, kind="open_equation", replace_open=True)
+    assert [c["id"] for c in changed] == [old["id"]]
+    assert changed[0]["status"] == "expired" and changed[0]["payload"]["lapsed"] is True
+    assert {r["id"] for r in o.open_offers(conn, "default")} == {new["id"], keep["id"]}

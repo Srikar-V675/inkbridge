@@ -52,6 +52,18 @@ def quiet_s() -> float:
     return v if v >= 0 else DEFAULT_QUIET_S
 
 
+DEFAULT_OFFER_OPEN_TTL_S = 60.0
+
+
+def offer_open_ttl_s() -> float:
+    """INKBRIDGE_OFFER_OPEN_TTL_S: how long a proactive offer may sit open unseen (INK-205)."""
+    try:
+        v = float(os.environ.get("INKBRIDGE_OFFER_OPEN_TTL_S", ""))
+    except ValueError:
+        return DEFAULT_OFFER_OPEN_TTL_S
+    return v if v > 0 else DEFAULT_OFFER_OPEN_TTL_S
+
+
 def chunk_containment() -> float | None:
     """INKBRIDGE_CHUNK_CONTAINMENT, a fraction in (0, 1] (for example 0.6). Unset, blank or 0 = off.
 
