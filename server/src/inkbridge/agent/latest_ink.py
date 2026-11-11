@@ -9,6 +9,8 @@ INKBRIDGE_RECOGNIZER=claude the feature is off and the chunk detectors work as b
 """
 
 import hashlib
+import io
+import math
 import json
 import logging
 import os
@@ -16,6 +18,8 @@ import re
 import sqlite3
 import time
 from collections.abc import Callable
+
+from PIL import Image
 
 from inkbridge import db
 from inkbridge.agent.detectors import SCORE, Candidate
@@ -38,6 +42,8 @@ KIND = {"question": "question", "equation": "open_equation"}
 REASON = {"question": "Looks like a question", "equation": "Equation left open"}
 PAD_FRACTION = 0.4  # hypothesis (decision 0117)
 PAD_MAX = 300
+SLANT_MIN, SLANT_MAX = 8.0, 60.0  # degrees; hypothesis (decision 0117)
+ELONGATED = 2.0  # principal axis at least this many times the minor axis
 
 reader: Callable[[bytes], str] | None = None
 stats = {"calls": 0, "dropped": 0, "errors": 0, "offered": 0}
@@ -91,6 +97,47 @@ def _box(ink: list[dict]) -> tuple[float, float, float, float]:
 def _pad(ink: list[dict]) -> int:
     x0, y0, x1, y1 = _box(ink)
     return min(PAD_MAX, max(raster.CROP_PAD, int(PAD_FRACTION * max(x1 - x0, y1 - y0))))
+
+
+def writing_angle(ink: list[dict]) -> float:
+    """Dominant slant in degrees (positive = rising to the right) of elongated ink, else 0.0.
+
+    Principal axis of all stroke points; only an elongated cluster whose angle is between
+    SLANT_MIN and SLANT_MAX counts, so a horizontal line, a blob or a steep scribble gives 0."""
+    pts = []
+    for e in ink:
+        for p in e.get("points") or ():
+            try:
+                pts.append((e.get("x", 0) + p[0], e.get("y", 0) + p[1]))
+            except (TypeError, IndexError):
+                continue
+    if len(pts) < 3:
+        return 0.0
+    n = len(pts)
+    mx, my = sum(p[0] for p in pts) / n, sum(p[1] for p in pts) / n
+    sxx = sum((p[0] - mx) ** 2 for p in pts) / n
+    syy = sum((p[1] - my) ** 2 for p in pts) / n
+    sxy = sum((p[0] - mx) * (p[1] - my) for p in pts) / n
+    half = math.sqrt(((sxx - syy) / 2) ** 2 + sxy**2)
+    major, minor = (sxx + syy) / 2 + half, (sxx + syy) / 2 - half
+    if major <= 0 or (minor > 1e-9 and math.sqrt(major / minor) < ELONGATED):
+        return 0.0
+    return _axis(sxx, syy, sxy)
+
+
+def _axis(sxx: float, syy: float, sxy: float) -> float:
+    a = math.degrees(0.5 * math.atan2(-2 * sxy, sxx - syy))  # y is down on screen: flip
+    return a if SLANT_MIN <= abs(a) <= SLANT_MAX else 0.0
+
+
+def _level(png: bytes, angle: float) -> bytes:
+    """Rotate the crop so the writing runs horizontally (white fill)."""
+    if not angle:
+        return png
+    img = Image.open(io.BytesIO(png)).convert("RGB")
+    out = io.BytesIO()
+    img.rotate(-angle, expand=True, fillcolor=(255, 255, 255)).save(out, "PNG")
+    return out.getvalue()
 
 
 def _parse(raw: str) -> tuple[str, str]:
@@ -170,6 +217,7 @@ def poll(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
     if png is None:
         _mark[document_id] = head
         return []
+    png = _level(png, writing_angle(ink))
     t0 = time.monotonic()
     stats["calls"] += 1
     try:

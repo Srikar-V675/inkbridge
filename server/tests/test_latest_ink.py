@@ -232,3 +232,48 @@ def test_fallback_still_works_without_reader(client, gate):
     offers_api.scan_now("default")
     (o,) = offers_of(client)
     assert o["kind"] == "question" and "text" not in o["payload"]
+
+
+# --- slant levelling ---
+
+
+def _line(slope_deg, n=20, length=200.0):
+    import math
+
+    dx, dy = math.cos(math.radians(slope_deg)), -math.sin(math.radians(slope_deg))
+    pts = [[i * length / n * dx, i * length / n * dy] for i in range(n)]
+    return [{"id": "s", "type": "freedraw", "x": 100, "y": 300, "points": pts}]
+
+
+def test_angle_of_slanted_line():
+    assert latest_ink.writing_angle(_line(30)) == pytest.approx(30, abs=1)
+    assert latest_ink.writing_angle(_line(-25)) == pytest.approx(-25, abs=1)
+
+
+def test_angle_zero_for_horizontal_steep_and_blob():
+    assert latest_ink.writing_angle(_line(0)) == 0.0
+    assert latest_ink.writing_angle(_line(5)) == 0.0
+    assert latest_ink.writing_angle(_line(75)) == 0.0
+    blob = [{"x": 0, "y": 0, "points": [[x, y] for x in range(0, 50, 5) for y in range(0, 50, 5)]}]
+    assert latest_ink.writing_angle(blob) == 0.0
+
+
+def test_level_rotates_with_white_fill_and_zero_is_identity():
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (200, 100), (0, 0, 0)).save(buf, "PNG")
+    png = buf.getvalue()
+    assert latest_ink._level(png, 0.0) is png
+    out = Image.open(io.BytesIO(latest_ink._level(png, 30.0)))
+    assert out.size[0] > 200 and out.getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_poll_sends_levelled_crop(client, monkeypatch):
+    seen = []
+    monkeypatch.setattr(latest_ink, "_level", lambda png, a: seen.append(a) or png)
+    setup(client, monkeypatch, Reader())
+    poll()
+    assert seen == [0.0]  # a horizontal row is left alone
