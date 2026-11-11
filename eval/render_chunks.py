@@ -69,8 +69,9 @@ def render(path: str, out: str, chunker: str = "v2") -> str:
     img.save(out)
     counts = dict(collections.Counter(kinds.kinds.values()))
     excl = {k: v for k, v in counts.items() if k in ("connector", "head")}
-    return f"chunks={len(ch.chunks)} links={len(ch.links)} excluded={excl} kinds={counts} | " + "; ".join(
-        report
+    return (
+        f"chunks={len(ch.chunks)} links={len(ch.links)} excluded={excl} kinds={counts} | "
+        + "; ".join(report)
     )
 
 

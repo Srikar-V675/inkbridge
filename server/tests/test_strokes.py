@@ -1,5 +1,6 @@
 """Stroke kinds classifier (INK-121): pure shape rules, no chunker wiring."""
 
+import itertools
 import math
 import random
 import time
@@ -405,3 +406,23 @@ def test_straight_stroke_touching_a_shape_is_connector():
     }
     els = [box, line("dash", 0, 0, 4 * 20, 0, index="z"), *field(30)]
     assert analyse(els).kinds["dash"] == "connector"
+
+
+def test_open_outline_round_ink_is_container():
+    # INK-203: an outline that does not quite close (net about 0.6 of its diagonal) still holds ink
+    pts = [(0, 0), (200, 0), (200, 150), (0, 150), (0, 60), (60, 60)]
+    dense = []
+    for (x1, y1), (x2, y2) in itertools.pairwise(pts):
+        dense += [(x1 + (x2 - x1) * k / 8, y1 + (y2 - y1) * k / 8) for k in range(8)]
+    els = [pen("o", dense, "z"), word("in", 80, 70), *field(30)]
+    assert analyse(els).kinds["o"] == "container"
+
+
+def test_closed_loop_is_never_a_shaft():
+    # a closed loop with nothing inside is writing, not an arrow, even though it looks hooked
+    pts = [
+        (100 + 80 * math.cos(a / 20 * 2 * math.pi), 80 * math.sin(a / 20 * 2 * math.pi))
+        for a in range(21)
+    ]
+    els = [pen("loop", pts, "z"), *field(30)]
+    assert analyse(els).kinds["loop"] == "writing"

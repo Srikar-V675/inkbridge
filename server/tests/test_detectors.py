@@ -544,7 +544,9 @@ def test_related_and_to_note_only_on_request(client, monkeypatch):
     _put(client, other, row("b", 3))
     conn = db.connect()
     (b,) = db.list_regions(conn, other, chunks=True, status="active")
-    db.save_recognition(conn, b["id"], b["content_hash"], "gemini", "gradient descent learning rate")
+    db.save_recognition(
+        conn, b["id"], b["content_hash"], "gemini", "gradient descent learning rate"
+    )
     conn.close()
     with_dots(client, 9, 0, reading="choosing a learning rate for gradient descent")
     monkeypatch.setattr(detectors, "RELATED_MIN_SCORE", 0)

@@ -19,7 +19,7 @@ from inkbridge.canvas.chunker import (
 from inkbridge.canvas.hashes import bbox_of, content_hash, stroke_hash
 from inkbridge.canvas.strokes import analyse
 from tests.test_chunker import _extent, _layout, arrow, rect, stroke
-from tests.test_strokes import circle, line, native, pen, vee, word
+from tests.test_strokes import circle, field, line, native, pen, vee, word
 
 GOLDEN = Path(__file__).parent / "data" / "chunker_v1_golden.json"
 
@@ -465,3 +465,105 @@ def test_wide_handwriting_lines_form_one_block():
 def test_two_paragraphs_a_screen_apart_stay_two():
     els = _wide_block("a", 0, 0) + _wide_block("b", 0, 40 * 20.0)
     assert len(chunk_scene(els, ChunkerConfig.v2()).chunks) == 2
+
+
+# --- INK-203: arrows by smoothness, slanted writing, one mind map ---
+
+
+def cursive_stroke(i, x, y, length=400, periods=8):
+    n = periods * 12
+    return pen(
+        i,
+        [
+            (x + length * k / n, y + 12 * math.sin(2 * math.pi * periods * k / n))
+            for k in range(n + 1)
+        ],
+    )
+
+
+def slanted_sentence(deg=25.0, lines=2, per_line=5, size=20):
+    """Words along lines rotated by deg (slanting up to the right), `lines` lines of `per_line`."""
+    a = math.radians(deg)
+    ux, uy = math.cos(a), -math.sin(a)  # along the line, up to the right
+    vx, vy = math.sin(a), math.cos(a)  # next line, perpendicular
+    out = []
+    for r in range(lines):
+        for c in range(per_line):
+            d, e = c * (size + 12), r * (size + 14)
+            out.append(word(f"s{r}{c}", 300 + d * ux + e * vx, 300 + d * uy + e * vy, size))
+    return out
+
+
+@pytest.mark.parametrize("deg", [0, 20, 25, 30])
+def test_slanted_two_line_sentence_is_one_chunk(deg):
+    els = slanted_sentence(deg) + field(30)
+    chunks = [c for c in chunk_scene(els, V2).chunks if any(i.startswith("s") for i in c)]
+    assert len(chunks) == 1 and len(chunks[0]) == 10
+
+
+def mind_map():
+    a = [word(f"a{r}{c}", c * 30, r * 40) for r in range(3) for c in range(5)]
+    a[7] = cursive_stroke("cur", 40, 40, 100)  # a long cursive word in the middle of line 2
+    b = [word(f"b{c}", 1000 + c * 30, -250) for c in range(5)]
+    outline = pen(
+        "box",
+        [(x, 600) for x in range(0, 301, 30)]
+        + [(300, y) for y in range(600, 801, 25)]
+        + [(x, 800) for x in range(300, -1, -30)]
+        + [(0, y) for y in range(800, 599, -25)],
+    )
+    inner = [word(f"c{k}", 40 + (k % 3) * 80, 650 + (k // 3) * 60) for k in range(6)]
+    dots = [pen("d1", [(150, 560), (152, 562)]), pen("d2", [(150, 830), (152, 832)])]
+    arrow_ab = line("ab", 170, 50, 985, -232, n=30, index="m1")
+    head = pen("hd", [(980, -236), (987, -232), (980, -228)], "m2")
+    arrow_bc = line("bc", 1020, -228, 150, 590, n=30, index="m3")
+    return [*a, *b, outline, *inner, *dots, arrow_ab, head, arrow_bc, *field(30)]
+
+
+def _ck(r, eid):
+    return next(i for i, c in enumerate(r.chunks) if eid in c)
+
+
+def test_long_cursive_word_stays_in_its_chunk():
+    r = chunk_scene(mind_map(), V2)
+    assert analyse(mind_map()).kinds["cur"] == "writing"
+    assert _ck(r, "cur") == _ck(r, "a00")
+    assert not any(r.connector)
+
+
+def test_arrow_strokes_are_in_no_chunk_and_link_their_ends():
+    r = chunk_scene(mind_map(), V2)
+    assert not any(e in c for c in r.chunks for e in ("ab", "hd", "bc"))
+    pairs = {(_ck(r, "a00"), _ck(r, "b0")), (_ck(r, "b0"), _ck(r, "box"))}
+    assert pairs <= {tuple(sorted(p)) for p in r.links} | set(r.links)
+    assert {"ab", "bc"} <= {row.element_id for row in r.link_rows}
+
+
+def test_outline_holds_its_ink_as_one_chunk():
+    r = chunk_scene(mind_map(), V2)
+    box = _ck(r, "box")
+    assert all(_ck(r, f"c{k}") == box for k in range(6))
+
+
+def test_dot_next_to_a_chunk_joins_it():
+    r = chunk_scene(mind_map(), V2)
+    assert _ck(r, "d1") == _ck(r, "box") == _ck(r, "d2")
+
+
+def test_mind_map_splits_into_three_chunks():
+    r = chunk_scene(mind_map(), V2)
+    mine = [c for c in r.chunks if not any(i.startswith("w") for i in c)]
+    assert len(mine) == 3 and not any(r.connector)
+
+
+def test_scribble_next_to_a_word_joins_it():
+    # a cursive word read as a scribble sits one word-gap from its line (INK-203)
+    w = [word("a", 0, 0), word("b", 45, 0)]
+    scrib = pen(
+        "sc",
+        [(75 + (k % 2) * 25, 3 + k * 4) for k in range(40)],  # tight zigzag, a 25 px box
+    )
+    els = [*w, scrib, *field(30)]
+    assert analyse(els).kinds["sc"] == "scribble"
+    mine = [c for c in chunk_scene(els, V2).chunks if "a" in c]
+    assert len(mine) == 1 and "sc" in mine[0]

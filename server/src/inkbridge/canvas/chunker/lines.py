@@ -25,6 +25,7 @@ from inkbridge.canvas.strokes import UNDERLINE_REACH, StrokeKinds, _inside_polyg
 
 Box = tuple[float, float, float, float]
 _MAX_SAMPLES = 256
+_SCRIBBLE_NEAR = 0.8  # in T (start value, INK-203)
 
 
 def _threshold(a: Box, b: Box, t: float, cfg: ChunkerConfig, underline: bool) -> float | None:
@@ -140,8 +141,13 @@ def cluster_lines(
 
     def joins(i: int, j: int) -> bool:
         a, b = boxes[i], boxes[j]
-        if kind[i] == "scribble" or kind[j] == "scribble":  # a scribble joins what it overlaps
-            return a[0] <= b[2] and b[0] <= a[2] and a[1] <= b[3] and b[1] <= a[3]
+        if (
+            kind[i] == "scribble" or kind[j] == "scribble"
+        ):  # joins what it overlaps or all but touches
+            g = (
+                _SCRIBBLE_NEAR * t
+            )  # a cursive word read as a scribble sits next to its line (INK-203)
+            return a[0] - g <= b[2] and b[0] - g <= a[2] and a[1] - g <= b[3] and b[1] - g <= a[3]
         if _apart_shapes(live[i], live[j], a, b):
             return False
         limit = _threshold(a, b, t, config, "underline" in (kind[i], kind[j]))
