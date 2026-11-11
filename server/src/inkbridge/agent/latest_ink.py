@@ -10,9 +10,9 @@ INKBRIDGE_RECOGNIZER=claude the feature is off and the chunk detectors work as b
 
 import hashlib
 import io
-import math
 import json
 import logging
+import math
 import os
 import re
 import sqlite3

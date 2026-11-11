@@ -24,13 +24,21 @@ def tracker():
 def test_begin_end_publishes_changes():
     a, sent, _ = tracker()
     a.begin("d", "reading", "read:r1")
-    assert sent[-1] == ("d", {"type": "agent.activity", "working": True, "what": "reading", "count": 1})
+    assert sent[-1] == (
+        "d",
+        {"type": "agent.activity", "working": True, "what": "reading", "count": 1},
+    )
     a.begin("d", "reading", "read:r2")
     assert sent[-1][1]["count"] == 2
     a.end("d", "read:r1")
     assert sent[-1][1]["count"] == 1
     a.end("d", "read:r2")
-    assert sent[-1][1] == {"type": "agent.activity", "working": False, "what": "reading", "count": 0}
+    assert sent[-1][1] == {
+        "type": "agent.activity",
+        "working": False,
+        "what": "reading",
+        "count": 0,
+    }
     assert len(sent) == 4
 
 
@@ -56,7 +64,12 @@ def test_stale_key_dropped():
     a, _, clock = tracker()
     a.begin("d", "answer", "task:t1")
     clock.t += STALE_S + 1
-    assert a.snapshot("d") == {"type": "agent.activity", "working": False, "what": "reading", "count": 0}
+    assert a.snapshot("d") == {
+        "type": "agent.activity",
+        "working": False,
+        "what": "reading",
+        "count": 0,
+    }
 
 
 @pytest.mark.parametrize("status", ["pending", "done", "failed"])
