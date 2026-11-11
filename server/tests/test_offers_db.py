@@ -144,3 +144,13 @@ def test_replace_open_proactive_in_one_transaction(conn):
     assert [c["id"] for c in changed] == [old["id"]]
     assert changed[0]["status"] == "expired" and changed[0]["payload"]["lapsed"] is True
     assert {r["id"] for r in o.open_offers(conn, "default")} == {new["id"], keep["id"]}
+
+
+def test_sweep_all_at_startup(conn):
+    q = mk(conn, kind="question")[0]
+    k = mk(conn, kind="markup")[0]
+    _backdate(conn, q["id"], 90)
+    _backdate(conn, k["id"], 90)
+    assert o.sweep_all(conn) == 1
+    assert o.get_offer(conn, q["id"])["status"] == "expired"
+    assert o.get_offer(conn, k["id"])["status"] == "open"

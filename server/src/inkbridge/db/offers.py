@@ -13,7 +13,9 @@ OFFER_BUDGET = 3
 OFFER_TTL_S = 24 * 3600
 MUTE_AFTER = 2
 PROACTIVE = ("question", "open_equation", "dangling_arrow", "sketch")  # short open TTL (INK-205)
-_LAPSED = "payload_json = json_set(COALESCE(NULLIF(payload_json, ''), '{}'), '$.lapsed', json('true'))"
+_LAPSED = (
+    "payload_json = json_set(COALESCE(NULLIF(payload_json, ''), '{}'), '$.lapsed', json('true'))"
+)
 _PRO_SQL = ",".join("?" * len(PROACTIVE))
 
 
@@ -163,7 +165,9 @@ def create_offer(
 
 def sweep_all(conn: sqlite3.Connection) -> int:
     """Startup: expire every stale open offer in every canvas (INK-205). Returns how many."""
-    docs = [r[0] for r in conn.execute("SELECT DISTINCT document_id FROM offers WHERE status='open'")]
+    docs = [
+        r[0] for r in conn.execute("SELECT DISTINCT document_id FROM offers WHERE status='open'")
+    ]
     return sum(len(_sweep(conn, d)) for d in docs)
 
 
