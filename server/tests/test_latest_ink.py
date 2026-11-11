@@ -16,9 +16,18 @@ QUESTION = json.dumps({"text": "What is MCP?", "intent": "question"})
 def _fresh(monkeypatch):
     monkeypatch.delenv("INKBRIDGE_RECOGNIZER", raising=False)
     latest_ink._mark.clear()
+    latest_ink._calls.clear()
+    monkeypatch.setattr(latest_ink, "clock", Clock())
     for k in latest_ink.stats:
         latest_ink.stats[k] = 0
     monkeypatch.setattr(latest_ink, "reader", None)
+
+
+class Clock:
+    t = 1000.0
+
+    def __call__(self):
+        return self.t
 
 
 class Reader:
@@ -85,6 +94,110 @@ def test_only_new_strokes_sent(client, monkeypatch):
     assert poll() == [] and len(r.pngs) == 1
 
 
+def test_dropped_then_second_call_waits_for_min_gap(client, monkeypatch):
+    holder = {}
+
+    def more():
+        holder["c"].elements.append(stroke("b0", 0, 300))
+        holder["c"].put()
+        r.hook = None
+
+    r = Reader(hook=more)
+    holder["c"] = setup(client, monkeypatch, r)
+    assert poll() == []  # dropped
+    assert poll() == [] and len(r.pngs) == 1  # too soon: no immediate retry
+    latest_ink.clock.t += latest_ink.MIN_GAP_S + 1
+    assert len(poll()) == 1 and len(r.pngs) == 2
+
+
+def test_burst_yields_one_small_call(client, monkeypatch):
+    r = Reader()
+    els = [stroke(f"o{i}", 15 * i, 0, updated=1000 + i) for i in range(64)]  # old page
+    els += [stroke(f"n{i}", 4000 + 15 * i, 4000, updated=900000 + i) for i in range(30)]
+    Canvas(client, els)
+    monkeypatch.setattr(latest_ink, "reader", r)
+    conn = db.connect()
+    try:
+        ink = latest_ink._new_ink(conn, "default", 0)
+    finally:
+        conn.close()
+    picked = latest_ink.newest_cluster(ink)
+    assert len(picked) == latest_ink.MAX_STROKES == 25
+    assert all(e["id"].startswith("n") for e in picked)
+    latest_ink._mark["default"] = 0
+    poll()
+    assert len(r.pngs) == 1 and latest_ink._mark["default"] == db_head()
+
+
+def test_cluster_excludes_far_and_old_strokes():
+    near = [stroke("a", 0, 0, updated=100000), stroke("b", 15, 0, updated=99000)]
+    far = stroke("c", 3000, 0, updated=99500)
+    old = stroke("d", 30, 0, updated=1000)
+    got = latest_ink.newest_cluster([old, far, *near])
+    assert {e["id"] for e in got} == {"a", "b"}
+
+
+def test_call_cap_per_minute_and_hour(client, monkeypatch):
+    r = Reader(json.dumps({"text": "hi", "intent": "none"}))
+    canvas = setup(client, monkeypatch, r)
+    for i in range(latest_ink.MAX_PER_MIN):
+        latest_ink.clock.t += latest_ink.MIN_GAP_S
+        canvas.elements.append(stroke(f"x{i}", 0, 300 + i * 100))
+        canvas.put()
+        poll()
+        latest_ink.clock.t -= latest_ink.MIN_GAP_S - 6.0  # 6 s apart
+    n = len(r.pngs)
+    assert n == latest_ink.MAX_PER_MIN
+    canvas.elements.append(stroke("late", 0, 9000))
+    canvas.put()
+    latest_ink.clock.t += latest_ink.MIN_GAP_S
+    poll()
+    assert len(r.pngs) == n  # capped
+    latest_ink.clock.t += 61
+    poll()
+    assert len(r.pngs) == n + 1
+
+
+def test_anchor_is_smallest_containing_chunk(client, monkeypatch):
+    r = Reader(json.dumps({"text": "2+2=", "intent": "equation"}))
+    big = row("p", 40, y=0)  # wide page chunk
+    canvas = Canvas(client, big)
+    small_strokes = [stroke("e0", 100, 100), stroke("e1", 115, 100)]
+    # a tall stroke joins the page chunk so the page chunk's box contains the small one
+    canvas.elements.extend(small_strokes)
+    canvas.put()
+    conn = db.connect()
+    try:
+        chunks = latest_ink.supersede.active_chunks(conn, "default")
+        ink = [e for e in canvas.elements if e["id"] in ("e0", "e1")]
+        got = latest_ink._anchor(conn, "default", ink)
+    finally:
+        conn.close()
+    containing = [
+        c
+        for c in chunks
+        if c["bounds"]["x"] <= 107 <= c["bounds"]["x"] + c["bounds"]["width"]
+        and c["bounds"]["y"] <= 110 <= c["bounds"]["y"] + c["bounds"]["height"]
+    ]
+    area = lambda c: c["bounds"]["width"] * c["bounds"]["height"]  # noqa: E731
+    assert got == min(containing, key=area)["id"]
+
+
+def test_long_text_is_dropped(client, monkeypatch):
+    setup(client, monkeypatch, Reader(json.dumps({"text": "x" * 250, "intent": "question"})))
+    assert poll() == []
+
+
+def test_equation_on_its_own_chunk(client, monkeypatch):
+    setup(client, monkeypatch, Reader(json.dumps({"text": "2+2=", "intent": "equation"})))
+    els = [dict(e, updated=1000) for e in row("p", 30)]
+    els += [dict(e, updated=900000 + i) for i, e in enumerate(row("e", 3, y=900))]
+    canvas = Canvas(client, els)
+    latest_ink._mark["default"] = 0
+    (c,) = poll()
+    assert c.kind == "open_equation" and c.anchor == canvas.chunk_of("e0")["id"]
+
+
 def test_changed_during_call_is_dropped(client, monkeypatch):
     holder = {}
 
@@ -97,6 +210,7 @@ def test_changed_during_call_is_dropped(client, monkeypatch):
     r = Reader(hook=more)
     holder["c"] = setup(client, monkeypatch, r)
     assert poll() == [] and latest_ink.stats["dropped"] == 1
+    latest_ink.clock.t += latest_ink.MIN_GAP_S + 1
     assert len(poll()) == 1  # the union is looked at now
     assert len(r.pngs) == 2
 
@@ -162,6 +276,17 @@ def test_scan_now_creates_one_offer_with_text(client, monkeypatch, gate):
     (o,) = offers_of(client)
     assert o["kind"] == "question" and o["payload"]["text"] == "What is MCP?"
     assert o["anchor_chunk"] == canvas.chunk_of("a0")["id"]
+
+
+def test_throttled_poll_reschedules(client, monkeypatch, gate):
+    from inkbridge.api import offers as offers_api
+
+    setup(client, monkeypatch, Reader())
+    latest_ink._calls["default"] = [latest_ink.clock()]  # a call just went out
+    seen = []
+    monkeypatch.setattr(offers_api, "schedule_scan", seen.append)
+    offers_api.scan_now("default")
+    assert seen == ["default"]
 
 
 def test_closed_gate_makes_no_call(client, monkeypatch, gate):
