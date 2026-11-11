@@ -113,6 +113,8 @@ def scan_now(document_id: str) -> None:
                     gate = attention_mod.attention
                     if gate.state(document_id) == "quiet" and gate.can_push(document_id):
                         extra = latest_ink.poll(conn, document_id)
+                        if not extra and latest_ink.pending(conn, document_id):
+                            schedule_scan(document_id)  # throttled or dropped: look again later
                     elif gate.state(document_id) != "none" and latest_ink.pending(
                         conn, document_id
                     ):

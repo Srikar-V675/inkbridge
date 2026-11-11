@@ -31,10 +31,11 @@ from inkbridge.db import supersede
 log = logging.getLogger("inkbridge.offers.latest")
 
 PROMPT = (
-    "Transcribe the handwriting in this image. Reply with JSON only: "
-    '{"text": "...", "intent": "question|equation|arrow_leads_nowhere|none"}. '
-    'intent "question" is a complete question (a lone "?" counts). '
-    'intent "equation" is an expression ending in "=" with no answer. '
+    "Transcribe the handwriting in this image; give only the text of the writing, nothing else. "
+    'Reply with JSON only: {"text": "...", "intent": "question|equation|arrow_leads_nowhere|none"}. '
+    'intent "equation" is an expression ending in "=" with no answer written after it '
+    '("2+2=" is an equation). '
+    'intent "question" is a complete question in words ("What is X?"; a lone "?" counts). '
     'Use "none" for anything else, including unfinished words.'
 )
 INTENTS = ("question", "equation", "arrow_leads_nowhere", "none")
@@ -45,6 +46,14 @@ PAD_MAX = 300
 SLANT_MIN, SLANT_MAX = 8.0, 60.0  # degrees; hypothesis (decision 0117)
 ELONGATED = 2.0  # principal axis at least this many times the minor axis
 
+MAX_STROKES = 25  # hypothesis (decision 0119)
+GAP_FACTOR = 2.0  # boxes within this many median stroke sizes join the cluster
+WINDOW_MS = 10_000  # strokes updated within this of the newest
+MIN_GAP_S, MAX_PER_MIN, MAX_PER_HOUR = 6.0, 8, 60
+MAX_TEXT = 200
+
+clock: Callable[[], float] = time.monotonic
+_calls: dict[str, list[float]] = {}  # document -> monotonic times of recent reader calls
 reader: Callable[[bytes], str] | None = None
 stats = {"calls": 0, "dropped": 0, "errors": 0, "offered": 0}
 _mark: dict[str, int] = {}  # document -> scene seq already looked at
@@ -84,6 +93,57 @@ def _new_ink(conn: sqlite3.Connection, doc: str, mark: int) -> list[dict]:
         if isinstance(e, dict) and _usable(e):
             out.append(e)
     return out
+
+
+def _side(e: dict) -> float:
+    return max(abs(e.get("width", 0) or 0), abs(e.get("height", 0) or 0))
+
+
+def newest_cluster(ink: list[dict]) -> list[dict]:
+    """The strokes written last and close together: start from the newest stroke and grow while a
+    stroke is within GAP_FACTOR median stroke sizes of the cluster and written within WINDOW_MS of
+    the newest. At most MAX_STROKES, newest first."""
+    if not ink:
+        return []
+    order = sorted(ink, key=lambda e: -(e.get("updated") or 0))
+    sides = sorted(_side(e) for e in ink)
+    gap = GAP_FACTOR * max(sides[len(sides) // 2], 10.0)
+    newest = order[0].get("updated") or 0
+    cluster = [order[0]]
+    box = list(_box(cluster))
+    rest = [e for e in order[1:] if newest - (e.get("updated") or 0) <= WINDOW_MS]
+    grew = True
+    while grew and len(cluster) < MAX_STROKES:
+        grew = False
+        for e in list(rest):
+            ex0, ey0, ex1, ey1 = _box([e])
+            if (
+                ex0 - box[2] <= gap
+                and box[0] - ex1 <= gap
+                and ey0 - box[3] <= gap
+                and box[1] - ey1 <= gap
+            ):
+                cluster.append(e)
+                rest.remove(e)
+                box = list(_box(cluster))
+                grew = True
+                if len(cluster) >= MAX_STROKES:
+                    break
+    return cluster
+
+
+def _allowed(document_id: str) -> str:
+    """'' when a call may go now, else why not: 'gap', 'minute' or 'hour'."""
+    now = clock()
+    calls = [t for t in _calls.get(document_id, ()) if now - t < 3600]
+    _calls[document_id] = calls
+    if len(calls) >= MAX_PER_HOUR:
+        return "hour"
+    if calls and now - calls[-1] < MIN_GAP_S:
+        return "gap"
+    if sum(1 for t in calls if now - t < 60) >= MAX_PER_MIN:
+        return "minute"
+    return ""
 
 
 def _box(ink: list[dict]) -> tuple[float, float, float, float]:
@@ -156,13 +216,10 @@ def _parse(raw: str) -> tuple[str, str]:
 
 
 def _anchor(conn: sqlite3.Connection, doc: str, ink: list[dict]) -> str | None:
+    """The smallest active chunk whose box holds the cluster's centre, else the nearest."""
     chunks = supersede.active_chunks(conn, doc)
     if not chunks:
         return None
-    ids = {e["id"] for e in ink if "id" in e}
-    best = max(chunks, key=lambda c: len(ids & set(c["element_ids"])))
-    if ids & set(best["element_ids"]):
-        return best["id"]
     x0, y0, x1, y1 = _box(ink)
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
 
@@ -172,6 +229,9 @@ def _anchor(conn: sqlite3.Connection, doc: str, ink: list[dict]) -> str | None:
         dy = max(b["y"] - cy, 0, cy - (b["y"] + b["height"]))
         return dx * dx + dy * dy
 
+    inside = [c for c in chunks if dist(c) == 0]
+    if inside:
+        return min(inside, key=lambda c: c["bounds"]["width"] * c["bounds"]["height"])["id"]
     return min(chunks, key=dist)["id"]
 
 
@@ -209,16 +269,24 @@ def poll(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
         return []
     head = db.scene_version(conn, document_id)
     mark = _mark.setdefault(document_id, head - 1)
-    ink = _new_ink(conn, document_id, mark)
-    if not ink:
+    batch = _new_ink(conn, document_id, mark)
+    if not batch:
         _mark[document_id] = head
         return []
+    why = _allowed(document_id)
+    if why:
+        if why == "hour":
+            _mark[document_id] = head  # give this batch up; do not retry for ever
+        log.info("doc=%s outcome=capped by=%s strokes=%d", document_id, why, len(batch))
+        return []
+    ink = newest_cluster(batch)
     png = raster.render_crop(ink, pad=_pad(ink))
     if png is None:
         _mark[document_id] = head
         return []
     png = _level(png, writing_angle(ink))
     t0 = time.monotonic()
+    _calls.setdefault(document_id, []).append(clock())
     stats["calls"] += 1
     try:
         raw = fn(png)
@@ -233,6 +301,9 @@ def poll(conn: sqlite3.Connection, document_id: str) -> list[Candidate]:
         return []
     _mark[document_id] = head
     text, intent = _parse(raw)
+    if intent in KIND and len(text) > MAX_TEXT:
+        _log(document_id, t0, ink, intent, text, "too_long")  # the crop was wrong
+        return []
     if intent not in KIND or not text.strip():
         _log(document_id, t0, ink, intent, text, "none")
         return []
