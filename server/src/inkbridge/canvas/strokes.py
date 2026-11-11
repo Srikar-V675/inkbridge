@@ -25,8 +25,8 @@ LONG = 1.5  # extent > LONG*T: container/connector (start value, tune on real pa
 HEAD_MAX = 0.6  # head: extent < HEAD_MAX*T (start value, tune on real pages)
 HEAD_REACH = 0.75  # head: within this*T of a connector end (start value, tune on real pages)
 HEAD_ORDER = 2  # head: at most this many strokes after its shaft (start value, tune on real pages)
-CONTAINER_CLOSE = 0.25  # container: net < this * diag (start value, tune on real pages)
-CONTAINER_LOOP = 1.8  # container: L >= this * diag (start value, tune on real pages)
+CONTAINER_CLOSE = 0.65  # container: net < this * diag (start value, tune on real pages)
+CONTAINER_LOOP = 1.5  # container: L >= this * diag (start value, tune on real pages)
 STRAIGHT = 0.55  # connector: net / L above this (start value, tune on real pages)
 FLAT = 0.15  # underline: h < FLAT * w (start value, tune on real pages)
 UNDERLINE_MIN = 1.0  # underline, scribble: extent >= this*T (start value, tune on real pages)
@@ -37,6 +37,11 @@ SCRIBBLE_LOOP = 4.0  # ... and path length >= this*diag (start value, tune on re
 SCALE_PCT = 0.6  # T is this quantile of the short strokes, not their median (INK-195)
 MIN_SCALE = 4.0  # floor for T in px (start value, tune on real pages)
 HOOK_MAX = 0.4  # a hook's barb is at most this fraction of the path (the sketch HEAD_SIZE)
+ARROW_LONG = 3.0  # connector: diagonal > this * median stroke diagonal (INK-203)
+SMOOTH_TURN = 1.2  # a turn sharper than this many radians is "sharp"
+SMOOTH_SHARP = 2  # smooth: at most this many sharp turns ...
+SMOOTH_TOTAL = 6.0  # ... and total turning at most this many pi (start values, INK-203)
+SMOOTH_STEP = 0.3  # resample the path every this * median diagonal before counting
 MIN_STEP = 0.02  # reversal counting ignores steps smaller than this * diag
 
 
@@ -196,6 +201,22 @@ def _has_hook(f: _F) -> bool:
     return shaft > 0 and math.dist(f.pts[0], f.pts[far]) / shaft > STRAIGHT
 
 
+def _smooth(pts: list[Point], step: float) -> bool:
+    """True if the stroke bends gently: few sharp turns and little total turning (INK-203)."""
+    out = [pts[0]]
+    for p in pts[1:]:
+        if math.dist(p, out[-1]) >= step:
+            out.append(p)
+    ang = [math.atan2(b[1] - a[1], b[0] - a[0]) for a, b in itertools.pairwise(out)]
+    total = 0.0
+    sharp = 0
+    for a, b in itertools.pairwise(ang):
+        d = abs((b - a + math.pi) % (2 * math.pi) - math.pi)
+        total += d
+        sharp += d > SMOOTH_TURN
+    return sharp <= SMOOTH_SHARP and total <= SMOOTH_TOTAL * math.pi
+
+
 def _find_head(f: _F, feats: list[_F], head_of: dict[str, str], t: float) -> _F | None:
     """The first unclaimed small stroke just after f in draw order, at one of its ends."""
     ends = (f.pts[0], f.pts[-1])
@@ -254,15 +275,21 @@ def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
             rest.append(f)
 
     # Shafts in draw order, so each head is claimed once. Heads are decided before underlines.
+    # A long smooth straight or hooked stroke is an arrow shaft by itself (INK-203); a shorter one
+    # needs a head, a hook or a shape at an end (INK-195).
+    med_diag = _median([f.diag for f in feats])
     shafts: list[_F] = []
     evidence: set[str] = set()
+    smooth_long: set[str] = set()
     for f in rest:
         if f.extent <= LONG * scale or f.L <= 0:
             continue
         hook = _has_hook(f)
-        if not (f.net / f.L > STRAIGHT or hook):
-            continue
+        if not (f.net / f.L > STRAIGHT or hook) or f.net < CONTAINER_CLOSE * f.diag:
+            continue  # a loop that closes on itself is an outline, never a shaft (INK-203)
         shafts.append(f)
+        if f.diag > ARROW_LONG * med_diag and _smooth(f.pts, SMOOTH_STEP * med_diag):
+            smooth_long.add(f.id)
         head = _find_head(f, feats, head_of, scale)
         if head is not None:
             head_of[head.id] = f.id
@@ -297,6 +324,8 @@ def analyse(elements: list[dict[str, Any]]) -> StrokeKinds:
             kinds[f.id] = "connector"
         elif _flat(f) and f.extent >= UNDERLINE_MIN * scale and _writing_above(f, columns, scale):
             kinds[f.id] = "underline"
+        elif f.id in smooth_long:
+            kinds[f.id] = "connector"
         else:
             kinds[f.id] = "writing"
     return StrokeKinds(kinds=kinds, head_of=head_of, scale=scale)
