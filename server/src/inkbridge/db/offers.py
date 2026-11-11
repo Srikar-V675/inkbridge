@@ -161,6 +161,12 @@ def create_offer(
     return offer, changed
 
 
+def sweep_all(conn: sqlite3.Connection) -> int:
+    """Startup: expire every stale open offer in every canvas (INK-205). Returns how many."""
+    docs = [r[0] for r in conn.execute("SELECT DISTINCT document_id FROM offers WHERE status='open'")]
+    return sum(len(_sweep(conn, d)) for d in docs)
+
+
 def list_offers(
     conn: sqlite3.Connection,
     document_id: str,
