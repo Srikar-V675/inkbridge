@@ -141,6 +141,7 @@ def refresh_anchor(conn: sqlite3.Connection, task: dict) -> dict:
     if reg is None or reg["status"] != "active":
         return task
     reading = (reg["text"] or reg["latex"]) if reg["source"] else None
+    reading = reading or (task["input"].get("payload") or {}).get("text") or None  # INK-202
     new = {**task["input"], "anchor_chunk": live, "anchor_reading": reading}
     conn.execute("UPDATE agent_tasks SET input_json=? WHERE id=?", (json.dumps(new), task["id"]))
     conn.commit()

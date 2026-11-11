@@ -40,7 +40,7 @@ def public_url() -> str:
     return (os.environ.get("INKBRIDGE_PUBLIC_URL") or DEFAULT_PUBLIC_URL).rstrip("/")
 
 
-DEFAULT_QUIET_S = 8.0
+DEFAULT_QUIET_S = 3.0
 
 
 def quiet_s() -> float:

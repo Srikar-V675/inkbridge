@@ -174,3 +174,22 @@ def test_make_recognizer_selects(monkeypatch):
     assert make_recognizer() is sentinel_g
     monkeypatch.delenv("INKBRIDGE_RECOGNIZER")
     assert make_recognizer() is sentinel_g
+
+
+def test_read_ink_returns_raw_reply():
+    reply = {"type": "result", "is_error": False, "result": '{"text":"hi","intent":"none"}'}
+    p = FakeProc([reply])
+    r = ClaudeRecognizer(spawn=spawner(p))
+    assert r.read_ink(PNG, "PROMPT") == '{"text":"hi","intent":"none"}'
+    assert len(p.stdin.lines) == 1
+    sent = json.loads(p.stdin.lines[0])
+    content = sent["message"]["content"]
+    assert content[0]["type"] == "image"
+    assert content[1] == {"type": "text", "text": "PROMPT"}
+
+
+def test_read_ink_rate_limit_raises():
+    ev = {"type": "result", "is_error": True, "result": "Claude usage limit reached"}
+    r = ClaudeRecognizer(spawn=spawner(FakeProc([ev])))
+    with pytest.raises(RateLimited):
+        r.read_ink(PNG, "PROMPT")
