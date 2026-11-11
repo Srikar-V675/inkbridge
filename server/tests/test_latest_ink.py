@@ -122,3 +122,113 @@ def test_reader_error_advances_and_returns_empty(client, monkeypatch):
 def test_no_reader_means_off(client):
     Canvas(client, row("a", 4))
     assert latest_ink.enabled() is False and poll() == []
+
+
+# --- scan_now wiring (Task 3) ---
+
+
+@pytest.fixture
+def gate(monkeypatch):
+    from inkbridge.agent import attention as attention_mod
+    from inkbridge.api import offers as offers_api
+
+    class Clock:
+        t = 0.0
+
+        def __call__(self):
+            return self.t
+
+    c = Clock()
+    monkeypatch.setenv("INKBRIDGE_QUIET_S", "0")
+    monkeypatch.setattr(attention_mod.attention, "clock", c)
+    monkeypatch.setattr(offers_api, "_ARM_TIMERS", False)
+    offers_api.pushed.clear()
+    offers_api._seen_session.clear()
+    attention_mod.attention.update("default", False)
+    c.t += 1
+    yield attention_mod.attention
+    attention_mod.attention.forget("default")
+
+
+def offers_of(client):
+    return client.get("/documents/default/offers").json()["offers"]
+
+
+def test_scan_now_creates_one_offer_with_text(client, monkeypatch, gate):
+    from inkbridge.api import offers as offers_api
+
+    canvas = setup(client, monkeypatch, Reader())
+    offers_api.scan_now("default")
+    (o,) = offers_of(client)
+    assert o["kind"] == "question" and o["payload"]["text"] == "What is MCP?"
+    assert o["anchor_chunk"] == canvas.chunk_of("a0")["id"]
+
+
+def test_closed_gate_makes_no_call(client, monkeypatch, gate):
+    from inkbridge.api import offers as offers_api
+
+    r = Reader()
+    setup(client, monkeypatch, r)
+    gate.update("default", True)
+    offers_api.scan_now("default")
+    assert r.pngs == [] and offers_of(client) == []
+
+
+def test_open_offer_blocks_latest(client, monkeypatch, gate):
+    from inkbridge.api import offers as offers_api
+
+    r = Reader()
+    canvas = setup(client, monkeypatch, r)
+    cid = canvas.chunk_of("a0")["id"]
+    body = {"kind": "related", "anchor_chunk": cid, "reason": "why", "score": 0.5}
+    assert client.post("/documents/default/offers", json=body).status_code == 201
+    offers_api.scan_now("default")
+    assert r.pngs == []
+    assert "default" not in latest_ink._mark or latest_ink._mark["default"] < db_head()
+
+
+def db_head():
+    conn = db.connect()
+    try:
+        return db.scene_version(conn, "default")
+    finally:
+        conn.close()
+
+
+def test_fallback_skipped_after_latest(client, monkeypatch, gate):
+    from inkbridge.agent import detectors
+    from tests.test_detectors import age
+    from tests.test_search import recognise
+
+    canvas = setup(client, monkeypatch, Reader())
+    canvas.elements.extend(row("b", 3, y=500))
+    canvas.put()
+    a, b = canvas.chunk_of("a0"), canvas.chunk_of("b0")
+    for c in (a, b):
+        recognise(c, "What is MCP?")
+    age()
+    conn = db.connect()
+    try:
+        extra = latest_ink.poll(conn, "default")
+        assert [c.anchor for c in extra] == [a["id"]] or [c.anchor for c in extra] == [b["id"]]
+        detectors.run(conn, "default", extra=extra)
+        (o,) = [o for o in offers_of(client)]
+        conn.execute("UPDATE offers SET status='dismissed' WHERE id=?", (o["id"],))
+        conn.commit()
+        detectors.run(conn, "default")
+        kinds = [(x["anchor_chunk"], x["kind"]) for x in offers_of(client)]
+    finally:
+        conn.close()
+    assert kinds.count((o["anchor_chunk"], "question")) == 1  # no second one on the same anchor
+    other = b["id"] if o["anchor_chunk"] == a["id"] else a["id"]
+    assert (other, "question") in kinds  # a different chunk can still get one
+
+
+def test_fallback_still_works_without_reader(client, gate):
+    from inkbridge.api import offers as offers_api
+    from tests.test_detectors import chunks
+
+    chunks(client, "Why is it so?")
+    offers_api.scan_now("default")
+    (o,) = offers_of(client)
+    assert o["kind"] == "question" and "text" not in o["payload"]

@@ -9,6 +9,7 @@ import logging
 import re
 import sqlite3
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -374,9 +375,16 @@ def _busy_lines(conn: sqlite3.Connection, document_id: str) -> set[str]:
 
 
 def run(
-    conn: sqlite3.Connection, document_id: str, session_start: str = "", slow: bool = False
+    conn: sqlite3.Connection,
+    document_id: str,
+    session_start: str = "",
+    slow: bool = False,
+    extra: Sequence[Candidate] = (),
 ) -> list[dict]:
-    """Create offers for new candidates, best first. Returns the rows the budget expired."""
+    """Create offers for new candidates, best first. Returns the rows the budget expired.
+
+    `extra` candidates (INK-202, from the latest ink) come first and are not re-sorted; a chunk
+    question or equation fallback is skipped for an anchor that already has a "latest" offer."""
     seen = {
         _seen_key(o["kind"], o["anchor_chunk"], o["payload"].get("key"))
         for o in offers_db.list_offers(conn, document_id)
@@ -386,7 +394,21 @@ def run(
     if offers_db.open_offers(conn, document_id):  # one chip on screen at a time (INK-197)
         log.info("detector run doc=%s held=open_offer", document_id)
         return changed
-    candidates = scan(conn, document_id, slow=slow)
+    candidates = list(extra) + scan(conn, document_id, slow=slow)
+    latest = {
+        o["anchor_chunk"]
+        for o in offers_db.list_offers(conn, document_id)
+        if o["status"] != "expired" and o["payload"].get("src") == "latest"
+    }
+    candidates = [
+        c
+        for c in candidates
+        if not (
+            c.kind in ("question", "open_equation")
+            and c.anchor in latest
+            and c.payload.get("src") != "latest"
+        )
+    ]
     busy = _busy_lines(conn, document_id)
     active = supersede.active_chunks(conn, document_id) if busy else []
     created: Counter = Counter()
