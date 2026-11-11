@@ -159,7 +159,6 @@ def test_call_cap_per_minute_and_hour(client, monkeypatch):
 
 
 def test_anchor_is_smallest_containing_chunk(client, monkeypatch):
-    r = Reader(json.dumps({"text": "2+2=", "intent": "equation"}))
     big = row("p", 40, y=0)  # wide page chunk
     canvas = Canvas(client, big)
     small_strokes = [stroke("e0", 100, 100), stroke("e1", 115, 100)]
@@ -179,8 +178,7 @@ def test_anchor_is_smallest_containing_chunk(client, monkeypatch):
         if c["bounds"]["x"] <= 107 <= c["bounds"]["x"] + c["bounds"]["width"]
         and c["bounds"]["y"] <= 110 <= c["bounds"]["y"] + c["bounds"]["height"]
     ]
-    area = lambda c: c["bounds"]["width"] * c["bounds"]["height"]  # noqa: E731
-    assert got == min(containing, key=area)["id"]
+    assert got == min(containing, key=lambda c: c["bounds"]["width"] * c["bounds"]["height"])["id"]
 
 
 def test_long_text_is_dropped(client, monkeypatch):
