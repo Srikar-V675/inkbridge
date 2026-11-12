@@ -7,4 +7,4 @@
 3. Claude checks the guess against the image, writes Mermaid using the marker ids, flags uncertain arrows.
 4. `draw_diagram` anchored beside the sketch creates dashed drafts (see [agent-drafts.md](agent-drafts.md)).
 
-`mode=one_shot` uses the crop alone; INK-053 (planned) compares both. Decision 0025. Files: `canvas/sketch.py`, `canvas/sketch_image.py`, `canvas/sketch_prompts.py`.
+`mode=one_shot` uses the crop alone; the E2/E3 comparison was not run. The same geometric guess feeds the background reader as a hint (`canvas/structure.py`, decision 0123), so a diagram chunk's reading lists boxes and `a -> b` relations. After the draft is accepted it is a diagram object: `edit_diagram` revises it, and writing over it can raise "Apply mark-up?" when offers are on (`get_markup`, decisions 0100, 0102). Decision 0025. Files: `canvas/sketch.py`, `canvas/sketch_image.py`, `canvas/sketch_prompts.py`.

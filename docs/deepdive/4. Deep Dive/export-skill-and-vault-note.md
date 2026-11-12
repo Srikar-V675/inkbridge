@@ -1,8 +1,22 @@
 # Deep Dive: vault export skill (`skills/inkbridge-export/`, `inknote.py`)
 
-The backend never writes the vault. The skill (`SKILL.md`, 5.6K) tells an agent how to export a canvas to a note and keep it fresh; `scripts/inknote.py` (624 lines, **standard library only**, Python 3.11+) does the mechanical parts so text outside the markers and every unchanged block stay **byte-identical**. Decision 0021; format `docs/vault-note-format.md`; end-to-end run `scripts/vault_loop_e2e.py` (decision 0022).
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
 
-## Skill rules (`SKILL.md`)
+The backend never writes the vault. The skill (`SKILL.md`, 5.6K) tells an agent how to export a canvas to a note and keep it fresh; `scripts/inknote.py` (about 1,000 lines by 13 Nov 2026, **standard library only**, Python 3.11+) does the mechanical parts so text outside the markers and every unchanged block stay **byte-identical**. Decision 0021; format `docs/vault-note-format.md`; end-to-end run `scripts/vault_loop_e2e.py` (decision 0022).
+
+## What changed since 26 Oct (Updated 13 Nov 2026)
+
+The sections below describe the 26 Oct helper. The mechanics (parse, validate, plan, apply, atomic writes) are unchanged; the note shape and the skill's behaviour moved toward the user's vault. Decisions 0062, 0063, 0103, 0125; format in `docs/vault-note-format.md`.
+
+- **Install and vault alignment** (INK-105, INK-106, decisions 0062, 0063). `make install-skill` symlinks the skill into `~/.claude/skills`; the skill finds its helper from its own directory, so it works from any session. New notes follow the vault's rules: `content/library/<title>.md`, frontmatter `tags: [library]`, `type: library`, `format: reference`, optional `index` and `relates`, `publish: false`, `date`, `ai-first: true`, then the one-line `inkbridge:` entry; crops go to `content/raw/attachments/inkbridge/`. The skill reads `$INKBRIDGE_VAULT/_CLAUDE.md` at the start of every export and the vault's rules win.
+- **Callout, source key, Related Notes** (INK-210, decision 0125). `inknote.py new` takes `--summary`. The collapsed `> [!info]- For future agent` callout carries the summary, a line `Saved <date> from the Inkbridge canvas <id>.` and then the provenance lines. `source: inkbridge` joins the frontmatter. When `--relates` is given, `new_note` also closes the note with a `## Related Notes` list; blocks appended on re-export go above that list. Nothing outside the markers is touched on re-export. SKILL.md gained a "Write like this vault" section (keep the user's words, keep their questions and gaps as theirs, atoms in `wiki/concepts/` are proposed and never created unasked, the project hub is never edited); only the dash, arrow and emoji ban is checked by `validate`.
+- **Entries carry `body`** (INK-106). Each `inkbridge.chunks` entry has a `body` hash (`_body_hash` over the block interior, ignoring leading `[!warning]` and `[!conflict] Inkbridge` callouts, `ENTRY_KEYS` now includes `body`). A block whose interior no longer matches `body` was edited by the user: `apply` does not rewrite it and adds a `[!conflict] Inkbridge` callout with the new reading (`_edited`, `_conflict_callout`, plan bucket `conflict`). Deleting the entry's `body` key hands the block back to the skill.
+- **Diagram chunks.** Readings of diagrams now carry relation lines (`a -> b`, decision 0123); the skill turns them into mermaid edges. The skill does not export `kind: connector` chunks.
+- **Learning loop** (INK-142, decision 0103). Subcommands grew to `canvas`, `crops`, `new`, `validate`, `sync`, `plan`, `apply`, `learn`, `rules`. `learn NOTE --vault V` finds hand-edited blocks (old text from the vault's git history: the first revision whose block hashes to `body`; no history is listed under `no_history`, never an error), records them under `## Observed edits` in `meta/Inkbridge Export Profile.md`, and writes a `### ... ` proposal under `## Proposals` once 3 distinct chunks show the same pattern. Kinds are a closed set (`RULE_KINDS`: heading question, heading level, crop removed). Proposals are never applied by the agent: only `Status: approved`, set by the user, makes a rule active, and `rules` prints the approved ones for the agent to follow when writing words. Rules cannot touch markers, hashes, `apply` or `validate`. Learning needs the helper, so Claude Desktop without a shell does not learn.
+- **Without the helper** the skill documents the by-hand path (format, `body` hash, one-line JSON frontmatter).
+- **MCP tools.** The skill uses `read_canvas`, `get_region` and `check_sync`, passing `document_id` when the canvas is not the default.
+
+## Skill rules (`SKILL.md`, 26 Oct snapshot)
 
 - The agent writes the words of each block; the helper builds, checks and updates the note around them.
 - Text outside `<!-- ink:ID hash:H -->` ... `<!-- /ink -->` is the user's; never changed.
@@ -20,7 +34,7 @@ First export: `read_canvas` -> `get_region` for chunks with `text: null`, diagra
 
 ## Validation (`validate`, `:142-195`)
 
-Unknown top-level keys; `canvas` non-empty string; `exported` ISO-8601; per entry: only keys `id, hash, reading, section, status, successor`; unique non-empty `id`; `hash` 64 hex; `reading` 64 hex or null; `section` string or null; `status` in `{removed, merged}`; `merged` needs a string `successor`. Per block: no duplicates; each block has an entry; the marker hash equals the entry hash. Prints `{"valid": bool, "errors": [...]}`; exit 1 when invalid.
+Unknown top-level keys; `canvas` non-empty string; `exported` ISO-8601; per entry: only keys `id, hash, reading, section, status, successor, body` (`body` added after 26 Oct); unique non-empty `id`; `hash` 64 hex; `reading` 64 hex or null; `section` string or null; `status` in `{removed, merged}`; `merged` needs a string `successor`. Per block: no duplicates; each block has an entry; the marker hash equals the entry hash. Prints `{"valid": bool, "errors": [...]}`; exit 1 when invalid.
 
 ## Building blocks (`render_block`, `:221-235`)
 

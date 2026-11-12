@@ -9,7 +9,8 @@
    - Different reading: `changed`.
    - Chunk replaced by a split/merge: `replaced` with `successor`.
    - Gone: `removed`. Not in the note yet: `new`.
-3. Chunks needing a new reading are read by the recognition worker while the call waits (bounded by `wait_s`, only for opted-in canvases). `changed` with `reading: null` means no reading arrived in time.
-4. The skill rewrites only changed blocks (and their crop embeds); several `replaced` entries can share one `successor`, so rewrite that block once.
+3. Chunks needing a new reading are read by the recognition worker (Gemini or Claude Haiku) while the call waits (bounded by `wait_s`, only for opted-in canvases). `changed` with `reading: null` means no reading arrived in time.
+4. The skill rewrites only changed blocks (and their crop embeds); several `replaced` entries can share one `successor`, so rewrite that block once. A block whose `body` hash no longer matches (the user edited it) gets a `[!conflict] Inkbridge` callout instead.
+5. Chunk ids can change when the chunker splits or merges (v2 also cuts oversized chunks); the successor chain keeps `replaced` working.
 
 Decision 0020. Test: `server/tests/test_check_sync.py`, `test_vault_export.py`.

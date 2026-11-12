@@ -1,5 +1,9 @@
 # Deep Dive: web scene sync (`web/src/sync/sceneSync.ts`, `lib/status.ts`, `lib/view.ts`, `lib/route.ts`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: `SceneSync` still loads and tracks changed elements, but saving moved to the device journal and sender (`sync/journal.ts`, `sync/sender.ts`), conflicts are resolved by the per-element merge rule (`sync/mergeRule.ts`) instead of a 409 reload, other devices' edits arrive as `scene.delta` (`sync/liveDelta.ts`), and Excalidraw mounts before the scene arrives (decisions 0071, 0080, 0087, 0088). The `conflict` state and the 409 flow below are the 26 Oct design.
+
 Framework-free load and autosave for one canvas. `app/App.tsx` wires it to Excalidraw's `onChange`. Rules (tech ref 9.1/10.1, decision 0008): never block drawing, `PUT` with `base_version`, a 409 means reload and merge. No dependency beyond `fetch`, so it runs under Node's test runner (`web/tests/sceneSync.test.ts`).
 
 ## States (`SaveState`)

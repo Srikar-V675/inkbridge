@@ -1,5 +1,7 @@
 # Deep Dive: recognition (`recognizer/` and `recognizer/worker.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
 Recognition turns a chunk's crop PNG into text, LaTeX and a kind. It is a **cache in front of a model**: ink is the truth, a reading is keyed by `(region_id, content_hash, source)` (`recognitions` table). Moved or unchanged ink never triggers a model call because `content_hash` ignores position.
 
 ## Files
@@ -8,6 +10,7 @@ Recognition turns a chunk's crop PNG into text, LaTeX and a kind. It is a **cach
 |---|---|
 | `recognizer/__init__.py` | `Recognition` dataclass (`text`, `latex`, `kind`, `model`), `Recognizer` protocol `(png, hint) -> Recognition`, the error hierarchy, `KINDS` |
 | `recognizer/gemini.py` | `GeminiRecognizer`: prompt, spacing, retries, parsing, transport |
+| `recognizer/claude.py` | `ClaudeRecognizer`: Claude Haiku through one persistent `claude -p` process (Updated 13 Nov 2026) |
 | `recognizer/worker.py` | `RecognitionWorker`: the background thread and its rules |
 
 There is deliberately no module-level `recognize()`. The only caller is the opt-in worker, which owns the privacy gate (decision 0017).
@@ -28,7 +31,21 @@ There is deliberately no module-level `recognize()`. The only caller is the opt-
 
 Tests inject a `transport` callable so nothing goes to the network (`tests/test_recognizer.py`).
 
-## RecognitionWorker (`recognizer/worker.py`)
+## Claude reader and the 13 Nov worker (Updated 13 Nov 2026)
+
+**Choosing the reader.** `make_recognizer()` in `recognizer/__init__.py` reads `INKBRIDGE_RECOGNIZER`: `gemini` (default) or `claude`; anything else warns and means `gemini`. Gemini stays for test and eval pages because its free tier trains on content. The Claude reader runs on the user's subscription and does not train on content (decision 0104), though the opt-in canvas list still gates what is read. A stored reading keeps source `gemini` whichever reader made it; `recognitions.model` says which (`claude-haiku`).
+
+**`ClaudeRecognizer`** (`recognizer/claude.py`, INK-185): one long-lived `claude -p --input-format stream-json --output-format stream-json --model haiku` process with tools off (`--tools ""`), `--strict-mcp-config`, no slash commands, no session persistence and an empty setting-sources list, started in a temp directory (`_spawn_for`, binary from `INKBRIDGE_CLAUDE_BIN`). Each chunk image is one user line and the answer is the next `result` event; a pump thread feeds stdout into a queue (`_Proc`). Calls are serialised by a lock; the process is reset after `max_requests = 25` reads, or on any error or timeout (`timeout = 60` s), to bound context growth. It reuses Gemini's `PROMPT` and `parse_reading`, raises `ClaudeNotFound` (a `PermanentError`) when the binary is missing, and logs usage on `inkbridge.recognizer.usage` (it counts against the 5-hour subscription window). `read_ink(png, prompt)` returns the raw reply and is also used by the latest-ink read (`agent/latest_ink.py`, offers only).
+
+**Structure hint.** For each chunk the worker calls `_structure_hint` and passes the result as the recognizer's `hint` (Gemini appends it as "Context hint"). `canvas/structure.py` `hint(elements, ids)` runs the sketch reader (`canvas/sketch.py`), and when it finds at least `MIN_NODES = 2` boxes it names up to `MAX_LISTED = 12` boxes and arrows in plain words, with an `INSTRUCTION` telling the reader to write the labels first and then one relation per line (`docs -has-> regions`), to trust the picture over the hint, and to ignore the hint when the picture is not a diagram (INK-208, decision 0123). A wrong guess costs nothing. This replaces the old note that the worker always passes `None`.
+
+**Candidates and latency** (INK-196, decision 0111). `db.recognition_candidates` orders by `regions.updated_at DESC, id`, so the line just written is read first, and excludes `kind = 'connector'` chunks. A reading is dropped when the region's content hash changed during the model call (the new hash gets its own read), and a pass ends early if the canvas was saved while it ran. The idle delay defaults to 1.5 s with the Claude reader (5 s otherwise; `INKBRIDGE_RECOGNIZE_IDLE_S` wins). A scene save nudges the worker (`RecognitionWorker.nudge`): a daemon timer wakes the loop `idle_s + 0.1` s later so a pass starts right after the idle delay. The logger `inkbridge.recognizer.latency` writes `region= latency_ms= backlog=` after each saved reading. About 3 s per chunk with the Claude reader.
+
+**Too large to read.** A chunk over `imaging.MAX_READ_UNITS` (4096) or `MAX_CROP_ELEMENTS` (1500) is never sent to a reader; outlines say `read_status: too_large` (decision 0052). Since chunker v2 cuts oversized groups at 3000 units and 600 elements (decision 0124), this is now rare.
+
+**Server crops.** With `INKBRIDGE_CROP_SOURCE=server` the worker renders a stale crop itself with `canvas/raster.py` before reading (decision 0065).
+
+## RecognitionWorker (`recognizer/worker.py`; the sections below are the 26 Oct snapshot)
 
 ![diagram 1](../../img/recognition-1.png)
 
@@ -86,7 +103,7 @@ Each API process would start its own worker (decision 0017). Run one.
 
 ## Privacy
 
-Gemini free tier may train on content. Nothing is read unless the canvas id is in `INKBRIDGE_RECOGNIZE_DOCUMENTS`; keep personal canvases out. Real notes are read by Claude through `read_canvas` and `get_region`.
+Gemini free tier may train on content; the Claude reader does not (Updated 13 Nov 2026). Nothing is read unless the canvas id is in `INKBRIDGE_RECOGNIZE_DOCUMENTS`; keep personal canvases out. Real notes are read by Claude through `read_canvas` and `get_region`.
 
 ## Testing
 
@@ -94,5 +111,4 @@ Gemini free tier may train on content. Nothing is read unless the canvas id is i
 
 ## Potential improvements
 
-- A hint is accepted by the recognizer but the worker always passes `None`.
 - `min_interval` is a per-process pacing; two processes would double the rate.

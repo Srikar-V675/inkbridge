@@ -1,5 +1,9 @@
 # Deep Dive: web crop sync (`web/src/sync/cropSync.ts`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: with `INKBRIDGE_CROP_SOURCE=server` the server renders crops and this class switches itself off (`/health` reports `crop_source`); it also starts only after the canvas has painted (`sync/startupGate.ts`) and makes no export for a chunk over 4096 units or 1500 elements (decision 0052).
+
 Only the browser can render Excalidraw, so crops of stale chunks are rendered and uploaded here (INK-057, decision 0015). The server flags a chunk `png_stale` when its ink changes; this class finds those chunks and uploads PNGs.
 
 ## Rules (file header, `:1-5`)
