@@ -425,8 +425,13 @@ def new_note(
     index: str | None = None,
     relates: tuple | list = (),
     date: str | None = None,
+    summary: str | None = None,
 ) -> str:
-    """A fresh note with one block per chunk that has a body, in the canvas's reading order."""
+    """A fresh note with one block per chunk that has a body, in the canvas's reading order.
+
+    `summary` is what the vault's own notes put in their `For future agent` callout: what the note
+    holds, when it was saved and how far to trust it. It goes in front of the provenance lines.
+    """
     chunks = [c for c in canvas["chunks"] if c["id"] in bodies and c.get("status") == "active"]
     missing = set(bodies) - {c["id"] for c in chunks}
     if missing:
@@ -446,9 +451,27 @@ def new_note(
     if relates:
         fm.append(f"relates: {json.dumps(list(relates))}")
     today = date or datetime.now().astimezone().date().isoformat()
-    fm += ["publish: false", f"date: {today}", "ai-first: true", _meta_line(meta)]
-    head = "---\n" + "\n".join(fm) + f"\n---\n{FUTURE_AGENT}\n# {title}\n\n"
+    fm += [
+        "source: inkbridge",
+        "publish: false",
+        f"date: {today}",
+        "ai-first: true",
+        _meta_line(meta),
+    ]
+    callout = FUTURE_AGENT
+    if summary:
+        _check_words("summary", summary)
+        lines = [ln for ln in summary.strip().splitlines() if ln.strip()]
+        saved = f"Saved {today} from the Inkbridge canvas {canvas['document']}."
+        callout = (
+            "> [!info]- For future agent\n"
+            + "".join(f"> {ln}\n" for ln in [*lines, saved])
+            + FUTURE_AGENT.split("\n", 1)[1]
+        )
+    head = "---\n" + "\n".join(fm) + f"\n---\n{callout}\n# {title}\n\n"
     text = head + "\n".join(rendered[c["id"]] for c in chunks)
+    if relates:  # the vault's notes close with a Related Notes list
+        text = text.rstrip("\n") + "\n\n## Related Notes\n" + "".join(f"- {r}\n" for r in relates)
     return _checked(_refresh_sections(text), strict=True)
 
 
@@ -625,9 +648,13 @@ def apply(
     for start, end, repl in reversed(ordered):
         out = out[:start] + repl + out[end:]
     if appended:
-        if not out.endswith("\n"):
-            out += "\n"
-        out += "\n" + "\n".join(appended)
+        tail = out.rfind("\n## Related Notes\n")
+        if tail != -1 and "<!-- ink:" not in out[tail:]:  # new blocks go above the closing list
+            out = out[:tail].rstrip("\n") + "\n\n" + "\n".join(appended) + out[tail:]
+        else:
+            if not out.endswith("\n"):
+                out += "\n"
+            out += "\n" + "\n".join(appended)
     return _checked(_refresh_sections(out))
 
 
@@ -938,6 +965,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out")
     s.add_argument("--index")
     s.add_argument("--relates", nargs="*", default=[])
+    s.add_argument("--summary", help="what the note holds, for its For future agent callout")
     s = sub.add_parser("validate")
     s.add_argument("note")
     s.add_argument("--strict", action="store_true")
@@ -975,7 +1003,15 @@ def main(argv: list[str] | None = None) -> int:
                 raise NoteError(
                     f"{a.out} exists; use plan/apply to re-export it, or pick another title"
                 )
-            note = new_note(_load(a.canvas), a.title, _load(a.bodies), vault, a.index, a.relates)
+            note = new_note(
+                _load(a.canvas),
+                a.title,
+                _load(a.bodies),
+                vault,
+                a.index,
+                a.relates,
+                summary=a.summary,
+            )
             _write(note, a.out)
         elif a.cmd == "validate":
             errors = validate(_read(a.note), a.strict)

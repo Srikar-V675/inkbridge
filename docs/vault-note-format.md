@@ -14,12 +14,17 @@ tags: [library]
 type: library
 format: reference
 index: "[[Machine Learning & AI.base]]"
+relates: ["[[Linear Regression]]"]
+source: inkbridge
 publish: false
 date: 2026-10-26
 ai-first: true
 inkbridge: {"canvas": "default", "exported": "2026-10-26T10:00:00+00:00", "chunks": [{"id": "9f2a41c07b3e", "hash": "51a8…", "reading": "2d90…", "section": "Gradient descent", "body": "c41e…"}]}
 ---
 > [!info]- For future agent
+> Handwritten notes on how gradient descent updates parameters. Read by a model; check the crops
+> before quoting a formula.
+> Saved 2026-10-26 from the Inkbridge canvas default.
 > Provenance note for an Inkbridge canvas. Text between ink markers is managed by the
 > inkbridge-export skill and synced with check_sync. Text outside the markers is the
 > user's and is never changed.
@@ -37,6 +42,9 @@ Anything the user writes here is theirs and is never touched.
 > [!ink]- Source ink
 > ![[content/raw/attachments/inkbridge/9f2a41c07b3e-51a8f2c0d9e1.png]]
 <!-- /ink -->
+
+## Related Notes
+- [[Linear Regression]]
 ````
 
 Hashes are shortened with `…` above; in a real note they are 64 hex characters.
@@ -57,6 +65,7 @@ The vault's own standard is `~/Documents/kaizen/_CLAUDE.md`; `new` writes the ke
 | `format` | `reference` (the vault also allows `course`, `book`, `video`) |
 | `index` | optional, `"[[Name.base]]"` |
 | `relates` | optional, a list of `"[[Note]]"` links |
+| `source` | `inkbridge` |
 | `publish` | `false` |
 | `date` | `YYYY-MM-DD`, the day of the first export |
 | `ai-first` | `true` |
@@ -159,3 +168,11 @@ Confidence is low for 3 edits, medium for 4 to 5, high for 6 or more. The user a
 the line to `- Status: approved`; anything else is inert. `inknote.py rules` prints approved
 proposals of a known kind as JSON, and the agent follows them when writing words. Rules never reach
 markers, `body`, hashes, provenance or `apply`/`validate`.
+
+## Written like the vault (INK-210)
+
+The callout starts with the lines given to `new --summary` (what the note holds and how far to trust
+it), then `Saved <date> from the Inkbridge canvas <id>.`, then the provenance lines. `relates`
+also become a closing `## Related Notes` list, and blocks added by a later export go above that list.
+The words themselves follow the writing rules in the skill's "Write like this vault" section: the
+user's own wording, atomic and structured, mermaid for diagrams, no emojis, separators or dashes.
