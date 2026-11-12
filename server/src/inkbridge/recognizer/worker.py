@@ -24,6 +24,7 @@ from datetime import datetime
 
 from inkbridge import config, db, imaging
 from inkbridge.agent.activity import activity
+from inkbridge.canvas import structure
 from inkbridge.recognizer import (
     PermanentError,
     RateLimited,
@@ -191,6 +192,16 @@ class RecognitionWorker:
                 del pending[rid]
             return set(pending)
 
+    @staticmethod
+    def _structure_hint(conn, region) -> str | None:
+        """Boxes and arrows the server found in this chunk, as a hint for the reader (INK-208)."""
+        try:
+            elements = db.get_sketch_elements(conn, region["id"]) or []
+            return structure.hint(elements, set(json.loads(region["element_ids_json"])))
+        except Exception:
+            log.debug("no structure hint for %s", region["id"], exc_info=True)
+            return None
+
     def _done_urgent(self, document_id: str, region_id: str) -> None:
         with self._lock:
             self._urgent.get(document_id, {}).pop(region_id, None)
@@ -255,7 +266,7 @@ class RecognitionWorker:
                     calls += 1
                     activity.begin(document_id, "reading", f"read:{region['id']}")  # INK-198
                     try:
-                        reading = self.recognizer(png, None)
+                        reading = self.recognizer(png, self._structure_hint(conn, region))
                     except PermanentError as e:
                         self.stopped = True
                         log.error("recognition worker stopped: %s", e)
