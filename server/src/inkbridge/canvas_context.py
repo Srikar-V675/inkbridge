@@ -1,4 +1,4 @@
-"""What every agent must know about where it is (INK-207, decision 0121).
+"""What every agent must know about where it is (INK-207, decision 0122).
 
 Plain text, no imports: the Ask runner prompts and the MCP server instructions both use it, and the
 MCP package must stay free of `inkbridge.db`.

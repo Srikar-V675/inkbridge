@@ -1,4 +1,4 @@
-"""The agent knows it is inside a canvas (INK-207, decision 0121)."""
+"""The agent knows it is inside a canvas (INK-207, decision 0122)."""
 
 from inkbridge.agent import ask_runner
 from inkbridge.canvas_context import CANVAS_CONTEXT
