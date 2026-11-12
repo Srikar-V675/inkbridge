@@ -160,6 +160,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
   // Once per canvas view: a switch remounts this component, so the gate is per canvas.
   const gate = useMemo(() => createStartupGate(), []);
   const [api, setApi] = useState<Api | null>(null);
+  const [offersOn, setOffersOn] = useState(false); // GET /health `offers` (INKBRIDGE_OFFERS, INK-206)
   const [jump, setJump] = useState<JumpResult | null>(null);
   const [noticeOpen, setNoticeOpen] = useState(true);
   // The toast times out, but the ghost box stays until the user dismisses (INK-162 review).
@@ -214,6 +215,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       .then((r) => r.json())
       .then((h) => {
         if (serverRendersCrops(h)) crops.dispose();
+        setOffersOn((h as { offers?: unknown }).offers === true);
       })
       .catch(() => {});
     let cancelled = false;
@@ -495,7 +497,7 @@ export default function App({ route }: { route: Extract<Location, { kind: "canva
       api={liveApi}
       title={initial === "missing" ? "Canvas not found" : title}
       status={<><StatusSlot store={status} /><WorkingDot store={activity} /></>}
-      chunks={<><FingerToggle /><FocusToggle store={offerStore} canvas={route.canvas} /><ChunkToggle view={chunkView} /></>}
+      chunks={<><FingerToggle />{offersOn && <FocusToggle store={offerStore} canvas={route.canvas} />}<ChunkToggle view={chunkView} /></>}
       overlays={
         <>
           {api && open && <TouchRouting api={api} />}

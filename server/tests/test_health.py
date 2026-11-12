@@ -11,6 +11,7 @@ def test_health(monkeypatch):
         "status": "ok",
         "crop_source": "browser",
         "chunker": "v2",
+        "offers": True,
     }
 
 
@@ -21,6 +22,7 @@ def test_health_in_server_crop_mode(monkeypatch):
         "status": "ok",
         "crop_source": "server",
         "chunker": "v2",
+        "offers": True,
     }
 
 

@@ -186,10 +186,15 @@ class ElementsIn(BaseModel):
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
+def health() -> dict[str, str | bool]:
     # `chunker` is the default for canvases with no setting of their own; a canvas's own value is
     # in `GET /documents`.
-    return {"status": "ok", "crop_source": config.crop_source(), "chunker": config.chunker()}
+    return {
+        "status": "ok",
+        "crop_source": config.crop_source(),
+        "chunker": config.chunker(),
+        "offers": config.offers_enabled(),
+    }
 
 
 @app.get("/documents/{document_id}/scene")

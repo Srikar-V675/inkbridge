@@ -40,6 +40,15 @@ def public_url() -> str:
     return (os.environ.get("INKBRIDGE_PUBLIC_URL") or DEFAULT_PUBLIC_URL).rstrip("/")
 
 
+def offers_enabled() -> bool:
+    """INKBRIDGE_OFFERS: 1/true/on turns the proactive offers on. Default off (INK-206).
+
+    The offers code stays in the tree (detectors, latest-ink read, chips); with this off nothing
+    scans, reads ink for offers or pushes a chip. Ask, drafts and the MCP tools are unaffected.
+    """
+    return (os.environ.get("INKBRIDGE_OFFERS") or "").strip().lower() in {"1", "true", "on", "yes"}
+
+
 DEFAULT_QUIET_S = 3.0
 
 

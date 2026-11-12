@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from inkbridge import db
+from inkbridge import config, db
 from inkbridge.agent import attention as attention_mod
 from inkbridge.agent import detectors, latest_ink
 from inkbridge.api.deps import Conn
@@ -58,6 +58,8 @@ def _arm(document_id: str, wait: float) -> threading.Timer:
 
 def flush(document_id: str) -> None:
     """Push open offers if the gate is open; otherwise arm one timer for the rest of the quiet window."""
+    if not config.offers_enabled():
+        return
     t = _timers.pop(document_id, None)
     if t:
         t.cancel()
@@ -101,6 +103,8 @@ def publish_updates(rows: list[dict]) -> None:
 
 def scan_now(document_id: str) -> None:
     """Run the detectors on their own connection and push what they made. Never raises."""
+    if not config.offers_enabled():
+        return
     with _scan_lock:
         if _scans.get(document_id) is threading.current_thread():
             del _scans[document_id]  # this timer is running now, not pending
@@ -139,7 +143,7 @@ def scan_now(document_id: str) -> None:
 
 def schedule_scan(document_id: str) -> None:
     """Debounce: each save or reading re-arms one timer, so a burst scans once, off the save path."""
-    if not _ARM_TIMERS:
+    if not _ARM_TIMERS or not config.offers_enabled():
         return
     with _scan_lock:
         old = _scans.pop(document_id, None)
