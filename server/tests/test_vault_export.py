@@ -772,3 +772,37 @@ def test_helper_runs_from_a_symlinked_skill_outside_the_repo(tmp_path):
         text=True,
     )
     assert r.returncode == 0 and "validate" in r.stdout
+
+
+def test_summary_relates_and_source_follow_the_vault_style(client, page):
+    canvas = outline(client)
+    text = inknote.new_note(
+        canvas,
+        "T",
+        bodies_for(canvas),
+        relates=["[[Linear Regression]]"],
+        date="2026-11-13",
+        summary="Handwritten notes on how Inkbridge stores ink.\nRead the Strokes section first.",
+    )
+    assert "source: inkbridge" in text.splitlines()
+    assert "> Handwritten notes on how Inkbridge stores ink.\n" in text
+    assert "> Saved 2026-11-13 from the Inkbridge canvas" in text
+    assert "Provenance note for an Inkbridge canvas" in text
+    assert text.rstrip().endswith("## Related Notes\n- [[Linear Regression]]")
+    assert inknote.validate(text, strict=True) == []
+    with pytest.raises(inknote.NoteError):
+        inknote.new_note(canvas, "T", bodies_for(canvas), summary="a — dash")
+
+
+def test_new_blocks_go_above_the_related_notes_list(client, page):
+    canvas = outline(client)
+    text = inknote.new_note(canvas, "T", bodies_for(canvas), relates=["[[Linear Regression]]"])
+    page.elements += row("d", 3, y=1500)
+    page.put()
+    recognise(page.chunk_of("d0"), "adam")
+    sync = check(client, text)
+    d = page.chunk_of("d0")
+    out = inknote.apply(text, sync, outline(client), {d["id"]: "## adam\n\n- adaptive"})
+    assert out.index(f"<!-- ink:{d['id']}") < out.index("## Related Notes")
+    assert out.rstrip().endswith("- [[Linear Regression]]")
+    assert inknote.validate(out) == []
