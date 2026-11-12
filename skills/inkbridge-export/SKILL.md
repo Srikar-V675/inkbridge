@@ -28,6 +28,38 @@ if anything below is unclear.
 - Personal notes are read by you, not by Gemini. Never ask for recognition of a canvas the user has
   not opted in (`INKBRIDGE_RECOGNIZE_DOCUMENTS` on the API).
 
+## Write like this vault
+
+This comes from the user's own notes in `$INKBRIDGE_VAULT` (the operating manual `_CLAUDE.md`, the library
+notes, the project hub `wiki/projects/Inkbridge.md`). Their canvas is their own thinking, so the note is
+theirs with the ink made searchable and structured, not a textbook rewrite.
+
+- **Keep their words.** A handwritten list stays a list in their wording; fix only a reading you can see
+  is wrong in the crop. Do not add facts they did not write. If they wrote a question, a gap or a
+  "to check" (for example "Gap in my knowledge", "Questions"), keep it as their question under a
+  heading of its own; never answer it inside their block (answers belong in Ask or in text outside
+  the markers, written only if they ask).
+- **Shape.** Atomic and heavily structured: one heading per block, short bullets, bold lead terms,
+  a table for anything compared, a ```` ```mermaid ```` flowchart for a diagram (the reading's
+  `->` relation lines are the edges; labels are the box texts; mark an unreadable box as
+  `(unreadable box)`). Maths as `$...$`. One idea per block, in their reading order.
+- **Voice.** Plain and direct, no padding, no emojis, no `---` separators in the body, no em or en
+  dashes, no arrows or middle dots in prose (write `->`, `-` and commas).
+- **Callout first.** The `For future agent` callout says what the note holds, which canvas it came
+  from and how far to trust it: pass `--summary` (two or three lines, for example "Handwritten notes
+  on how Inkbridge stores and hashes ink. Diagram boxes were read by a model; check the crops before
+  quoting."). The helper adds the date and the provenance lines.
+- **Links.** Pass `--relates` with existing notes the canvas continues, found with the vault search
+  tool (`obsidian_search`) and `[[Inkbridge]]` when the canvas is about this project. They also
+  become the closing `## Related Notes` list. Choose `--index` from `indexes/*.base`; ask when two fit.
+- **Where it lives.** `content/library/<title>.md`, `type: library`, `format: reference`,
+  `publish: false`, `source: inkbridge`. Personal handwriting is never `publish: true`.
+- **Atoms are the user's call.** The vault keeps one idea per note in `wiki/concepts/` (`tags:
+  [concept]`, `index`, `relates`). After an export, list the two to five chunks that could stand as
+  atoms and ask before creating any. Do not touch `wiki/`, `indexes/`, `archive/` or the root
+  `index.md` without being asked, and do not edit the project hub: tell the user what you would add.
+- **No daily note, no task, no board.** Report in chat.
+
 ## Setup
 
 - **Vault folder:** use `$INKBRIDGE_VAULT` if it is set. Otherwise ask the user where their vault
@@ -76,12 +108,13 @@ If it is not there, ask the user for the repo path.
 5. Save the crops: `python3 $H crops /tmp/inkb/canvas.json --vault "$INKBRIDGE_VAULT"`. Chunks
    without a stored crop are reported under `failed` and simply get no preview.
 6. Build and check the note:
-   `python3 $H new /tmp/inkb/canvas.json /tmp/inkb/bodies.json --title "TITLE" --vault "$INKBRIDGE_VAULT" --index "[[X.base]]" --relates "[[A]]" --out "$INKBRIDGE_VAULT/content/library/TITLE.md"`,
+   `python3 $H new /tmp/inkb/canvas.json /tmp/inkb/bodies.json --title "TITLE" --vault "$INKBRIDGE_VAULT" --index "[[X.base]]" --relates "[[A]]" --summary "WHAT IT HOLDS" --out "$INKBRIDGE_VAULT/content/library/TITLE.md"`,
    then `python3 $H validate "$INKBRIDGE_VAULT/content/library/TITLE.md" --strict` (it must print
    `"valid": true`). Then call `obsidian_validate_note` on the note when the vault MCP is
    available; if it reports a failure, say so and do not call the export done.
 7. Tell the user where the note is, how many sections it has, and which chunks had no reading or
-   no crop.
+   no crop. Then offer, in one short list, the chunks that could become atoms in `wiki/concepts/`
+   and what you would add to the project hub; create nothing until they say so.
 
 ## Re-export (sync an existing note)
 
@@ -121,7 +154,7 @@ If it is not there, ask the user for the repo path.
 Follow `docs/vault-note-format.md` by hand:
 - Notes live in `content/library/`, crops in `content/raw/attachments/inkbridge/`. The frontmatter
   has `tags: [library]` (one type tag), `type: library`, `format: reference`, `publish: false`,
-  `date`, `ai-first: true`, then the `inkbridge:` line; the collapsed `> [!info]- For future agent`
+  `source: inkbridge`, `date`, `ai-first: true`, then the `inkbridge:` line; the collapsed `> [!info]- For future agent`
   callout follows it. No daily note, same style rule as above.
 - Each entry carries `body`: the sha256 of the block interior (between the markers), ignoring
   leading `[!warning]` / `[!conflict] Inkbridge` callouts. Never overwrite a block whose hash no
