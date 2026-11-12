@@ -19,6 +19,15 @@ def client(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def offers_on(monkeypatch):
+    """Offers are off by default since INK-206; the offers tests exercise the code, so switch it on.
+
+    `test_offers_off.py` deletes this variable to check the default.
+    """
+    monkeypatch.setenv("INKBRIDGE_OFFERS", "1")
+
+
+@pytest.fixture(autouse=True)
 def reset_activity():
     # The working dot (INK-198) is one module-level tracker; a task left running by one test must
     # not be replayed to the next test's WebSocket.
