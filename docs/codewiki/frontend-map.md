@@ -1,24 +1,28 @@
-# Frontend map (`web/`)
+# Frontend map (`web/src/`)
 
-Single page, no router. URL contract shared with vault notes: `/?canvas=<document id>&chunk=<chunk id>` (`src/route.ts`).
+React 19 + Vite, Excalidraw 0.18. `/` is the canvases home; a canvas opens with `/?canvas=<document id>`; `?canvas=<id>&chunk=<chunk id>` is the contract shared with vault notes (`lib/route.ts`). In-app switching uses `pushState` (`lib/nav.ts`). The Vite dev server on `:5173` is for development; daily use is the built app served by the API on `:8000`.
 
-| File | Role |
+| Folder | Role |
 |---|---|
-| `src/main.tsx`, `src/App.tsx` | Mounts Excalidraw; wires load, autosave, overlay, ops socket, crop sync, toolbar |
-| `src/sceneSync.ts` | Load/autosave with `base_version`; sends only changed elements after the first load/save (`deltaFor`, decision 0036); on 409 merges the server scene and retries (decision 0008) |
-| `src/status.ts` | Tiny external store for the save badge (keeps canvas from re-rendering mid-stroke) |
-| `src/chunks.ts`, `src/ChunkOverlay.tsx` | Chunk fetch, deep-link focus, toggleable overlay (decision 0014). Tap a label chip (at least 44x32 px) to select that chunk's ink; selected chunks get an orange border; a visible hint explains Merge/Split |
-| `src/overrides.ts` | Merge/Split plan on the selection (INK-059); `toggleChunk` and `chunkMark` for tap selection (decision 0037) |
-| `src/cropSync.ts` | Renders and uploads PNG crops for stale chunks when idle and saved (decision 0015) |
-| `src/opsSocket.ts` | WebSocket client: receives ops, sends `op.applied`/`op.failed` |
-| `src/drawOp.ts`, `src/drafts.ts` | Draw `write_text`/`draw_diagram` ops as dashed drafts (Mermaid via `mermaid-to-excalidraw`) |
-| `src/resolve.ts`, `src/DraftBar.tsx` | Accept / Reject / Accept all for drafts (decision 0026). `acceptOp`, `draftOps`, `applyVerdict` are pure/testable; the bar shows counts, per-selection and bulk buttons, and "Retry accept" if a PATCH failed after a save |
-| `src/timing.ts`, `src/devLog.ts` | `record()` / `timed()` with a swappable sink; `lib/devLog.ts` (dev only) batches lines to Vite's `/__log` -> `web/dev.log` |
-| `web/patches/@excalidraw+excalidraw+0.18.1.patch` | `patch-package` (runs on `postinstall`): freedraw `thinning` 0.6 -> 0.3, `streamline` 0.5 -> 0.2; stored `pressures` untouched (decision 0031) |
-| `src/view.ts` | Per-device scroll/zoom memory in `localStorage`; keeps fitting the first agent drafts on a freshly created canvas until the user pans or draws |
+| `main.tsx` | Entry point |
+| `app/` | `Root` (home or one canvas), `App.tsx` (mounts Excalidraw, wires load, sync, overlay, ops socket, crop sync), `Shell` slots (top bar, tool rail, zoom, status), `railStore`, `shell.css`; touch routing (`touchInput`, `touchRouting`, `TouchLayer`, `fingerDraws`: one finger pans, two pinch-zoom, only the pen draws, palm rejection, "Finger draws" toggle); UI size S/M/L (`uiScale*`, `UiSizeControl`); `WorkingDot` (pulsing lime dot while an agent works); `PaperDots` |
+| `app/props/` | The one card per rail tool: shapes picker plus the 280 px properties card (`PropsCard`, `propsLogic`, `propsStore`); never opens for pen, highlighter or eraser |
+| `home/` | Canvases home: Continue, Recent, All, Archived, search, rename, pin, duplicate, archive with Undo (`Home`, `CanvasMenu`, `homeApi`, `homeLogic`) |
+| `sync/` | `sceneSync.ts` (load, autosave, per-element merge via `mergeRule.ts`), `journal.ts` (IndexedDB device journal) and `sender.ts` (overlapping uploader), `liveDelta.ts` (applies `scene.delta` without touching undo), `opsSocket.ts` (WebSocket client), `cropSync.ts` (PNG crops for stale chunks), `chunkRefresh.ts` (one coalesced refetch signal), `loadClock.ts`, `startupGate.ts` (defers socket and crop sync until the canvas has painted) |
+| `chunks/` | Chunk fetch, deep-link focus, toggleable overlay with 44 px tabs (`ChunkOverlay`, `chunks`, `chunkView`, `followScroll`), tap-to-select Merge/Split (`overrides.ts`), `JumpNotice` |
+| `drafts/` | Draft store (`draftStore`), drawing ops (`drawOp`, `drafts`, Mermaid via `mermaid-to-excalidraw`), graph layout, per-draft pills (`DraftPills`, `draftPills`), draft tray and bar (`DraftBar`), tether to the anchor (`Tether`), Accept/Reject/Unaccept (`resolve.ts`), pan-to-draft (`draftView`) |
+| `ask/` | Ask panel on the `Panel` primitive: list and thread views, safe markdown, source chips, Draw as diagram, streamed answers (`AskPanel`, `AskThread`, `AskList`, `ask.ts`, `threads.ts`) |
+| `offers/` | Offer chips, popovers, Focus toggle, attention frames (`OfferLayer`, `offerStore`, `attention`); inert unless the server has offers on |
+| `ink/` | Pen-sample collector (`penSamples`) feeding the patched freedraw handler, and the fast ink layer (`fastInk`, `FastInk`; decision 0076) |
+| `ui/` | Primitives `Button`, `IconButton`, `Chip`, `Badge`, `Panel`, `Card`, `Toast`, `StatusDot`, and the dev-only `Kit` page (`/?kit=1`) |
+| `styles/` | `tokens.css` (generated from `DESIGN.md` with `npm run tokens`), `fonts.css`, Instrument Sans in `fonts/` |
+| `lib/` | `route`, `nav`, `status` (tiny external store for the save badge), `view` (per-device scroll/zoom memory), `timing` and dev-only `devLog`, `deviceLog`, `stalls`, `probe`, `measure`, `excalidrawEnv`, `changeGate` |
 
-Not built: Ask AI side panel (INK-049). The web client ignores `question.update` for now.
+Other pieces
+- `web/patches/@excalidraw+excalidraw+0.18.1.patch` (`patch-package` on `postinstall`): freedraw `thinning` 0.6 -> 0.3, `streamline` 0.5 -> 0.2, plus the pen-sample and pointerup hooks for full-rate samples; stored `pressures` untouched (decisions 0031, 0076).
+- `web/scripts/copy-fonts.mjs` copies the Excalidraw fonts into `web/public`; `web/scripts/perf/` and `web/perf/` are the INK-174 lag harness (dev tooling).
+- Rules in `DESIGN.md`: lime `#D4F23A` is the agent and only the agent; every touch target 44 px or larger (`Chip` is the one 36 px exception); no hex outside `tokens.css`. `web/tests/designRules.test.ts` enforces them.
 
-Tests: `web/tests/*.test.ts` (chunks, cropSync, drafts, opsSocket, overrides, penFeel, resolve, sceneSync, timing, view) run with Node's built-in runner (`npm test`), no framework.
+Tests: `web/tests/*.test.ts` (about 57 files) run with Node's built-in runner (`npm test`), no framework.
 
 Pressure rule: freedraw keeps `pressures` and `simulatePressure=false`; run `restoreElements` before `initialData`.

@@ -1,5 +1,7 @@
 # Inkbridge deep-dive documentation
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
 Code-level documentation generated with the `smart-docs` skill (C4 diagrams, workflows, one page per major module, with `file:line` references). The product-level wiki is [`../codewiki/`](../codewiki/overview.md).
 
 1. [Project Overview](1.%20Project%20Overview.md)
@@ -10,4 +12,4 @@ Code-level documentation generated with the `smart-docs` skill (C4 diagrams, wor
    - Skill: [export-skill-and-vault-note](4.%20Deep%20Dive/export-skill-and-vault-note.md)
    - Web: [web-app-shell](4.%20Deep%20Dive/web-app-shell.md) · [web-scene-sync](4.%20Deep%20Dive/web-scene-sync.md) · [web-crop-sync](4.%20Deep%20Dive/web-crop-sync.md) · [web-chunks-overlay-overrides](4.%20Deep%20Dive/web-chunks-overlay-overrides.md) · [web-ops-and-drafts](4.%20Deep%20Dive/web-ops-and-drafts.md)
 
-Line numbers are approximate and refer to `main` at the time of the last refresh; regenerate when files move.
+Line numbers are approximate and refer to `main` on 26 Oct 2026, except where a section says Updated 13 Nov 2026 (feature freeze); the packages were split since (`db/`, `canvas/chunker/`, `mcp/tools/`), so prefer module and function names. Pages refreshed on 13 Nov: chunker, recognition, export-skill-and-vault-note, web-app-shell, web-ops-and-drafts, ops-queue-and-websocket, database, mcp-server; the rest carry a short update note. No pages were added.

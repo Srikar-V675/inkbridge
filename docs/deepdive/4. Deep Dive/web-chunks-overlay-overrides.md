@@ -1,5 +1,9 @@
 # Deep Dive: web chunks, deep links, overlay and overrides (`chunks/chunks.ts`, `chunks/ChunkOverlay.tsx`, `chunks/overrides.ts`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: the overlay uses 44 px tabs, follows scroll only when drawn (`chunks/followScroll.ts`) and refetches through one coalesced signal (`sync/chunkRefresh.ts`); `chunks/JumpNotice.tsx` shows deep-link outcomes. Chunks now come from chunker v2 by default, so connector chunks exist (`kind: connector`).
+
 Framework-free logic in `chunks/chunks.ts` and `chunks/overrides.ts`; `chunks/ChunkOverlay.tsx` is the React layer (INK-035, INK-059, decisions 0014 and 0024). All fetches use plain `fetch` and DOM-free maths, so they work over LAN HTTP (not a secure context).
 
 ## Deep link resolution (`chunks/chunks.ts`)

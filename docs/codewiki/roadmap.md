@@ -1,53 +1,48 @@
-# Roadmap (from `docs/tickets/`, local)
+# Roadmap and status
 
-State as of `main`. Ticket statuses live in the local, untracked `docs/tickets/README.md`; check `git log` for what has merged.
+State at the feature freeze, 13 Nov 2026. Ticket statuses live in the local, untracked `docs/tickets/README.md`; the story and the future-scope list are in the repo `README.md`; history is in `docs/CHANGELOG.md`.
 
-## Built since the last refresh
+## Built
 
-| Ticket | What |
-|---|---|
-| INK-045 | Accept, Reject, Accept all (`drafts/resolve.ts`, `drafts/DraftBar.tsx`, decision 0026) |
-| INK-047 | Questions API, `list_questions`, `answer_question` (decision 0035). INK-046 waived |
-| INK-050, 051 | Eval harness and E1 input-representation arms, synthetic data only (decisions 0033, 0034) |
-| INK-062 | Pen-feel patch (decision 0031); tablet tuning pending |
-| INK-065 | Tap a chunk label to select it for merge/split (decision 0037) |
-| INK-066 | `write_text` / `draw_diagram` sized from handwriting, `size` hint (decision 0032) |
-| INK-067 | Timing logs, save-latency verdict (decision 0030) |
-| INK-072 | Code health: orphan retention, containment flag, successor guard (decisions 0027..0029) |
-| INK-075 | Delta scene saves (decision 0036) |
-
-## Open feature work
-
-| Ticket | What | Notes |
+| Area | What | Tickets / decisions |
 |---|---|---|
-| INK-048 | `AgentRunner` and Claude Code adapter | `INKBRIDGE_RUNNER`; never strands a question |
-| INK-049 | Ask AI panel and Keep on canvas | Needs the questions API (built) |
-| INK-052, 053, 061 | E4 on scripted edits, E2/E3, E5 vs hand-boxed chunks | Real page set still to be provided |
-| INK-054, 055, 056 | README and architecture diagram, 2-minute demo, final pass | Never cut |
-| INK-063 | Live scene sync across tabs | Backlog |
-| INK-060 | Stretch: networkx `get_subgraph` | Read-only |
-| INK-076 | Pan to a new agent draft | todo |
-| INK-095, 096 | Real-scale canvas fixture; crop/recognition budget for large chunks | todo |
+| Canvas core | Scenes, chunker with stable ids and arrow links, manual merge/split by tapping a chunk label, chunks API, deep links and overlay, crop sync, FTS search, delta saves | INK-030..035, 059, 065, 075; 0011, 0013, 0014, 0016, 0024, 0036, 0037 |
+| Per-element data | `scene_elements` rows, per-element merge (higher `version` wins, no 409), `POST /elements` with `(device, batch)` idempotency, live `scene.delta` push, IndexedDB device journal and sender | INK-110..113; 0077, 0080, 0087, 0088 |
+| Chunker v2 (default) | Stroke kinds (writing, container, connector, head, underline, scribble), lines, connectors, arrows by smoothness, slanted writing levelled, scribbles join writing; oversized chunks cut at their widest gap | INK-121, 122, 195, 203, 209; 0078, 0081, 0110, 0118, 0124 |
+| Reading | Gemini reader and worker (opt-in per canvas); Claude Haiku persistent reader (`INKBRIDGE_RECOGNIZER=claude`) with newest-touched-first order and latency logs; reader gets a diagram structure hint; `too_large` chunks are never read | INK-013, 014, 096, 185, 196, 208; 0006, 0017, 0052, 0104, 0111, 0123 |
+| Vault loop | `read_canvas` (bands, groups, link detail), `retrieve`, `check_sync` with early cutoff, `inkbridge-export` skill (vault style, `--summary`, `source: inkbridge`, Related Notes, learning loop, conflict callouts) | INK-033..038, 086, 105, 106, 123, 136, 142, 210; 0018, 0020, 0021, 0050, 0079, 0092, 0103, 0125 |
+| Agent write-back | Ops in `agent_ops`; drafts live in the op row, not the scene; placement search; Accept/Reject/Unaccept; draft tray, tether, per-draft pills; answer placed under its anchor; pan to draft | INK-041..045, 076, 077, 114..116, 200, 201; 0009, 0012, 0026, 0086, 0090, 0094, 0115, 0116 |
+| Ask and tasks | Questions API and MCP pull path, `claude` runner, Ask panel with threads, source chips, Draw as diagram, streaming answers; agent tasks with claim/complete, mode-limited tools, daily cap; every agent told it is in a canvas; explicit `document_id` in MCP tools | INK-047..049, 103, 104, 133, 134, 176, 191, 194, 207; 0007, 0035, 0060, 0061, 0095, 0096, 0099, 0108, 0109, 0122 |
+| Diagrams | Diagram objects with versions, `edit_diagram` revisions whose Accept replaces only untouched shapes, mark-up as instruction (`get_markup`) | INK-140, 141; 0100, 0102 |
+| Memory | Per-canvas brief and `what_changed` (`set_canvas_brief`) | INK-135; 0093 |
+| App shell | Design tokens and primitives, top bar, tool rail, props card, canvases home, in-app switching, touch routing (finger pans, pen draws), UI size S/M/L, fast ink layer, working dot, tablet density | INK-117, 118, 160..162, 170..181, 198; 0064..0076, 0083..0085, 0098, 0113 |
+| Offers (off by default) | Offers table with budget and mute, detectors, latest-ink read, chips and Focus toggle, one-open-offer rule and expiry | INK-130..132, 183, 184, 197, 199, 202, 204..206; 0089, 0091, 0097, 0112, 0114, 0117, 0119..0121 |
+| Eval and tooling | Offline harness (E1, E4, E5) on synthetic fixtures, real-scale fixture, perf harness `npm run perf`, device log | INK-050, 051, 095, 102, 174; 0033, 0034, 0053, 0059, 0073 |
+| Graph | Read-only networkx `get_subgraph` and `canvas_components` | INK-060; 0056 |
 
-## Post-deadline restructuring (tag `restructure`)
+## Not built / future
 
-INK-068 (split `db/__init__.py` into a package), INK-069 (other large modules), INK-070 (SQLAlchemy vs raw sqlite3), INK-071 (Alembic vs hand-rolled runner). All backlog; `db/__init__.py` is still one module on `main`.
+- Deleting ink by a cross-out gesture, circle-to-ask, lasso as a first-class selection.
+- PWA install, an offline outbox beyond the device journal, an authenticated or hosted mode, multi-user or shared canvases.
+- An Obsidian-native view (no plugin by design, decision of 22 Oct).
+- Structure-aware reading beyond the hint: per-box readings and a stored `structure` object.
+- A fast local reader for the latest ink so offers can return; an embedding ranker for `retrieve` (hook `db.retrieve.RANKERS`); a learned "offer this now?" scorer.
+- A warm answer agent (the runner starts a fresh `claude -p` per question).
+- Closing the vault loop: concept notes per chunk, a weekly change digest, write-back from vault edits to canvas drafts.
+- Restructuring tickets INK-068..071 (SQLAlchemy vs raw sqlite3, Alembic vs the hand-rolled migration runner); `db/` is already a package.
 
-## Known issues (open)
+## Known limits
 
-Bug tickets INK-074..INK-096, all open except INK-075 (done). Grouped:
-
-| Area | Problem | Tickets |
-|---|---|---|
-| Tablet / LAN lag, slow load | Pen, pan and zoom lag on the LAN/tablet (INK-074); opening a canvas is slow, especially on the tablet (INK-080). Saves were the big cost and are fixed by delta saves (INK-075), load is not | 074, 080 |
-| Mega-chunks and id churn | On a real canvas chunks grow too big and ids change often, so notes see `replaced`/`removed` (INK-081). Chunk overlay and merge/split lose active chunks once orphans pile up (INK-089). Orphan chunks and their crops are never deleted (INK-087). Large chunks need a crop and recognition budget (INK-096) | 081, 087, 089, 096 |
-| Agent font and placement | Agent text is far smaller than handwriting because the clamp is 64 (INK-082). Drafts land far apart (INK-077). No pan to a new draft (INK-076). Sketch reading treats letter loops as nodes at tablet zoom (INK-085). `read_canvas` overview is unreadable on a large canvas (INK-086) | 076, 077, 082, 085, 086 |
-| Orphaned anchors | Agents can anchor to, or read, orphaned chunks (INK-084). Undelivered `write_text` ops never expire and can block the canvas (INK-088) | 084, 088 |
-| Conflict notice and merge | Conflict notice shows without another tab (INK-083). Conflict merge drops a local edit when both tabs bump an element to the same version (INK-090) | 083, 090 |
-| Drafts and chunks | Accepted drafts get no chunk (INK-078). Chunk overlay misses new chunks until reload (INK-079). An accept whose save fails leaves the op `applied` with no way to finish (INK-091) | 078, 079, 091 |
-
-Also open from earlier: vault loop on real handwritten pages (decision 0022), re-check chunker `k` on real pages, MCP behaviour in the Claude Desktop/Code GUIs is unverified (decision 0003), vault location defaults to a temp folder until `INKBRIDGE_VAULT` is set.
+- Tablet and real-page checks are the owner's and are pending for most of the v4 wave (pen feel, lag, the UI on the tablet). The perf harness found the app equal to stock Excalidraw; remaining pen lag is the browser's one point per frame.
+- No real-page evals: E1, E4 and E5 run on synthetic fixtures only. Chunker and stroke-kind thresholds are start values fitted to a few pages; a very different hand or zoom may chunk badly (merge/split by hand fixes it).
+- Diagrams are the weakest read: relations come from a geometric hint, and arrows that miss their boxes are guessed or dropped.
+- Speed depends on the network: saves, reads and answers over weak Wi-Fi are slow (20 to 70 s saves seen on a 2.4 GHz tablet); the runner takes 15 to 40 s per answer.
+- Offers are off by default; with `INKBRIDGE_OFFERS=1` their noise and delay did not reach "feels intelligent" on the tablet.
+- `stale_note` offers never fire because nothing calls `POST /documents/{id}/watch`.
+- Server-rendered crops (`INKBRIDGE_CROP_SOURCE=server`) are outline-only and not pixel-identical to Excalidraw; the default stays `browser`.
+- MCP behaviour inside the Claude Desktop and Code GUIs is unverified (decision 0003). The vault location defaults to a temp folder until `INKBRIDGE_VAULT` is set.
+- The demo video, README screenshots and the evals are not part of this freeze.
 
 ## Cut order if short on time
 
-INK-060, E2/E3, stroke arm of E1, source previews, Keep on canvas, Accept/Reject (keep Accept all), manual merge/split, then Ask panel and runner (keep the pull path). Never cut: canvas-to-note path, stale check, README, demo video.
+The networkx stretch, E2/E3, stroke arm of E1, source previews, Keep on canvas, Accept/Reject (keep Accept all), manual merge/split, then the Ask panel and runner (keep the pull path). Never cut: canvas-to-note path, stale check, README, demo video.

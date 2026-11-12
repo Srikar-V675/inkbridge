@@ -1,14 +1,47 @@
 # Deep Dive: database layer (`server/src/inkbridge/db/` and `canvas/hashes.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
 `db/__init__.py` (about 1,000 lines; splitting it is INK-068, backlog) is the only module that touches SQLite; the MCP server must not import it (boundary test `test_mcp_boundary.py`). `canvas/hashes.py` holds the pure maths (bbox and the three hashes). `db/ops.py`, `db/sync.py` and `db/outline.py` are covered in their own pages.
 
-## Connection and migrations
+## What changed since 26 Oct (Updated 13 Nov 2026)
+
+`db/` is now a package with one module per table group (INK-068 landed; `db/__init__.py` is about 210 lines and re-exports): `common` (`connect`, `_now`), `migrations` (`migrate`), `documents`, `scenes` (`put_scene`, `merge_elements`), `elements` (per-element rows), `regions`, `chunks` (`_sync_chunks`, `merge_chunks`, `split_chunk`, `_gc_orphans`), `crops` (`mark_png_fresh`), `ink`, `recognitions`, `ops`, `drafts`, `diagrams`, `questions`, `tasks`, `offers`, `watch`, `memory`, `sync`, `outline`, `retrieve`, `supersede`. So the `db/__init__.py:NNN` references in the sections below point at the old single file; use the module names above. The MCP server still must not import `inkbridge.db`.
+
+**Migrations 0001 to 0018** (forward-only, run on API start inside one `BEGIN IMMEDIATE`):
+
+| # | File | What |
+|---|---|---|
+| 0001 | `0001_init` | documents, scenes, regions, recognitions, agent_ops |
+| 0002 | `0002_region_png_stale` | `regions.png_stale` |
+| 0003 | `0003_region_fts` | `region_fts` FTS5 |
+| 0004 | `0004_v2` | `successor_of`, `content_hash`, recognitions rebuilt (`content_hash`, `text_hash`), `links`, `questions`, op columns |
+| 0005 | `0005_chunk_pins` | `regions.pinned` |
+| 0006 | `0006_question_runner_status` | `questions.runner_status`, `runner_error` |
+| 0007 | `0007_canvas_home` | `documents.pinned`, `archived_at`, `last_opened_at`; `scenes.element_count`; indexes |
+| 0008 | `0008_scene_elements` | `scene_elements` table, one row per element (one-way); `scenes.elements_json` retired but kept one release |
+| 0009 | `0009_links_v2` | `links` rebuilt (kinds `arrow`, `near`, `answer`, `relates`, `derived`; `source`, `label`, `confidence`, `element_id`); `documents.chunker` |
+| 0010 | `0010_answer_fts` | `answer_fts` FTS5 over answered questions |
+| 0011 | `0011_drafts_in_ops` | `agent_ops` gains `elements_json`, `box_json`, `question_id`, `task_id`, `offer_id`, `revises`, `diagram_id`, `resolved_at` |
+| 0012 | `0012_offers` | `offers` table, `documents.focus` |
+| 0013 | `0013_watches` | `watches` |
+| 0014 | `0014_canvas_memory` | `canvas_memory` (brief and `what_changed` cursor) |
+| 0015 | `0015_question_canvas_text` | `questions.canvas_text` |
+| 0016 | `0016_agent_tasks` | `agent_tasks`, backfilled from pending questions |
+| 0017 | `0017_diagrams` | `diagrams` |
+| 0018 | `0018_question_partial` | `questions.partial_answer`, `partial_seq` |
+
+**Per-element scenes.** A scene is `scenes` (version, `element_count`) plus `scene_elements` rows (`pos`, `seq`, `version`, `nonce`, `is_deleted`, `json`). `db/elements.py` keeps the element JSON verbatim; `pos` fixes an element's slot in the array when the row is first inserted; `seq` is the scene version of the save that last wrote it. `merge_elements` merges per element: higher `version` wins, a tie goes to the lower `versionNonce`, nothing is deleted by omission. A deleted row keeps its JSON 14 days, then shrinks to a stub `{id, version, versionNonce, isDeleted}` (a tombstone, recognised by having no `type`). `GET /elements?since=N` reads rows by `seq`. The 409 `VersionConflict` path in the diagram below is the 26 Oct design: `PUT /scene` now runs the same merge with `strict=False` (decisions 0077, 0080).
+
+**Other additions.** Orphaned auto chunks are collected on save (`_gc_orphans`: newest 40, at most 14 days, successor chains kept; decision 0048). The chunker is chosen per canvas (`_resolve_config`, v2 default). `db/retrieve.py` ranks over `region_fts` and `answer_fts` (`RANKERS`). `db/supersede.py` retires superseded agent chunks. `INKBRIDGE_DB` and `INKBRIDGE_DATA_DIR` are read at call time.
+
+## Connection and migrations (26 Oct snapshot)
 
 - `connect()` (`db/__init__.py:37-44`): `check_same_thread=False`, `Row` factory, `foreign_keys = ON`, WAL journal so readers do not block behind the scene writer.
 - `migrate()` (`:51-73`): applies numbered `.sql` files from `db/migrations/` inside one `BEGIN IMMEDIATE`, which doubles as a cross-process lock (a second API process or worker waits up to `MIGRATE_LOCK_TIMEOUT_MS = 120_000`, then finds the versions recorded). A failure rolls everything back (decision 0010). `isolation_level` is switched to manual so the sqlite3 module cannot commit under it.
 - `_apply_migration` runs statements one by one (`_statements` splits on `;` but keeps semicolons in strings and triggers via `sqlite3.complete_statement`), not `executescript`, because that would commit and drop the lock.
 - After migration 0004, `_backfill_v2` fills `content_hash` on regions, re-keys current readings, adds `text_hash`, and rebuilds the FTS rows. It is triggered by "any region with NULL content_hash", so it also heals an interrupted backfill. `_rekey_integral_hashes` runs on every start and moves a region whose stored hash is the *legacy* form of its current ink to the new form (decision 0005: browser JSON gives `15`, a drag yields `15.0`).
-- Migrations: `0001_init`, `0002_region_png_stale`, `0003_region_fts`, `0004_v2` (schema v2: `successor_of`, `content_hash`, recognitions rebuilt with `content_hash` and `text_hash`, `links`, `questions`, `agent_ops` columns), `0005_chunk_pins`. See [data model](#tables).
+- Migrations 0001 to 0005 were the 26 Oct set; the full list to 0018 is in the table above.
 
 ## Tables
 
@@ -94,4 +127,4 @@ Never hash `version`, `versionNonce`, `updated`, `seed` or `customData`.
 
 ## Potential improvements
 
-`db/__init__.py` is oversized; INK-068 splits it into a package, INK-070 weighs SQLAlchemy and INK-071 Alembic (see roadmap).
+INK-068 is done (package split). Still open: INK-070 (SQLAlchemy vs raw sqlite3) and INK-071 (Alembic vs the hand-rolled runner).

@@ -1,6 +1,8 @@
 # Deep Dive: chunker (`server/src/inkbridge/canvas/chunker/`)
 
-Pure module: no I/O, no SQLite. Imports only `bbox_of` from `canvas/hashes.py` (`canvas/chunker/:16`). It runs inside every scene save (`db/__init__.py:493`, `_sync_chunks`) and turns Excalidraw elements into **chunks** (lists of element ids) plus **arrow links**, then keeps chunk ids stable across saves.
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+Pure module: no I/O, no SQLite. It runs inside every scene save (`db/chunks.py`, `_sync_chunks`; Updated 13 Nov 2026: the package is split into `clustering.py`, `config.py`, `scene.py`, `matching.py`, `order.py` plus the v2 files below, so the `file:line` references in the v1 sections below point at the old single module and are approximate) and turns Excalidraw elements into **chunks** (lists of element ids) plus **arrow links**, then keeps chunk ids stable across saves.
 
 ## Responsibilities
 
@@ -36,7 +38,25 @@ flowchart TD
 
 </details>
 
-## Configuration (`ChunkerConfig`, `canvas/chunker/:26-42`)
+## Chunker v2, the default (Updated 13 Nov 2026)
+
+Chunker v2 (INK-122, decision 0081) is the default since INK-195 (decision 0110). `db/chunks.py` `_resolve_config` picks it: `ChunkerConfig.v2()` when the canvas's own `documents.chunker` is `v2` (or unset and `INKBRIDGE_CHUNKER` is not `v1`); v1 stays available per canvas (`PATCH /documents/{id}` with `{chunker}` re-chunks at once) and is pinned by a golden file (`server/tests/data/chunker_v1_golden.json`). `chunk_scene` in `scene.py` dispatches to `chunk_scene_v2` when `config.version == "v2"`. `ChunkerConfig.v2()` sets `k` 2.0, `next_line` 2.0, `arrow_merge` 1.0 and `link_reach` 2.0; `long_stroke` is 4.0 (all in units of T, the writing scale).
+
+Pipeline of `chunk_scene_v2` (`scene_v2.py`):
+
+1. **Stroke kinds** (`canvas/strokes.py`, `analyse` / `classify`, decision 0078). Every live freedraw stroke gets one of `writing`, `container` (a closed loop with ink inside), `connector` (a long smooth stroke, or one with a head, hook or shape at an end), `head` (the small stroke that makes an arrow tip), `underline` (flat, under writing) or `scribble` (a tight zigzag). T is the writing scale (`SCALE_PCT` quantile of the short strokes, floor `MIN_SCALE`), so every threshold is a multiple of T and holds at any zoom. Arrows are decided by length and smoothness (`ARROW_LONG`, `SMOOTH_*`, decision 0118); slanted writing is levelled by its principal axis; scribbles join the writing (INK-195, INK-203). Thresholds are start values awaiting real-page evals.
+2. **Exclusions.** Pen connectors, their heads, native arrows and lines and their labels are never chunk members (`stroke_connector_ids`, `connector_ids`), so moving or deleting an arrow changes no chunk hash.
+3. **Pins and agent groups** (`pin_groups`, `agent_groups`) are carved out first, as in v1; accepted agent ink is its own chunk.
+4. **Line-aware clustering** (`lines.py`, `cluster_lines`): on one line two elements join within `k x T`; on adjacent lines only when their boxes overlap in x and the gap is under `next_line x T`; a stroke longer than `long_stroke x T` joins by its ink (`_samples`, `_ink_below`), not its bounding box, so an arc round a word does not swallow it; a container loop unions what it holds; underlines and scribbles join the writing they touch (`UNDERLINE_REACH`, `_SCRIBBLE_NEAR`).
+5. **Oversized split** (`split.py`, `split_oversized`, INK-209, decision 0124): a group over `MAX_SIDE` 3000 units or `MAX_ELEMENTS` 600 (the reader's own limits are 4096 units and 1500 elements) is cut at the widest empty gap on its longer axis, and each part again until it fits or has no gap left. Members that overlap in both axes are never separated. In a group over the caps, bridges (a frame or scribble much bigger than the writing, `_core`) leave first and stand as chunks of their own, otherwise they would keep every gap closed.
+6. **Connectors** (`connectors.py`, `EndIndex`, `end_points`): each connector end maps to the bound chunk or the nearest chunk box within `link_reach x T`. A connector whose ends are both free and short (a tick, `arrow_merge x T`) merges the two chunks; a longer one writes a `links` row with `confidence` (`_confidence`); both ends in one chunk make nothing; a connector with a free end becomes a chunk of its own with `kind: connector`, which is never read, and the export skill skips it.
+7. **Matching and order** are shared with v1 (`match_chunks`, `reading_order`); the id-stability rules below apply unchanged.
+
+Why this shape: model-based page grouping was tried and dropped (Sonnet grouped well but cost about $0.06 and 39 s per page; Haiku grouped poorly), so grouping is deterministic and the model only reads (README, "How it got here").
+
+Tests: `test_chunker.py` (v1), `test_strokes.py`, `test_chunker_v2.py`, `test_chunker_v2_db.py`, `test_chunker_v1_v2_compare.py`, `test_chunk_split.py`, `test_large_chunks.py`.
+
+## Configuration, v1 values (`ChunkerConfig` in `config.py`)
 
 | Field | Default | Meaning |
 |---|---|---|

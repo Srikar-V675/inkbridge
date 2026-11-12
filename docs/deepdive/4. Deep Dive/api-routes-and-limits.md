@@ -1,5 +1,9 @@
 # Deep Dive: API app, routes, limits and images (`api/`, `imaging.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: routers now also include `canvases`, `graph`, `markup`, `memory`, `offers`, `retrieve`, `tasks`, `watch`, `web` and `debug`; the app serves the built web app on `/`; the scene is stored as per-element rows with `POST /documents/{id}/elements`; the recognition worker may be Gemini or Claude Haiku; `INKBRIDGE_OFFERS`, `INKBRIDGE_RUNNER` and the other variables are listed in `docs/codewiki/env-vars.md`. The full route table is `docs/codewiki/api-reference.md`. Line references below are 26 Oct.
+
 FastAPI app in `api/__init__.py` (143 lines). Routers: `chunks`, `ops`, `overrides`, `regions`, `search`, `sync`, `ws` (`:44-50`). Every handler gets a per-request connection from `Conn` (`api/deps.py:9-18`): `db.connect()` in a generator dependency, closed afterwards. Handlers that wait on SQLite locks use `run_in_threadpool`.
 
 ## Startup (`lifespan`, `api/__init__.py:18-30`)

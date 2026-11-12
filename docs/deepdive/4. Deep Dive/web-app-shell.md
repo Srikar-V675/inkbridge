@@ -1,8 +1,24 @@
 # Deep Dive: web app shell (`web/src/app/App.tsx`, `main.tsx`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
 `app/App.tsx` (405 lines) wires the framework-free modules to Excalidraw. Dev server config (`vite.config.ts`): proxies `/documents`, `/ops`, `/regions`, `/search`, `/health` and `/ws` (websocket) to `INKBRIDGE_API_URL`; a dev-only `/__log` plugin appends request bodies to `web/dev.log`.
 
-## Components
+## The shell as of 13 Nov 2026 (Updated 13 Nov 2026)
+
+`App.tsx` is now about 25 KB and sits inside a real app shell (INK-117, INK-162, decisions 0066, 0068). The sections after this one describe the 26 Oct wiring and are still useful for startup order, but several parts moved.
+
+- **Routing and canvases home.** `app/Root.tsx` picks the canvases home (`/`, `home/Home.tsx`) or one canvas (`/?canvas=<id>`); `lib/nav.ts` switches in-app with `pushState` and flushes on leave; Archived is a route (`/?view=archived`); an unknown canvas shows "Canvas not found" (INK-118, INK-172, decisions 0069, 0071). Excalidraw mounts before the scene arrives with `initialData` as a promise, with a transparent layer blocking strokes until the scene is open.
+- **Shell slots** (`app/Shell.tsx`): top bar (`TopBar.tsx`: Canvases, title, save status via `StatusSlot`, Chunks toggle, Ask, Size, "Finger draws"), tool rail (`ToolRail.tsx`, `railStore.ts`: pen, highlighter as pen at 35% opacity, eraser, box select, shapes, text, three inks, undo/redo through a synthetic Ctrl+Z), zoom pill (`ZoomControl.tsx`), `PaperDots.tsx` (CSS dots moved by `transform`), `WorkingDot.tsx` (pulsing lime dot from `agent.activity`). Excalidraw's own toolbar and menus are hidden by `app/shell.css`. Z-order: paper 0, canvas 1, rail and zoom 5, properties card 6, overlays 6, top bar 7, Ask panel 8.
+- **Tool card** (`app/props/`): one card per rail tool, with the shapes picker and a properties card for the active shape or text tool or the selection; never for pen, highlighter or eraser (decisions 0075, 0098).
+- **Touch** (`touchInput.ts`, `touchRouting.ts`, `TouchLayer.tsx`, `fingerDraws.ts`, decision 0072): a window capture-phase router stops only touches on the Excalidraw canvas; one finger pans, two pinch-zoom, only the pen draws; palm rejection holds for `PEN_GRACE_MS` (600 ms) after the pen; "Finger draws" is a per-device toggle, off by default.
+- **UI size** (`uiScale.ts`, `uiScaleStore.ts`, `UiSizeControl.tsx`, decision 0083): S/M/L = 0.8/0.9/1.0, default Small on a coarse pointer, scales the shell and not the canvas.
+- **Sync** moved to `sync/`: `sceneSync.ts` loads and merges per element, `journal.ts` writes ink to IndexedDB within 50 ms and `sender.ts` uploads it, `liveDelta.ts` applies `scene.delta` from other devices, `startupGate.ts` defers the ops socket and crop sync until first paint. There is no 409 reload any more (decisions 0080, 0087, 0088).
+- **Ink layer** (`ink/penSamples.ts`, `ink/FastInk.tsx`, decision 0076): every coalesced pen sample reaches the stroke through the patched freedraw handlers, and the stroke in progress is drawn at once on a fast canvas. It needs a secure context, hence `make serve-https`.
+- **Panels and overlays.** The Ask panel (`ask/`) is built, so the "Not built" note below is obsolete; offers (`offers/OfferLayer.tsx`) render only when the server has offers on. Drafts are the section in [web-ops-and-drafts.md](web-ops-and-drafts.md).
+- **Design rules** (`DESIGN.md`, enforced by `web/tests/designRules.test.ts`): lime means the agent and only the agent, 44 px touch targets, no hex outside `tokens.css`.
+
+## Components (26 Oct snapshot)
 
 - `Canvas` (`:124-144`): memoised so nothing outside the canvas (save status, route) can re-render Excalidraw mid-stroke. `initialData` is built from restored elements and an optional remembered view.
 - `SaveBadge`: reads the status store with `useSyncExternalStore`.
@@ -28,9 +44,9 @@ Starts once `canvasReady`. `onOp` defines `persist`: it `notify`s the scene, the
 
 On every Excalidraw change: `sync.notify` (if it really changed, tell crop sync about activity), `cropRef.start()` (the first change means the canvas holds the loaded scene), mark `sceneReady`, apply a pending jump, fit all ink on first open, and otherwise save the view to `localStorage` after 500 ms.
 
-## Not built
+## Not built (26 Oct; obsolete)
 
-The Ask AI panel (INK-049). `DraftBar` (Accept / Reject) is mounted here; `rejectOp` also sweeps ops that die elsewhere.
+The Ask AI panel (INK-049) was not built then; it is now. Accept/Reject moved to server-side verdicts.
 
 ## Potential improvements
 

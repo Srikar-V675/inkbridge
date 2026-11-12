@@ -1,5 +1,9 @@
 # Deep Dive: sketch to diagram (`canvas/sketch.py`, `canvas/sketch_image.py`, `canvas/sketch_prompts.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: the pass-1 geometry also feeds the background reader as a structure hint (`canvas/structure.py`, decision 0123), diagram sources can be graph JSON as well as Mermaid and become diagram objects with versions (`edit_diagram`, decision 0100), and thresholds scale with the ink (decision 0051).
+
 Two-pass reading (INK-058, decision 0025). **Pass 1** is pure geometry on the server: guess nodes and arrows from the ink and number them. **Pass 2** is the agent: it checks the guess against two images and writes Mermaid that cites the markers, then calls `draw_diagram`. No model call happens in pass 1.
 
 ## Pass 1: `read_sketch` (`canvas/sketch.py:114-271`)

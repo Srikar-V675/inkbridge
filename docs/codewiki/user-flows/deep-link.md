@@ -3,7 +3,7 @@
 **Story:** as a reader of a vault note, I want to click a block and land on the exact ink it came from.
 
 1. Each block carries `?canvas=<id>&chunk=<id>` on `INKBRIDGE_PUBLIC_URL`.
-2. `lib/route.ts` reads both params; the app loads the scene, then `chunks/chunks.ts` pans and highlights the chunk. A toggleable overlay (`chunks/ChunkOverlay.tsx`) shows chunk boxes (decision 0014).
+2. `lib/route.ts` reads both params; the app opens the canvas (`/?canvas=<id>`; `/` alone is the canvases home), then `chunks/chunks.ts` pans and highlights the chunk. A toggleable overlay (`chunks/ChunkOverlay.tsx`) shows chunk boxes (decision 0014).
 3. If the chunk was replaced, the successor id applies (decision 0011).
 
 Plain URLs only: no Obsidian plugin exists and none is planned.

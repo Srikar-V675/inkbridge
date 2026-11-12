@@ -1,8 +1,23 @@
 # Deep Dive: web ops socket and drafts (`sync/opsSocket.ts`, `drafts/drafts.ts`, `drafts/drawOp.ts`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
 Browser side of the agent write-back loop (INK-042, decisions 0009, 0012). Server side: [ops-queue-and-websocket.md](ops-queue-and-websocket.md).
 
-## `OpsSocket` (`sync/opsSocket.ts`)
+## How drafts work now (Updated 13 Nov 2026)
+
+Everything below this section is the 26 Oct design, where drafts were scene elements saved with the scene, acked as `op.applied` and resolved by `PATCH`. Since INK-114 and INK-115 (decisions 0086, 0090) the draft is the `agent_ops` row and the client only draws and measures it. Invariants kept: agent ops only add elements; every element carries the op's `id_prefix`.
+
+**Flow.**
+1. `op.pending` arrives on the socket (`sync/opsSocket.ts`); `drafts/drawOp.ts` `measureOp` converts the op (text skeleton, Mermaid via `mermaid-to-excalidraw`, or the graph IR through `drafts/graphLayout.ts` `layoutGraph` for diagram objects; `wrapText` uses the server's `wrap_chars`; font size is the op's `font_size`) and the socket sends `op.measured {op_id, elements, width, height}`. The browser no longer places anything and no longer acks `op.applied`; failures still send `op.failed`.
+2. The server places the draft (`agent/placement.py`) and pushes `op.placed {op_id, elements, placement, anchor}`. Placed ops are replayed on every connect, and `fetchDrafts` (`GET /documents/{id}/drafts`) loads the open ones.
+3. `drafts/draftStore.ts` (`createDraftStore`) holds the `PlacedOp` list (`id`, `payload.id_prefix`, `anchor_resolved`, `question_id`, `elements`, `box`). `reconcile(scene, ops)` is the pure function from the placed ops to the draft elements shown in the scene; `offsetOf` and `reloadWithDrafts` keep drafts on screen across scene reloads. Draft elements are tagged `customData {author:"agent", draft:true, op_id}` and dashed (`drafts/drafts.ts`, `markDraft`), but they never enter scene saves, the device journal or the live delta (`isDraftTagged`).
+4. **Resolving** (`drafts/resolve.ts`): `accept(opId, dx, dy)` -> `POST /ops/{id}/accept` (the offset says where the user dragged the draft), `reject(opId)` -> `POST /ops/{id}/reject`, `unaccept(opId)` -> `POST /ops/{id}/unaccept`. All use an 8 s timeout and never throw; they return `{ok}` or a message. Accept is one server transaction that writes the elements into the scene and publishes `scene.delta`. The server has no un-reject, so `DraftBar` holds a Reject until its Undo toast expires.
+5. **UI.** `drafts/DraftPills.tsx` puts an Accept/Reject pill at each in-view draft's top-right corner (`draftPills.ts` `pillPosition`: above the corner, flipped below if there is no room, clamped inside the free area; decision 0115). `drafts/DraftBar.tsx` is the tray and card ("N drafts on this canvas", `draftUi.ts` `trayLabel`), shows Accept all / Reject all when two or more are open (`showBulk`), and posts Undo toasts (`verdictToast`). `drafts/Tether.tsx` draws a dashed line from a draft to the chunk it answers. `drafts/draftView.ts` pans a new draft into view, or offers a "New draft" chip and Jump (`planReveal`, `createUnseen`, decision 0054); it also names the flow arrow (`FLOW_ARROW`) an answer draft carries from its anchor (decision 0116).
+
+**Tests.** `draftStore.test.ts`, `draftPills.test.ts`, `draftUi.test.ts`, `draftView.test.ts`, `graphLayout.test.ts`, `resolve.test.ts`, `drafts.test.ts`, `opsSocket.test.ts`.
+
+## `OpsSocket` (`sync/opsSocket.ts`, 26 Oct snapshot; messages in now also include `op.placed`, `scene.delta`, `question.update`, `question.delta`, `offer.*` and `agent.activity`)
 
 Client for `WS /ws?document=<id>`.
 - **Reconnect**: on close, wait `BACKOFF_MS = [500, 1000, 2000, 5000, 10000]` (indexed by consecutive failures, reset on open) and start again. A stale close event from a replaced socket is ignored (`this.ws !== ws`).
@@ -24,7 +39,7 @@ No Excalidraw import, so they run under Node's test runner. Rules: drafts only e
 | `toDrafts(converted, op)` | The pipeline after conversion: prefix, place, mark |
 | `rejectOp(elements, prefix)` | Soft-deletes (`isDeleted: true`, `version + 1`) every element whose id starts with the prefix, a sweep that also catches elements the ack did not list, and nothing else; the version bump keeps the delete through autosave and conflict merge |
 
-## `drawOp` (`drafts/drawOp.ts`, browser only)
+## `drawOp`, 26 Oct design (`drafts/drawOp.ts` now exports `measureOp` instead)
 
 `drawOp(api, op, persist)`:
 1. If elements with the op's prefix already exist (replay after a reload or reconnect), `await persist(scene)` again and return their ids: the first ack may have been lost before the drafts were saved.
@@ -33,7 +48,7 @@ No Excalidraw import, so they run under Node's test runner. Rules: drafts only e
 4. `convertToExcalidrawElements(skeleton, {regenerateIds: true})`, then `toDrafts`; no elements throws "the op produced no elements".
 5. `api.updateScene` appends the drafts, then `await persist(...)` (the caller acks only after the scene containing the drafts is saved, because an applied op is never replayed, so an unsaved draft lost to a reload would never come back). Returns the draft ids.
 
-## Accept / Reject (`drafts/resolve.ts`, `drafts/DraftBar.tsx`, decision 0026)
+## Accept / Reject, 26 Oct design (superseded by the section above; decision 0026)
 
 | Piece | Behaviour |
 |---|---|

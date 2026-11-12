@@ -1,6 +1,27 @@
 # Deep Dive: MCP server and client (`server/src/inkbridge/mcp/`, `mcp_smoke.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
 A stdio MCP server built on the MCP Python SDK 2.x (`MCPServer`, imported from `mcp.server.mcpserver`, `server.py:13`). Entry points in `pyproject.toml`: `inkbridge-mcp = inkbridge.mcp.server:main`, `inkbridge-mcp-smoke`. Tool reference table: `docs/mcp-tools.md`.
+
+## Current layout and tool list (Updated 13 Nov 2026)
+
+The server is split: `mcp/app.py` holds the `MCPServer` object, `get_client` / `set_client` and the shared helpers; `mcp/client.py` is `ApiClient`; `mcp/server.py` only imports `mcp/tools/` (so the tools register) and runs stdio in `main()`. One module per tool area in `mcp/tools/`. The server `instructions` start with `CANVAS_CONTEXT` (`inkbridge/canvas_context.py`, decision 0122: the agent is inside a handwritten canvas, answers about their page, draws only drafts) followed by the working order: call `what_changed` first (pass `mark_seen=true` once handled), read the brief that `read_canvas` returns, write one with `set_canvas_brief` if it is empty or out of date. `canvas_context.py` has no imports, so the `inkbridge.db` boundary holds. Canvas tools take `document_id` (default `INKBRIDGE_DOCUMENT`) and echo it back (decision 0108).
+
+| Module | Tools |
+|---|---|
+| `tools/canvas.py` | `create_canvas`, `search`, `read_canvas` (`document_id`, `include_overview`, `offset`, `max_width`), `get_subgraph` (`chunk_id`, `depth`, `direction`, `to_chunk_id`, `max_nodes`, `mermaid`), `canvas_components` |
+| `tools/regions.py` | `list_regions`, `get_region` |
+| `tools/retrieve.py` | `retrieve` (`query`, `scope`, `k`, `document_id`) |
+| `tools/memory.py` | `what_changed` (`since`, `mark_seen`), `set_canvas_brief` (`brief`, up to 4,000 chars) |
+| `tools/sync.py` | `check_sync` |
+| `tools/write.py` | `write_text` (`text`, `anchor`, `size`, `question_id`, `relation`, `task_id`), `draw_diagram` (`source`, `source_kind` mermaid or graph, `anchor`, `from_chunks`, `question_id`, `relation`, `wait_seconds`, `task_id`) |
+| `tools/diagrams.py` | `edit_diagram` (`diagram_id`, `source`, `source_kind`, `wait_seconds`, `task_id`), `get_markup` (`diagram_id`) |
+| `tools/questions.py` | `list_questions`, `answer_question` (`final=false` streams a partial) |
+| `tools/tasks.py` | `list_tasks`, `claim_task` (`claimed_by`), `complete_task` (`status` done or failed, `error`) |
+| `tools/prompts.py` | prompt `sketch_to_diagram` |
+
+`draw_diagram` no longer takes `mermaid`: it takes `source` and `source_kind` (the old payload key is still read, decision 0100). The 26 Oct table below lists the first ten tools only; the bounded wait for `draw_diagram` / `edit_diagram` now ends when the op is `placed` (the browser measured it and the server placed it) rather than `applied`. Tests also include `test_mcp_retrieve.py`, `test_mcp_tasks.py` and `test_mcp_graph.py` (`ls server/tests | grep test_mcp`).
 
 ## Rules
 
@@ -18,7 +39,7 @@ A stdio MCP server built on the MCP Python SDK 2.x (`MCPServer`, imported from `
 - `_send` (create_op, set_op_status, create_document) surfaces the API's own `detail.msg` (cut to 500 chars) on 404/409/422.
 - Methods: `list_regions`, `get_region`, `get_image`, `get_ink`, `search`, `get_chunks`, `get_overview`, `check_sync`, `create_op`, `get_op`, `set_op_status`, `get_sketch`, `get_sketch_image`, `create_document`. All path parts are `quote(..., safe="")`.
 
-## Tools (`server.py`)
+## Tools, 26 Oct snapshot (`server.py`, now `tools/`)
 
 | Tool | Behaviour |
 |---|---|
@@ -40,7 +61,7 @@ The outline JSON never exceeds `READ_CANVAS_MAX_CHARS = 60_000` (about 15k token
 
 ### `draw_diagram` flow (`:359-435`)
 
-`create_op` -> `_wait_for_browser` polls `GET /ops/{id}` every `POLL_SECONDS = 0.25` while the status is pending or delivered until the deadline. On give-up it `PATCH`es the op to `expired` (a late browser sweeps expired ops and never draws them); a `Conflict` there means the browser finished just now, so it re-reads the op. Outcomes: `applied` returns `{op_id, status, element_count}`; `failed` raises a ToolError with the browser's message and "Fix the Mermaid (flowchart syntax only)"; `expired` says no browser drew it in N s and gives the canvas URL; anything else raises. `_sleep`/`_clock` are module-level so tests replace them.
+`create_op` -> `_wait_for_browser` polls `GET /ops/{id}` every `POLL_SECONDS = 0.25` while the status is pending or delivered until the deadline (since v4 the success status is `placed`). On give-up it `PATCH`es the op to `expired` (a late browser sweeps expired ops and never draws them); a `Conflict` there means the browser finished just now, so it re-reads the op. Outcomes: `applied` returns `{op_id, status, element_count}`; `failed` raises a ToolError with the browser's message and "Fix the Mermaid (flowchart syntax only)"; `expired` says no browser drew it in N s and gives the canvas URL; anything else raises. `_sleep`/`_clock` are module-level so tests replace them.
 
 ## Smoke tool (`mcp_smoke.py`)
 

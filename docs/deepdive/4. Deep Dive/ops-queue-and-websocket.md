@@ -1,10 +1,32 @@
 # Deep Dive: agent ops queue, placement, mermaid gate and WebSocket hub
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
 Files: `db/ops.py` (293 lines), `api/ops.py` (173), `api/ws.py` (205), `agent/placement.py` (84), `agent/mermaid.py` (28). Decisions 0009, 0012, 0023.
 
 An **op** is an agent write: `write_text` or `draw_diagram`. Agents can only **add** elements; there is no edit or delete op type, so none can be expressed (`api/ops.py:41`).
 
-## Lifecycle (`db/ops.py:11, 24-31`)
+## Drafts in the op row, placement and the new socket messages (Updated 13 Nov 2026)
+
+The 26 Oct sections below describe a queue where the browser drew the draft into the scene and acked `op.applied`. Since INK-114 (decision 0086, migration 0011) the op row is the draft. Decisions 0086, 0090, 0094, 0100, 0115, 0116.
+
+**Lifecycle.** `db/ops.py` `STATUSES` = `pending`, `delivered`, `placed`, `accepted`, `rejected`, `failed`, `expired`. Transitions: `pending` -> `delivered`, `failed`, `expired`; `delivered` -> `failed`, `expired`; `placed` -> `accepted`, `rejected`; `accepted` -> `placed` (unaccept). `placed`, `accepted` and the return trip are reachable only through `db/drafts.py`, never through `update_status`. `applied` no longer exists. Pending and delivered ops expire after 24 h (`OP_TTL_S`, decision 0049), swept lazily on create and list. Ops reserve their spot while `pending`, `delivered` or `placed` (`_RESERVING`).
+
+**New columns** (migration 0011): `elements_json` (the measured draft), `box_json` (its placed box), `question_id`, `task_id`, `offer_id`, `revises` (op it revises), `diagram_id`, `resolved_at`. Payloads: `WriteTextPayload` (`text`, `anchor`, `size` hint, optional question link) and `DrawDiagramPayload` (`source` Mermaid or graph JSON, `source_kind` `mermaid` or `graph`, `anchor`, `from_chunks`, `diagram_id` set = a revision of that diagram; old `mermaid` payloads are read as `source`).
+
+**Measure, place, accept** (`db/drafts.py`):
+1. `measure_op` stores the elements the browser measured (`op.measured {op_id, elements, width, height}`), checks every id carries the op's `id_prefix` (`BadPrefix`, `IdCollision`, `ExistingElementIds`), places the draft with its true size via `agent/placement.py`, sets the op `placed` and the server pushes `op.placed {op_id, elements, placement, anchor}`.
+2. `accept_op` is the one path allowed to write `<op_id>:` ids into the scene: in one transaction it merges the elements into `scene_elements` (`merge_elements` with `strict=False`, shifted by the drag offset), links the diagram object if any, and publishes `scene.delta`. A revision's accept replaces only untouched shapes of the earlier version (decision 0100). It is idempotent. `unaccept_op` raises `WindowClosed` after `UNACCEPT_WINDOW_S`, and always for a revision.
+3. `reject_op` writes nothing to the scene. `unaccept_op` removes only elements the user has not touched since Accept.
+4. Routes: `POST /ops/{id}/accept`, `/reject`, `/unaccept`, and `GET /documents/{id}/drafts`. `PATCH /ops/{id}` still handles failed and expired.
+
+**Placement** (`agent/placement.py`, INK-116, decision 0094) is no longer "right of the anchor, then below". It searches candidate spots: `flow_spot` and `place` score positions near the anchor, avoiding occupied boxes, existing connectors (`connectors_of`, `_crosses`) and the visible viewport sent by `attention {pen, view}` (`view_rect`, `_inside_frac`). Font size comes from the handwriting scale (`font_size_for`, `line_pitch`; `DEFAULT_FONT` 28, `MIN_FONT` 18, `MAX_FONT` is only a sanity cap of 2000, decision 0045) and text wraps at `wrap_for(fs, view)`, sent as `payload.wrap_chars`. `gap_for` and `margin_for` scale the gaps with the font. Answer drafts get a flow arrow from the anchor (`agent/flow.py`, `isFlowArrow` on the client).
+
+**WebSocket.** `api/ws.py` now sends `op.pending`, `op.placed`, `op.updated`, `op.error`, `chunks.updated`, `scene.delta {seq, origin, elements}` (not to the socket whose `device` is `origin`), `question.update`, `question.delta {id, seq, text}`, `offer.created` / `offer.updated` (only while the attention gate is open) and `agent.activity {working, what, count}`. The browser sends `attention {pen, view}`, `op.measured` and `op.failed`; `op.applied` is gone. On connect the server replays pending and delivered ops as `op.pending` and placed ops as `op.placed`.
+
+**Tests.** `test_ops_api.py` (still the N1 guard: it must fail if the id check is removed), `test_ws.py`, `test_placement.py`, plus the draft and diagram tests (`ls server/tests | grep -i -E "draft|diagram|placement"`).
+
+## Lifecycle, 26 Oct snapshot (`db/ops.py`)
 
 ![diagram 1](../../img/ops-queue-and-websocket-1.png)
 

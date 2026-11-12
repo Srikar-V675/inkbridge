@@ -1,5 +1,9 @@
 # Deep Dive: delta scene saves (`web/src/sync/sceneSync.ts`, `api/__init__.py`, `db/__init__.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: delta saves were superseded by per-element storage. Autosave now journals ink to IndexedDB (`sync/journal.ts`) and `sync/sender.ts` posts changed elements with `POST /documents/{id}/elements`, idempotent by `(device, batch)`; the server merges per element (higher `version` wins, nothing deleted by omission), so there is no `base_version` check or 409 on that path, and other devices get `scene.delta` over the WebSocket (decisions 0077, 0080, 0087, 0088). `PUT /scene` with `delta: true` still works and runs the same merge with `strict=False`. The text below is the 26 Oct design.
+
 INK-075, decision 0036. Autosave used to `PUT` the whole scene. A 496-element canvas (about 1 MB) took 96 s through the Vite proxy from the tablet while the server needed 41 ms, so cost grew with the page, not with the edit. Now only changed elements travel.
 
 ## Flow

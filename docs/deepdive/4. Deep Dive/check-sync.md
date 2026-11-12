@@ -1,5 +1,9 @@
 # Deep Dive: check_sync and the chunk outline (`api/sync.py`, `db/sync.py`, `db/outline.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: unchanged in contract. The reread step now uses whichever reader is configured (Gemini or Claude Haiku), and chunks may be split by the v2 chunker, which shows up as `replaced` with a successor. The export skill adds a `body` hash per entry, so a hand-edited block gets a conflict callout rather than a rewrite.
+
 `check_sync` answers "which blocks of my vault note are stale?" using hashes the note carries. It reads only; the single thing it can set in motion is the recognition worker, which writes into the recognition cache (decision 0020).
 
 ## Request (`api/sync.py`)

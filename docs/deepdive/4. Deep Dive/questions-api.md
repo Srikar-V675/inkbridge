@@ -1,5 +1,9 @@
 # Deep Dive: questions API and MCP tools (`api/questions.py`, `db/questions.py`, `mcp/server.py`)
 
+> Snapshot written 26 Oct 2026; sections marked Updated 13 Nov 2026 were refreshed.
+
+> Updated 13 Nov 2026: the Ask panel (`web/src/ask/`), the runner (`agent/ask_runner.py`) and agent tasks (`agent_tasks`, `list_tasks` / `claim_task` / `complete_task`) are built; each question now also creates a task. Questions gained `runner_status`, `runner_error`, `canvas_text`, `partial_answer` and `partial_seq` (migrations 0006, 0015, 0018); `answer_question(final=false)` streams a partial and the browser gets `question.delta`. Every runner prompt carries the canvas id and `CANVAS_CONTEXT`. The sentence saying the panel and runner are not built is obsolete. Decisions 0007, 0060, 0061, 0095, 0096, 0099, 0108, 0122.
+
 The pull path of Ask AI (INK-047, decision 0035). The backend stores questions and answers. It starts no process and calls no model, so a question leaves `pending` only through answer or cancel. The Ask panel (INK-049) and runner (INK-048) are not built.
 
 ## Lifecycle
