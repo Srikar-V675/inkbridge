@@ -4,12 +4,15 @@ import json
 
 from mcp.server.mcpserver import MCPServer
 
+from inkbridge.canvas_context import CANVAS_CONTEXT
 from inkbridge.mcp.client import ApiClient
 
 mcp = MCPServer(
     "inkbridge",
     instructions=(
-        "Inkbridge exposes a handwritten canvas split into chunks (one idea each). Call "
+        CANVAS_CONTEXT
+        + " "
+        + "Inkbridge exposes a handwritten canvas split into chunks (one idea each). Call "
         "read_canvas first for the whole canvas in reading order, then get_region for the image "
         "and transcription of one chunk or saved region. "
         "Before anything else call what_changed (the chunks the user touched since you last "

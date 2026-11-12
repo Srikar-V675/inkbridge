@@ -20,6 +20,7 @@ from typing import Protocol
 from inkbridge import config, db
 from inkbridge.agent.activity import activity
 from inkbridge.agent.answer_stream import AnswerStream
+from inkbridge.canvas_context import CANVAS_CONTEXT
 from inkbridge.db import questions as q_db
 from inkbridge.db import tasks as tasks_db
 
@@ -167,13 +168,18 @@ def _pass_canvas(document_id: object) -> str:
     )
 
 
+def _context() -> str:
+    return CANVAS_CONTEXT + "\n"
+
+
 def build_prompt(q: dict) -> str:
     history = "\n".join(
         f"- question: {_data(h.get('text') or '')}\n  answer: {_data(h.get('answer_md') or '')}"
         for h in q.get("history", [])
     )
     return (
-        f"Answer question `{q['id']}` on canvas `{q['document_id']}`. "
+        _context()
+        + f"Answer question `{q['id']}` on canvas `{q['document_id']}`. "
         + _pass_canvas(q["document_id"])
         + "Steps: call `read_canvas` "
         "(and `get_region` for the focus chunks), search the vault with the vault search tool if "
@@ -212,7 +218,8 @@ def build_task_prompt(t: dict) -> str:
         else "Current reading of the anchor: no reading yet: call get_region and wait for it\n"
     )
     return (
-        f"Task `{t['id']}` ({t['kind']}, mode {t['mode']}) on canvas `{t['document_id']}`. "
+        _context()
+        + f"Task `{t['id']}` ({t['kind']}, mode {t['mode']}) on canvas `{t['document_id']}`. "
         + _pass_canvas(t["document_id"])
         + f"Anchor chunk: {i.get('anchor_chunk')}. Call `read_canvas` and `get_region` for it, then "
         "do what the offer says using only the tools you were given. "
