@@ -26,6 +26,7 @@ from inkbridge.canvas.chunker.scene import (
     agent_groups,
     pin_groups,
 )
+from inkbridge.canvas.chunker.split import split_oversized
 from inkbridge.canvas.hashes import bbox_of
 from inkbridge.canvas.strokes import analyse
 
@@ -50,9 +51,10 @@ def chunk_scene_v2(
     groups, t = cluster_lines(
         elements, config, kinds, exclude=taken | {i for g in agent for i in g}
     )
+    by_id = {str(e.get("id")): e for e in elements}
+    groups = split_oversized(groups, by_id)  # INK-209: a chunk the reader would refuse
     first_pinned = len(groups)
     groups = groups + manual + agent
-    by_id = {str(e.get("id")): e for e in elements}
     owner = {eid: gi for gi, members in enumerate(groups) for eid in members}
     boxes = [bbox_of([by_id[i] for i in members]) for members in groups]
     reach = config.link_reach * t
