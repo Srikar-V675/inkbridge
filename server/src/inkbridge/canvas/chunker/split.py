@@ -1,4 +1,4 @@
-"""Cut chunks too big to read along their widest empty gap (INK-209, decision 0122).
+"""Cut chunks too big to read along their widest empty gap (INK-209, decision 0124).
 
 A page of separate islands joined only by long arrows or a chain of short ones can end up as one
 chunk thousands of units wide, which the reader refuses (`too_large`) and which no question or
